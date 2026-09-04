@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>消息平台配置看板</title><style>body{font-family:system-ui;max-width:760px;margin:48px auto;line-height:1.6;color:#202124}code{background:#f3f4f6;padding:2px 5px;border-radius:4px}.off{color:#a33;font-weight:600}</style></head>
+<body>
+  <h1>消息发送转发与智能体调度平台</h1>
+  <p class="off">当前为脱敏空构建包：所有渠道默认关闭，未配置真实群聊或凭据。</p>
+  <ol>
+    <li>复制 <code>.env.example</code> 为 <code>.env</code>，填写自己的飞书应用和测试群。</li>
+    <li>把 <code>channels.config.json</code> 与 <code>routes.config.json</code> 中的 <code>oc_test_*</code> 示例替换为自己的群 ID。</li>
+    <li>完成本地测试后，才将对应渠道与对话的 <code>enabled</code> 改为 <code>true</code>。</li>
+  </ol>
+  <p>不要在此包中保存或展示真实密钥、群 ID、候选人资料、岗位记录或发送回执。</p>
+</body>
+</html>

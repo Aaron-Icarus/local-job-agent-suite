@@ -1,0 +1,29 @@
+{
+  "schema": "2.0",
+  "header": {
+    "event_id": "evt_test_greeting",
+    "event_type": "im.message.receive_v1"
+  },
+  "event": {
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_test_user"
+      }
+    },
+    "message": {
+      "message_id": "om_test_greeting",
+      "root_id": "",
+      "parent_id": "",
+      "chat_id": "oc_test_jobs_group",
+      "chat_type": "group",
+      "message_type": "text",
+      "content": "{\"text\":\"@岗位助手 写招呼 【BOSS】美团 - AI业务运营｜15-30K·13薪｜上海 岗位要求：AI Agent、业务流程自动化、一线培训推广、效果评估\"}",
+      "mentions": [
+        {
+          "key": "@_user_1",
+          "name": "岗位助手"
+        }
+      ]
+    }
+  }
+}

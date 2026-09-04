@@ -57,13 +57,19 @@
 当前接入统一 AI Router 的任务包括：
 
 - `profile`：根据简历和求职目标生成候选人画像 Markdown。
-- `search_keywords`：基于候选人画像和 `config/search_strategy.json` 优化每日搜索关键词；失败时回退静态关键词。
+- `search_keywords`：基于候选人画像、`config/search_strategy.json` 和最近历史关键词效果优化每日搜索关键词；失败时回退静态关键词。空构建包首次运行没有历史数据时，会自然退化为“画像 + 静态策略”。
 - `fit_evaluation`：在确定性评分之后复核前 N 个岗位，补充匹配理由、风险和建议；失败时保留规则评分。
 - `greeting`：生成 100-200 字打招呼话术；失败时回退规则模板。
 
 提示词目前是源码内联，不是单独的配置文件。对应位置是 `src/greeting/build_candidate_profile.js`、`src/strategy/search_keyword_generator.js`、`src/evaluate/ai_fit_refiner.js` 和 `src/greeting/greeting_recommender.js`。部署者可以修改源码提示词，但尚未提供面向非开发者的 prompt 配置面板或 JSON prompt 文件。
 
 这意味着：仓库本身不包含 Codex 账号、OpenAI Key 或任何模型凭据；是否调用 AI、调用哪种 AI，都由部署者本地配置决定。
+
+AI 调用采用“握手 + 流式 + 长总时限”协议，避免模型已开始运行却被短超时误杀：
+
+- `AI_DEFAULT_HANDSHAKE_TIMEOUT_MS`（默认 90000，兼容旧 `AI_DEFAULT_TIMEOUT_MS`）：等待模型进程**开始产出输出**的窗口；窗口内无任何输出才 Kill。
+- 收到首个输出即视为已启动，此后不再使用短时限，改用 `AI_DEFAULT_TOTAL_TIMEOUT_MS`（默认 1800000，即 30 分钟）作为总预算并持续等待；Codex 以 `codex exec --ephemeral --skip-git-repo-check --sandbox read-only --json` 调用，JSONL 事件流与进度实时写入 `logs/ai_runtime/`，最终答案优先取事件流 result 事件。
+- 单步可用 `AI_<用途>_HANDSHAKE_TIMEOUT_MS` / `AI_<用途>_TOTAL_TIMEOUT_MS` 覆盖；OpenAI 兼容 API 兜底同样按长总时限执行。详细说明见 `AI消息群聊转发agent/recruitment-agent/README.md`。
 
 ## 搜索、评分与跟踪规则
 
@@ -74,6 +80,10 @@
 - 宽泛词：扩大召回，再靠后续筛选和评分过滤。
 
 启用 AI 后，系统会先读取当前候选人画像，再调用统一 AI Router 优化关键词；如果 AI 不可用或返回格式不合格，就继续使用静态 `search_strategy.json`。
+
+关键词优化会参考最近采集和评分产物中的效果数据，包括关键词候选数、实际入库数、高匹配岗位数、空结果、重复和平台异常。它的目标不是只搜岗位名，而是组合“AI/智能体/Agent/大模型 + 项目管理/交付/产品/平台/解决方案”等职责词，尽量发现标题不标准但职责匹配的机会。
+
+当前采集仍以搜索结果第一页为主；BOSS 的滚动用于定位当前页详情，不等于跨页采集。后续如要避免通用关键词长期只看到第一页，应增加低频、可配置、带风控降频的页码轮换策略。
 
 岗位评分分两段执行：
 
@@ -89,6 +99,8 @@
 - `data/push_state.json`：推送去重、送达记录和报告状态。
 - `src/store/job_store_update.js`：入库、快照和开放状态刷新。
 - `src/push/job_push_draft_and_send.js`：挑选新增/变化岗位生成日报，送达后才标记已推送。
+
+晚间 19:00-21:00 日报只有 `success` 会封版；如果出现 `partial_success` 或 `failed`，会在窗口内按 `SCHEDULE_REPORT_RETRY_GAP_MINUTES` 重试，默认 30 分钟。采集告警会写明含义、保存记录数、失败关键词、平台错误、影响和建议动作，便于判断是登录态、安全验证、平台风控还是浏览器/CDP 问题。
 
 ## 当前适配环境
 
@@ -132,6 +144,10 @@
 4. 使用可见登录脚本完成招聘网站登录。
 5. 先运行草稿模式，确认岗位数据和日报内容。
 6. 最后再开启飞书真实推送和定时任务。
+
+## 版本迭代
+
+- **2026-09-04 v0.3.0**：本地 Codex 调用链升级为“握手 + 流式 + 长总时限”协议（`src/core/ai_router.js`）；统一 AI Router 覆盖候选人画像、搜索关键词、评分复核与打招呼话术；新增 `src/strategy/search_keyword_generator.js`（AI 关键词优化）、`src/evaluate/ai_fit_refiner.js`（AI 评分复核）；空包/示例画像下话术返回“候选人画像尚未配置”引导；晚间报告 `partial_success/failed` 在 21:00 前自动重试。
 
 ## 安全说明
 

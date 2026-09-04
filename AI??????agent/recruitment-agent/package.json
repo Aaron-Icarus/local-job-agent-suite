@@ -1,0 +1,28 @@
+{
+  "name": "boss-job-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BOSS job collection, fit evaluation, draft-first daily push workflow.",
+  "scripts": {
+    "daily": "node src/main/daily_workflow.js",
+    "scheduled": "node src/main/scheduled_entry.js",
+    "login-check": "node src/platforms/boss/check_boss_login_status.js",
+    "login-check-new-tab": "node src/platforms/boss/check_boss_login_status.js --new",
+    "liepin-login-check": "node src/platforms/liepin/check_liepin_login_status.js",
+    "liepin-open": "node tools/open_liepin_page.js",
+    "liepin-collect": "node src/platforms/liepin/liepin_batch_collect.js",
+    "draft": "node src/push/job_push_draft_and_send.js",
+    "send": "node src/push/send_existing_draft.js",
+    "job-store": "node src/store/job_store_update.js",
+    "status-refresh": "node src/store/job_store_update.js refresh",
+    "greeting": "node src/greeting/generate_greeting_for_job.js",
+    "greeting-agent": "node src/greeting/job_greeting_agent.js",
+    "candidate-profile": "node src/greeting/build_candidate_profile.js",
+    "collect": "node src/platforms/boss/boss_batch_collect.js",
+    "screen": "node src/platforms/boss/postprocess_boss_stage2.js",
+    "evaluate": "node src/evaluate/evaluate_job_fit.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

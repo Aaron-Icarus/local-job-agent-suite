@@ -1,0 +1,92 @@
+找工作双项目：快速使用说明（脱敏构建包）
+
+目录约定
+- 招聘信息智能体：AI消息群聊转发agent\recruitment-agent
+- 消息平台：定时执行agent程序\message-platform
+- 本包不含任何岗位库、候选人资料、登录态、飞书群 ID 或密钥。
+
+首次使用
+1. 安装 Node.js 20+；进入 message-platform\vendor 后执行 pnpm install --frozen-lockfile。
+2. 复制两个项目中的 .env.example 为 .env，只填自己的凭据。
+3. 用自己的简历生成或填写 recruitment-agent\config\candidate_profiles\sample_candidate.md，并更新 current.json。
+4. 在 message-platform 的 channels.config.json 和 routes.config.json 替换 oc_test_* 示例群 ID；确认后才将 enabled 设为 true。
+5. 先运行 node .\message-platform\tests\run_tests.js；测试不会发送飞书消息。
+
+一次可见登录（不会后台最小化）
+在 recruitment-agent 目录执行：
+powershell -ExecutionPolicy Bypass -File .\tools\open_chrome_cdp_for_login.ps1
+
+猎聘单独登录：
+powershell -ExecutionPolicy Bypass -File .\tools\open_liepin_cdp_for_login.ps1
+
+完成登录后，正常定时运行会复用项目专用 Chrome Profile，并在非登录模式下后台运行。
+
+常用命令（均先 cd 到 recruitment-agent）
+- 仅生成草稿：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -DraftOnly
+- 按调度窗口执行：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
+- 手工运行：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1
+
+安全边界
+- 真实发送、重新登录、启动飞书长连接前，需要得到当前操作者的明确授权。
+- 不共享 .env、Chrome Profile、data、outputs、logs 或个人简历。
+
+首次使用快速引导（从零配置）
+本包是脱敏空项目：不含真实简历、岗位库、登录态、飞书群或密钥；采集、发送和浏览器自动启动默认关闭。首次执行前若缺配置，招聘 Agent 会给出中文检查清单、记录本地日志并停止，不会启动浏览器或采集。
+
+1. 安装运行环境
+   - 安装 Node.js 20+。
+   - 进入 定时执行agent程序\message-platform\vendor，执行：pnpm install --frozen-lockfile。
+
+2. 配置候选人资料和招聘策略
+   - 在 AI消息群聊转发agent\recruitment-agent 中复制 .env.example 为 .env。
+   - 把 config\candidate_profiles\sample_candidate.md 替换为自己的真实、可验证经历和求职目标；确认 config\candidate_profiles\current.json 指向该文件。
+   - 按需求调整 config\search_strategy.json 与 config\profile_rules.json。
+   - 首次建议只开启草稿流程：ENABLE_COLLECT=true，选择 ENABLE_BOSS=true 或 ENABLE_LIEPIN=true，ENABLE_PUSH=true，SEND_MODE=draft。不要先设为 send。
+
+3. 登录招聘网站
+   - 在 recruitment-agent 目录运行一次可见登录命令，完成 BOSS 或猎聘的扫码、验证码和安全验证。
+   - 登录成功后，正常运行会使用项目专用 Chrome Profile；自动后台运行前可保持 AUTO_START_CDP=false，确认无误后再按需开启。
+
+4. 配置飞书消息平台
+   - 在 定时执行agent程序\message-platform 中复制 .env.example 为 .env，填写自己的 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_TEST_CHAT_ID/FEISHU_CHAT_ID 等信息。
+   - 在 channels.config.json 中，将 oc_test_moi_group、oc_test_jobs_group 替换为自己的测试群 ID，并更新 allowed_chat_ids。
+   - 在 routes.config.json 中替换相同的群 ID。
+   - 完成飞书应用权限、机器人入群和事件订阅后，才将对应 channel 与 conversation 的 enabled 改为 true。
+   - 需要招聘日报真实发送时，在招聘 Agent 的 .env 中设置 FEISHU_SEND_MODE=app，并配置同一套飞书发送凭据；先使用测试群验证。
+
+5. 首次验证与逐步启用
+   - 在 message-platform 目录运行：node .\tests\run_tests.js。该测试不发送真实飞书消息。
+   - 在 recruitment-agent 目录运行 -DraftOnly，确认 data\、outputs\、草稿和日志符合预期。
+   - 确认草稿后才配置 SEND_MODE=send 或 SCHEDULE_SEND_MODE=send，并注册/启用定时任务。
+
+项目架构、步骤与使用逻辑
+
+本项目由两个可以独立运行、也可以协作的应用组成。
+
+1. 招聘信息智能体（AI消息群聊转发agent\recruitment-agent）
+   - 输入：个人简历/求职目标、搜索策略、已登录的 BOSS/猎聘浏览器。
+   - 流程：构建候选人画像 -> 采集岗位 -> 初筛与匹配评价 -> 建立本地岗位库和岗位编号 -> 生成日报草稿与打招呼话术。
+   - 输出：本地 data\ 中的岗位库/状态，outputs\ 中的采集和评价结果，以及 drafts\ 中的待确认报告。首次运行后才会生成这些数据。
+   - 可独立使用：不配置飞书时保持 SEND_MODE=draft，即可只做采集、筛选和草稿生成。
+
+2. 消息发送转发与智能体调度平台（定时执行agent程序\message-platform）
+   - 主动发送：接收招聘 Agent 的日报或告警请求，统一处理飞书发送、三次重试、幂等和发送审计。
+   - 入站处理：接收群内 @机器人消息 -> 清洗文本 -> 路由到 Agent -> 维护多轮会话 -> 引用回复。
+   - 可独立使用：可单独作为飞书消息桥接、ping 测试或其他 Agent 的统一发送网关；岗位编号话术功能需要相邻招聘 Agent 已生成岗位数据。
+
+3. 两应用协作的标准顺序
+   - 先准备简历和求职目标，建立候选人画像。
+   - 完成招聘网站登录，运行招聘 Agent 获取最新岗位并生成本地岗位库。
+   - 先审阅日报草稿；确认后才通过消息平台推送飞书。
+   - 群内需要生成打招呼话术时，可提供岗位编号；也可粘贴职位链接、JD 文字或截图识别文字，由消息平台调用招聘 Agent。
+   - 定时模式会在设定窗口判断上午、下午采集与晚间报告；电脑未开机的时段不会补跑。任何配置、登录或发送异常都会记录本地日志并在具备飞书凭据时发送告警。
+
+运行后产生的 .env、Chrome Profile、data、outputs、logs 都是本机运行资料，不应再次打包或分享。
+
+统一 AI 调用与评分调整
+
+- 候选人画像、搜索关键词、岗位评分复核和打招呼话术都通过 recruitment-agent\src\core\ai_router.js 调用；共享包默认 AI_DEFAULT_MODE=disabled，不会自行调用 Codex 或 API。
+- 需要启用时，在 recruitment-agent\.env 中把 AI_DEFAULT_MODE 改为 auto；默认先使用已登录的本机 Codex，再尝试已填写的 AI_OPENAI_API_KEY。也可为单一步骤填写 AI_GREETING_*、AI_PROFILE_*、AI_FIT_EVALUATION_*、AI_SEARCH_KEYWORDS_*；步骤失败后才整体回退默认配置。
+- 相关提示词目前写在源码内，不是独立配置文件：画像生成在 src\greeting\build_candidate_profile.js，关键词优化在 src\strategy\search_keyword_generator.js，评分复核在 src\evaluate\ai_fit_refiner.js，打招呼话术在 src\greeting\greeting_recommender.js。
+- 确定性评分规则集中在 recruitment-agent\config\profile_rules.json。当前已直接生效的是目标城市、低优先区域、薪资区间和活跃度天数。
+- 分数权重、岗位标题/职责识别词和关注等级阈值集中在 recruitment-agent\src\evaluate\evaluate_job_fit.js 的 evaluate 函数中；当前 targetRoles、preferredTopics、avoidTopics 仍未自动驱动该代码，修改它们本身不会改变分数。要调整这些维度，需同步改评价器，或在后续把识别词和权重完全外置为配置。AI 复核只在确定性基线之后进行，AI 不可用时会明确标记为规则兜底。

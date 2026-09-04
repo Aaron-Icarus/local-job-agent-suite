@@ -1,0 +1,29 @@
+{
+  "schema": "2.0",
+  "header": {
+    "event_id": "evt_test_ping",
+    "event_type": "im.message.receive_v1"
+  },
+  "event": {
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_test_user"
+      }
+    },
+    "message": {
+      "message_id": "om_test_ping",
+      "root_id": "",
+      "parent_id": "",
+      "chat_id": "oc_test_jobs_group",
+      "chat_type": "group",
+      "message_type": "text",
+      "content": "{\"text\":\"@岗位助手 ping\"}",
+      "mentions": [
+        {
+          "key": "@_user_1",
+          "name": "岗位助手"
+        }
+      ]
+    }
+  }
+}
