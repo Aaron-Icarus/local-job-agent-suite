@@ -1,0 +1,25 @@
+{
+  "project_name": "消息发送转发与智能体调度平台",
+  "default_enabled": true,
+  "env_files": [
+    ".env",
+    "../../AI消息群聊转发agent/recruitment-agent/.env"
+  ],
+  "state": {
+    "session_store_path": "data/state/bridge_sessions.json",
+    "event_log_path": "logs/bridge_events.log",
+    "event_store_path": "data/state/inbound_events.json"
+  },
+  "outbound": {
+    "enabled": true,
+    "default_mode": "app",
+    "max_attempts": 3,
+    "description": "主动推送独立于入站事件处理。负责统一发送、三次重试、幂等键和本地日志。"
+  },
+  "message_ai": {
+    "provider": "rule",
+    "fallback_provider": "codex",
+    "enabled": false,
+    "description": "第一版使用确定性规则识别消息。后续可切换为 codex、cdh 或 openai_api 做意图识别和消息清洗兜底。"
+  }
+}

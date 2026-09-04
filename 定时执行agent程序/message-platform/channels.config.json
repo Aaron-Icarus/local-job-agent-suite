@@ -1,0 +1,65 @@
+{
+  "channels": [
+    {
+      "source_id": "feishu_moi_test_group",
+      "channel_account_id": "feishu_default_account",
+      "credential_profile_id": "feishu_default",
+      "credential_env": {
+        "app_id": "FEISHU_APP_ID",
+        "app_secret": "FEISHU_APP_SECRET",
+        "chat_id": "FEISHU_TEST_CHAT_ID"
+      },
+      "type": "feishu",
+      "enabled": false,
+      "credentials_ref": "env:FEISHU_APP_ID,FEISHU_APP_SECRET,FEISHU_CHAT_ID",
+      "adapter": {
+        "mode": "long_connection",
+        "event_type": "im.message.receive_v1",
+        "sdk_package": "@larksuiteoapi/node-sdk"
+      },
+      "allowed_chat_ids": ["oc_test_moi_group"],
+      "allowed_user_ids": [],
+      "bot_aliases": [
+        "机器人"
+      ],
+      "mention_required": true,
+      "command_prefixes": [
+        "/agent",
+        "机器人",
+        "岗位助手"
+      ]
+    },
+    {
+      "source_id": "feishu_jobs_group",
+      "channel_account_id": "feishu_default_account",
+      "credential_profile_id": "feishu_default",
+      "credential_env": {
+        "app_id": "FEISHU_APP_ID",
+        "app_secret": "FEISHU_APP_SECRET",
+        "chat_id": "FEISHU_CHAT_ID"
+      },
+      "type": "feishu",
+      "enabled": false,
+      "credentials_ref": "env:FEISHU_APP_ID,FEISHU_APP_SECRET,FEISHU_CHAT_ID",
+      "adapter": {
+        "mode": "event_callback",
+        "path": "/events/feishu",
+        "verify_token_env": "FEISHU_EVENT_VERIFY_TOKEN",
+        "encrypt_key_env": "FEISHU_EVENT_ENCRYPT_KEY"
+      },
+      "allowed_chat_ids": ["oc_test_jobs_group"],
+      "allowed_user_ids": [],
+      "bot_aliases": [
+        "机器人",
+        "AI助手",
+        "岗位助手"
+      ],
+      "mention_required": true,
+      "command_prefixes": [
+        "/agent",
+        "机器人",
+        "岗位助手"
+      ]
+    }
+  ]
+}

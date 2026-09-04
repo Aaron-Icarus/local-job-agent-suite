@@ -1,0 +1,43 @@
+# Local secrets
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+
+# Installed dependencies
+**/node_modules/
+
+# Runtime logs and state
+**/logs/
+**/*.log
+**/*.jsonl
+**/dispatch_state.json
+**/job_store.json
+**/job_display_index.json
+
+# Browser profiles and local caches
+**/ChromeProfile/
+**/chrome-profile/
+**/.cache/
+**/tmp/
+**/temp/
+
+# Recruitment runtime data. Keep placeholder directories only.
+**/data/*
+!**/data/.gitkeep
+!**/data/drafts/
+**/data/drafts/*
+!**/data/drafts/.gitkeep
+!**/data/sent/
+**/data/sent/*
+!**/data/sent/.gitkeep
+
+# Generated reports. Keep placeholder directories only.
+**/outputs/*
+!**/outputs/.gitkeep
+
+# OS/editor noise
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
