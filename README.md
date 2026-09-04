@@ -29,7 +29,7 @@
 1. 配置候选人简历、求职意向和岗位筛选规则。
 2. 手动触发一次可见浏览器登录 BOSS、猎聘等招聘渠道。
 3. 招聘 Agent 按计划采集岗位信息，并写入本地岗位库。
-4. 系统对岗位做去重、编号、基础筛选和 AI/规则评分。
+4. 系统对岗位做去重、编号、确定性规则评分，并在启用 AI 时做评分复核。
 5. 每日生成岗位报告草稿；确认配置后可推送到飞书群。
 6. 群内需要岗位话术时，可通过岗位编号、链接、JD 文本或截图文字触发生成。
 
@@ -37,23 +37,58 @@
 
 本项目的 AI 使用是透明且可配置的。
 
-分享包默认使用最小策略：`GREETING_MODE=rules`，即只使用本地规则模板，不会自动调用外部 LLM，也不会要求 API Key。
+分享包默认使用最小策略：`AI_DEFAULT_MODE=disabled`，不会自动调用 Codex、OpenAI 兼容 API 或其他外部 LLM，也不会要求 API Key。
 
 如果使用方明确开启 AI 模式，可以通过 `AI消息群聊转发agent/recruitment-agent/.env` 配置：
 
-- `GREETING_MODE=auto` 或 `GREETING_MODE=ai`
-- `GREETING_AI_PROVIDER_ORDER=codex_runtime,openai_api`
+- `AI_DEFAULT_MODE=auto`
+- `AI_DEFAULT_PROVIDER_ORDER=codex_runtime,openai_api`
 - `CODEX_RUNTIME_COMMAND=...`
-- `GREETING_OPENAI_API_KEY=...` 或 `OPENAI_API_KEY=...`
+- `AI_OPENAI_API_KEY=...` 或 `OPENAI_API_KEY=...`
+- 单步骤覆盖：`AI_PROFILE_*`、`AI_SEARCH_KEYWORDS_*`、`AI_FIT_EVALUATION_*`、`AI_GREETING_*`
 
 调用优先级是：
 
-1. 先尝试本机已配置的 Codex runtime 命令，也就是调用本机可用的 Codex/LLM 入口，而不是默认走 API。
+1. 先尝试本机已配置的 Codex runtime，也就是调用本机已登录的 Codex/LLM 入口；如果未配置自定义命令，则默认尝试 `codex exec`。
 2. Codex runtime 不可用时，再尝试 OpenAI 兼容 API。
-3. 如果 AI 仍不可用，且 `GREETING_AI_FALLBACK=true`，则降级为可审计的规则模板。
-4. 如果没有可用 AI 且禁用了兜底，会记录日志并返回 AI 不可用错误。
+3. 搜索关键词、岗位评分复核、打招呼话术如果 AI 不可用，会降级到静态策略或确定性规则。
+4. 候选人画像生成没有可靠的规则兜底；AI 不可用时会直接报错。
+
+当前接入统一 AI Router 的任务包括：
+
+- `profile`：根据简历和求职目标生成候选人画像 Markdown。
+- `search_keywords`：基于候选人画像和 `config/search_strategy.json` 优化每日搜索关键词；失败时回退静态关键词。
+- `fit_evaluation`：在确定性评分之后复核前 N 个岗位，补充匹配理由、风险和建议；失败时保留规则评分。
+- `greeting`：生成 100-200 字打招呼话术；失败时回退规则模板。
+
+提示词目前是源码内联，不是单独的配置文件。对应位置是 `src/greeting/build_candidate_profile.js`、`src/strategy/search_keyword_generator.js`、`src/evaluate/ai_fit_refiner.js` 和 `src/greeting/greeting_recommender.js`。部署者可以修改源码提示词，但尚未提供面向非开发者的 prompt 配置面板或 JSON prompt 文件。
 
 这意味着：仓库本身不包含 Codex 账号、OpenAI Key 或任何模型凭据；是否调用 AI、调用哪种 AI，都由部署者本地配置决定。
+
+## 搜索、评分与跟踪规则
+
+每日搜索关键词的基础策略在 `AI消息群聊转发agent/recruitment-agent/config/search_strategy.json`。它按三层组织：
+
+- 岗位信息：直接搜索目标岗位名，命中更准。
+- 经历关键词：用简历经历和目标方向组合，发现标题不标准但职责匹配的岗位。
+- 宽泛词：扩大召回，再靠后续筛选和评分过滤。
+
+启用 AI 后，系统会先读取当前候选人画像，再调用统一 AI Router 优化关键词；如果 AI 不可用或返回格式不合格，就继续使用静态 `search_strategy.json`。
+
+岗位评分分两段执行：
+
+- `src/evaluate/evaluate_job_fit.js`：确定性规则评分，生成角色类型、非技术匹配、AI/智能体相关性、项目交付、产品能力、行业经验、薪资、地点、活跃度和详情可信度等分项分。
+- `src/evaluate/ai_fit_refiner.js`：AI 复核层，默认只复核前 `AI_FIT_EVALUATION_MAX_ROWS` 条，并把结果写回 `overall_fit_score`、`application_success_score`、`focus_level`、`match_reasons_json`、`risk_reasons_json` 等字段。
+
+评分规则是显性的，但尚未完全配置化。`config/profile_rules.json` 当前直接影响目标城市、低优先区域、薪资区间和活跃度阈值；分数权重、标题/职责识别词、关注等级阈值仍在 `src/evaluate/evaluate_job_fit.js` 中。也就是说，规则集中在招聘 Agent 的 `config/` 与 `src/evaluate/` 区域，能看、能改，但还不能只靠一个配置文件完成所有调整。
+
+岗位跟踪使用本地文件维护，不依赖数据库：
+
+- `data/job_store.json`：长期岗位库。
+- `data/job_display_index.json`：对外岗位编号和近似重复关系。
+- `data/push_state.json`：推送去重、送达记录和报告状态。
+- `src/store/job_store_update.js`：入库、快照和开放状态刷新。
+- `src/push/job_push_draft_and_send.js`：挑选新增/变化岗位生成日报，送达后才标记已推送。
 
 ## 当前适配环境
 
@@ -80,7 +115,7 @@
 
 - 暂未使用正式数据库；岗位库、发送审计和运行状态主要使用本地 JSON/JSONL 文件。
 - 暂未提供多用户系统、账号权限后台或 SaaS 部署面板。
-- AI 调用采用最小策略，默认不调用外部模型；高级模型编排、成本控制和多模型评估暂未产品化。
+- AI 调用采用最小策略，默认不调用外部模型；高级模型编排、成本控制、多模型评估和独立 prompt 配置暂未产品化。
 - 岗位沟通跟进模块尚未上线，例如是否已沟通过、沟通进展、面试状态、后续提醒等。
 - 暂未承诺服务器无人值守采集成功率；招聘平台安全验证仍可能中断采集。
 - 当前重点围绕 BOSS、猎聘和飞书链路，其他招聘渠道需要新增采集适配器。

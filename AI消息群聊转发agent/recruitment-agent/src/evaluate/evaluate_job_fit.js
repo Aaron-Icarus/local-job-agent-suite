@@ -3,6 +3,10 @@ const path = require("path");
 const crypto = require("crypto");
 const { shanghaiDateKey } = require("../core/time_utils");
 const { fieldZh, fieldDescriptions } = require("../core/field_dictionary");
+const { loadEnv } = require("../core/load_env");
+const { refineEvaluations } = require("./ai_fit_refiner");
+
+loadEnv();
 
 const processDir = path.resolve(__dirname, "..", "..");
 const outputsDir = path.join(processDir, "outputs");
@@ -318,9 +322,11 @@ function evaluate(row) {
   };
 }
 
+async function main() {
 const payload = JSON.parse(fs.readFileSync(inputPath, "utf8"));
 const records = payload.records || [];
-const evaluated = records.map((row) => ({ ...row, ...evaluate(row) }));
+const deterministic = records.map((row) => ({ ...row, ...evaluate(row) }));
+const evaluated = await refineEvaluations(records, deterministic, profileRules);
 
 const existingHeaders = [];
 for (const row of records) {
@@ -333,6 +339,10 @@ const evalHeaders = [
   "evaluation_date",
   "evaluation_version",
   "evaluation_basis",
+  "ai_evaluation_status",
+  "ai_evaluation_provider",
+  "ai_evaluation_model",
+  "ai_evaluation_reason",
   "role_type_fit_score",
   "nontechnical_fit_score",
   "ai_agent_fit_score",
@@ -359,6 +369,10 @@ const zh = {
   evaluation_date: "评价日期",
   evaluation_version: "评价版本",
   evaluation_basis: "评价依据",
+  ai_evaluation_status: "AI评价状态",
+  ai_evaluation_provider: "AI提供方",
+  ai_evaluation_model: "AI模型",
+  ai_evaluation_reason: "AI评价说明",
   role_type_fit_score: "岗位类型适配分",
   nontechnical_fit_score: "非技术岗适配分",
   ai_agent_fit_score: "AI/智能体适配分",
@@ -457,3 +471,9 @@ console.log(JSON.stringify({
     keyword: row.keyword,
   })),
 }, null, 2));
+}
+
+main().catch((error) => {
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});

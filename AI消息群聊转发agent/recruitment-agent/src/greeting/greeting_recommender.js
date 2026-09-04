@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const { loadCurrentCandidateProfile } = require("./candidate_profile");
+const { runAiTask } = require("../core/ai_router");
 
 const rootDir = path.resolve(__dirname, "..", "..");
 
@@ -251,26 +252,18 @@ async function recommendGreetingResult(row, options = {}) {
   const initialRuleResult = ruleResult();
   if (initialRuleResult.strategy === "rules:profile-required") return initialRuleResult;
   if (mode === "rules" || mode === "rule") return initialRuleResult;
-  const providers = mode === "api" || mode === "openai_api"
-    ? ["openai_api"]
-    : mode === "codex" || mode === "codex_runtime"
-      ? ["codex_runtime"]
-      : String(process.env.GREETING_AI_PROVIDER_ORDER || "codex_runtime,openai_api").split(",").map((item) => item.trim()).filter(Boolean);
-  const errors = [];
-  for (const provider of providers) {
-    try {
-      const result = provider === "codex_runtime"
-        ? await callCodexRuntimeGreeting(row, { maxLength })
-        : await callOpenAiGreeting(row, { maxLength });
-      appendAiLog({ purpose: "recruiter_greeting", provider, status: "success", strategy: result.strategy });
-      return result;
-    } catch (error) {
-      errors.push(`${provider}: ${error.message}`);
-      appendAiLog({ purpose: "recruiter_greeting", provider, status: "failed", error: error.message });
-    }
+  const ai = await runAiTask({
+    purpose: "greeting",
+    options: { mode, max_output_tokens: envNumber("AI_GREETING_MAX_OUTPUT_TOKENS", 220) },
+    instructions: "你负责为应聘者向招聘方发出的第一句中文打招呼生成文案。仅输出一段可直接发送的中文，不要标题、编号、解释或换行。只使用候选人画像中可验证事实，优先最近三年与岗位直接相关经历；不要虚构或堆砌能力。语气自然、专业、主动，控制在指定长度内。",
+    input: { max_length: maxLength, candidate: currentCandidatePayload(), job: compactJobPayload(row) },
+  });
+  if (ai.ok) {
+    const message = normalizeGreetingLength(ai.text, { maxLength });
+    if (message) return { message, strategy: `ai:${ai.provider}:${ai.model}`, basis: `AI Router ${ai.fallback ? "default fallback" : "configured provider"}` };
   }
-  if (!fallback) throw new Error(`AI unavailable: ${errors.join("; ")}`);
-  return { ...ruleResult(), strategy: "rules:ai-fallback", basis: `AI unavailable: ${errors.join("; ")}` };
+  if (!fallback) throw new Error(`AI 调用不可用：${ai.reason || "未返回有效文本"}`);
+  return { ...ruleResult(), strategy: "rules:ai-fallback", basis: `AI 未调用成功：${ai.reason || "未返回有效文本"}` };
 }
 
 module.exports = { recommendGreeting, recommendGreetingResult };

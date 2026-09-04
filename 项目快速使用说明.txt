@@ -82,3 +82,11 @@ powershell -ExecutionPolicy Bypass -File .\tools\open_liepin_cdp_for_login.ps1
    - 定时模式会在设定窗口判断上午、下午采集与晚间报告；电脑未开机的时段不会补跑。任何配置、登录或发送异常都会记录本地日志并在具备飞书凭据时发送告警。
 
 运行后产生的 .env、Chrome Profile、data、outputs、logs 都是本机运行资料，不应再次打包或分享。
+
+统一 AI 调用与评分调整
+
+- 候选人画像、搜索关键词、岗位评分复核和打招呼话术都通过 recruitment-agent\src\core\ai_router.js 调用；共享包默认 AI_DEFAULT_MODE=disabled，不会自行调用 Codex 或 API。
+- 需要启用时，在 recruitment-agent\.env 中把 AI_DEFAULT_MODE 改为 auto；默认先使用已登录的本机 Codex，再尝试已填写的 AI_OPENAI_API_KEY。也可为单一步骤填写 AI_GREETING_*、AI_PROFILE_*、AI_FIT_EVALUATION_*、AI_SEARCH_KEYWORDS_*；步骤失败后才整体回退默认配置。
+- 相关提示词目前写在源码内，不是独立配置文件：画像生成在 src\greeting\build_candidate_profile.js，关键词优化在 src\strategy\search_keyword_generator.js，评分复核在 src\evaluate\ai_fit_refiner.js，打招呼话术在 src\greeting\greeting_recommender.js。
+- 确定性评分规则集中在 recruitment-agent\config\profile_rules.json。当前已直接生效的是目标城市、低优先区域、薪资区间和活跃度天数。
+- 分数权重、岗位标题/职责识别词和关注等级阈值集中在 recruitment-agent\src\evaluate\evaluate_job_fit.js 的 evaluate 函数中；当前 targetRoles、preferredTopics、avoidTopics 仍未自动驱动该代码，修改它们本身不会改变分数。要调整这些维度，需同步改评价器，或在后续把识别词和权重完全外置为配置。AI 复核只在确定性基线之后进行，AI 不可用时会明确标记为规则兜底。

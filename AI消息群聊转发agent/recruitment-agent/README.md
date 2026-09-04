@@ -183,14 +183,17 @@ powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
 - 近似重复岗位仍按原渠道正常推送，但排序靠后；如果对标岗位之前已经在报告中推荐过，会额外提示。
 - 相似度阈值和比较窗口可用 `SIMILAR_JOB_THRESHOLD`、`SIMILAR_JOB_WINDOW_DAYS` 调整，默认分别为 `0.8` 和 `45` 天。
 
-打招呼话术默认使用本地规则生成，不调用外部 AI。需要 AI 生成时可配置：
+## 统一 AI 调用
 
-- `GREETING_MODE=rules`：默认值，只用本地规则。
-- `GREETING_MODE=auto`：配置了 `GREETING_OPENAI_API_KEY` 或 `OPENAI_API_KEY` 时调用 AI；否则自动回落本地规则。
-- `GREETING_MODE=ai`：优先调用 AI；如果 `GREETING_AI_FALLBACK=true`，失败时回落本地规则。
-- `GREETING_OPENAI_MODEL`、`GREETING_OPENAI_BASE_URL`、`GREETING_MAX_LENGTH`、`GREETING_AI_TIMEOUT_MS` 可分别配置模型、接口地址、长度和超时。
+候选人画像、搜索关键词、岗位评分复核和打招呼话术均通过 `src/core/ai_router.js` 调用。共享包默认 `AI_DEFAULT_MODE=disabled`，不会在未配置时调用 Codex 或 API。需要启用时，将 `.env` 中的模式改为 `auto`，它会优先使用已登录的本机 Codex，再尝试可选的 OpenAI 兼容 API。
 
-当前推荐人由 `config/candidate_profiles/current.json` 指向一个 Markdown 画像。构建包内仅保留不含个人信息的 `sample_candidate.md`；使用前请替换为自己的可验证经历、求职目标和约束。AI 话术模式会将该画像和单个岗位文本一同发送给模型；日报只会对最终进入推送的岗位生成话术，不会为未推送岗位调用 AI。
+全局配置使用 `AI_DEFAULT_*`；也可用 `AI_GREETING_*`、`AI_PROFILE_*`、`AI_FIT_EVALUATION_*`、`AI_SEARCH_KEYWORDS_*` 覆盖单个步骤。步骤配置失败后才会完整回退至默认配置。调用日志不含简历、JD 或提示词；评分、关键词和话术输出都会标记 AI 成功或规则/静态降级。
+
+提示词目前是源码内联，不是独立配置文件：画像生成在 `src/greeting/build_candidate_profile.js`，关键词优化在 `src/strategy/search_keyword_generator.js`，评分复核在 `src/evaluate/ai_fit_refiner.js`，打招呼话术在 `src/greeting/greeting_recommender.js`。部署者可以改源码 prompt，但暂未提供面向非开发者的 prompt JSON 或管理界面。
+
+确定性评分分两层：`config/profile_rules.json` 当前直接驱动城市、低优先区域、薪资和活跃度参数；`src/evaluate/evaluate_job_fit.js` 管理分项权重、岗位/职责识别词和关注等级阈值。`targetRoles`、`preferredTopics`、`avoidTopics` 目前尚未自动驱动评价器，修改它们本身不会改变分数；需要同步改评价器，或后续将这些规则完全外置。建议先在草稿模式验证再调整代码权重。
+
+当前推荐人由 `config/candidate_profiles/current.json` 指向一个 Markdown 画像。构建包内仅保留不含个人信息的 `sample_candidate.md`；使用前请替换为自己的可验证经历、求职目标和约束。AI 关键词会读取画像和现有搜索策略；AI 评分复核会读取岗位文本、画像规则和确定性基线；AI 话术会读取画像和单个岗位文本。日报只会对最终进入推送的岗位生成话术，不会为未推送岗位调用话术 AI。
 
 更新简历或求职目标时，先把已提取的简历文字、补充信息和预期岗位写入一个文本文件，再执行：
 
@@ -198,7 +201,7 @@ powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
 npm run candidate-profile -- --input .\candidate_source.txt --id my_candidate
 ```
 
-该命令需要配置 `PROFILE_OPENAI_API_KEY`、`OPENAI_API_KEY` 或 `GREETING_OPENAI_API_KEY`，会重写对应候选人 Markdown 并将其设为当前推荐人。
+该命令走统一 AI 路由；未启用 AI 时会明确报错而不会写入伪造画像。成功后会重写对应候选人 Markdown 并将其设为当前推荐人。
 
 ## 话术智能体接口
 

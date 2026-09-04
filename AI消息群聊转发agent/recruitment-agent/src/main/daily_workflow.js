@@ -5,6 +5,7 @@ const { loadEnv, envBool, envNumber } = require("../core/load_env");
 const { validatePreflight, errorText, configuredEnvPath } = require("../core/preflight");
 const { shanghaiDateKey } = require("../core/time_utils");
 const { sendRecruitmentNotification } = require("../push/outbound_sender");
+const { resolveSearchStrategy } = require("../strategy/search_keyword_generator");
 
 loadEnv();
 
@@ -110,15 +111,16 @@ function requiredOutputPath(parsed, field, label) {
   return filePath;
 }
 
-function keywordSpecText() {
-  const config = JSON.parse(fs.readFileSync(strategyPath, "utf8"));
+async function keywordSpecText() {
+  const resolved = await resolveSearchStrategy();
+  const config = resolved.strategy;
   const specs = [];
   for (const level of config.levels || []) {
     for (const keyword of level.keywords || []) {
       specs.push(`${level.type}::${keyword}`);
     }
   }
-  return {
+  return { ai: resolved.ai,
     perKeyword: envNumber("PER_KEYWORD", config.defaultPerKeyword || 8),
     maxTotal: envNumber("MAX_TOTAL", config.defaultMaxTotal || 50),
     specText: specs.join(",")
@@ -165,7 +167,8 @@ async function main() {
   if (process.env.INPUT_LIEPIN_EVALUATED_JSON) evaluatedPaths.push({ platform: "liepin", path: assertFreshInput(process.env.INPUT_LIEPIN_EVALUATED_JSON, today, "猎聘 evaluated") });
 
   if (envBool("ENABLE_COLLECT", true)) {
-    const strategy = keywordSpecText();
+    const strategy = await keywordSpecText();
+    appendLog("search keyword strategy resolved", strategy.ai);
     const stageName = `daily_${today.replace(/-/g, "")}`;
     const tasks = [];
     if (enableBoss) {
