@@ -24,6 +24,21 @@ function appendLog(message, detail = {}) {
   console.log(JSON.stringify(entry));
 }
 
+function alertsSuppressed() {
+  return envBool("SUPPRESS_ALERTS", false)
+    || String(process.env.ALERT_SEND_MODE || "").trim().toLowerCase() === "none";
+}
+
+async function sendWorkflowAlert(text, options = {}) {
+  if (alertsSuppressed()) {
+    const preview = String(text || "").replace(/\s+/g, " ").slice(0, 160);
+    const topic = options.topic || "recruitment_alert";
+    appendLog("workflow alert suppressed", { topic, preview, reason: "SUPPRESS_ALERTS/ALERT_SEND_MODE" });
+    return { skipped: true, reason: "alerts suppressed", topic };
+  }
+  return sendRecruitmentNotification(text, options);
+}
+
 function runNode(args, label) {
   appendLog(`${label} started`, { args });
   const result = spawnSync(process.execPath, args, { cwd: rootDir, encoding: "utf8", env: process.env });
@@ -293,7 +308,7 @@ async function main() {
     const stageName = `daily_${today.replace(/-/g, "")}`;
     const tasks = [];
     if (enableBoss) {
-      tasks.push((async () => {
+      tasks.push(async () => {
         if (envBool("ENABLE_LOGIN_CHECK", true)) {
           const login = await runNodeAsync(["src/platforms/boss/check_boss_login_status.js"], "boss-login-check");
           if (!login.ok) return { platform: "boss", ok: false, error: "登录态校验失败", stderr: String(login.stderr || "").slice(-4000) };
@@ -307,10 +322,10 @@ async function main() {
           return { platform: "boss", ok: false, error: "采集进程失败", stderr: String(collect.stderr || "").slice(-4000) };
         }
         return { platform: "boss", ok: true, rawPath: latestFile(new RegExp(`^boss_${stageName}_jobs_.*\\.json$`)) };
-      })());
+      });
     }
     if (enableLiepin) {
-      tasks.push((async () => {
+      tasks.push(async () => {
         if (envBool("ENABLE_LOGIN_CHECK", true)) {
           const login = await runNodeAsync(["src/platforms/liepin/check_liepin_login_status.js"], "liepin-login-check");
           if (!login.ok) return { platform: "liepin", ok: false, error: "登录态校验失败", stderr: String(login.stderr || "").slice(-4000) };
@@ -324,9 +339,13 @@ async function main() {
           return { platform: "liepin", ok: false, error: "采集进程失败", stderr: String(collect.stderr || "").slice(-4000) };
         }
         return { platform: "liepin", ok: true, rawPath: latestFile(new RegExp(`^liepin_${stageName}_jobs_.*\\.json$`)) };
-      })());
+      });
     }
-    const results = await Promise.all(tasks);
+    const results = [];
+    appendLog("platform collection mode", { mode: "sequential", reason: "shared Chrome CDP session" });
+    for (const task of tasks) {
+      results.push(await task());
+    }
     for (const result of results) {
       appendLog("platform collect result", result);
       if (result.ok && result.rawPath) rawPaths.push({ platform: result.platform, path: result.rawPath });
@@ -335,7 +354,7 @@ async function main() {
         if (result.partial) partialPlatforms.push(result.platform);
         const level = result.partial ? "部分成功" : "失败";
         try {
-          const alert = await sendRecruitmentNotification(buildCollectionAlert(result), { topic: "recruitment_alert" });
+          const alert = await sendWorkflowAlert(buildCollectionAlert(result), { topic: "recruitment_alert" });
           appendLog("platform collection alert attempted", { platform: result.platform, partial: Boolean(result.partial), alert });
         } catch (alertError) {
           appendLog("platform collection alert failed", { platform: result.platform, error: alertError.message });
@@ -414,7 +433,7 @@ async function main() {
 main().catch(async (error) => {
   appendLog("workflow failed", { error: error.stack || error.message });
   try {
-    const alert = await sendRecruitmentNotification(`【招聘信息智能体告警】${today} 流程运行失败：${error.message}`, { topic: "recruitment_alert" });
+    const alert = await sendWorkflowAlert(`【招聘信息智能体告警】${today} 流程运行失败：${error.message}`, { topic: "recruitment_alert" });
     appendLog("failure alert attempted", { delivered: Boolean(alert?.status >= 200 && alert?.status < 300), result: alert });
   } catch (alertError) {
     appendLog("failure alert failed", { error: alertError.message });
