@@ -142,14 +142,19 @@ function profileNotConfiguredText() {
 async function recommendGreetingResult(row, options = {}) {
   const notConfigured = profileNotConfiguredText();
   if (notConfigured) return notConfigured;
-  const mode = String(options.mode || process.env.GREETING_MODE || "auto").toLowerCase();
+  const configuredMode = String(options.mode || process.env.AI_GREETING_MODE || process.env.GREETING_MODE || "").trim().toLowerCase();
   const maxLength = options.maxLength || envNumber("GREETING_MAX_LENGTH", 200);
   const fallback = envBool("GREETING_AI_FALLBACK", true);
   const ruleResult = () => ruleGreetingResult(row, { maxLength });
-  if (mode === "rules" || mode === "rule") return ruleResult();
+  if (configuredMode === "rules" || configuredMode === "rule") return ruleResult();
+  if (configuredMode === "disabled" || configuredMode === "off") {
+    return { ...ruleResult(), strategy: "rules:ai-disabled", basis: "AI 已按配置关闭，使用规则模板" };
+  }
+  const aiOptions = { max_output_tokens: envNumber("GREETING_AI_MAX_OUTPUT_TOKENS", 220) };
+  if (configuredMode) aiOptions.mode = configuredMode;
   const ai = await runAiTask({
     purpose: "greeting",
-    options: { mode, max_output_tokens: envNumber("GREETING_AI_MAX_OUTPUT_TOKENS", 220) },
+    options: aiOptions,
     instructions: "你负责为应聘者向招聘方发出的第一句中文打招呼生成文案。仅输出一段可直接发送的中文，不要标题、编号、解释或换行。只使用候选人画像中可验证事实，优先最近三年与岗位直接相关经历；不要虚构或堆砌能力。语气自然、专业、主动，控制在指定长度内。",
     input: { max_length: maxLength, candidate: currentCandidatePayload(), job: compactJobPayload(row) },
   });

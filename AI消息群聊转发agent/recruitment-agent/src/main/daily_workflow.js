@@ -212,6 +212,26 @@ function extractDiagnosticHints(result) {
   return Array.from(new Set(hints));
 }
 
+function collectionBlockingReason(platform, filePath, stderr) {
+  let text = String(stderr || "");
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      const stats = Array.isArray(payload.keywordStats) ? payload.keywordStats : [];
+      text += `\n${stats.map((item) => item.collectionError || "").filter(Boolean).join("\n")}`;
+    } catch {
+      // Keep the stderr-only judgement when the partial artifact cannot be read.
+    }
+  }
+  if (String(platform).toLowerCase() === "boss" && /BOSS job list business error:\s*(37|38)\b|请登录后使用|环境存在异常|安全验证|验证码|captcha|verify/i.test(text)) {
+    return "平台登录/安全验证未通过，已阻断本平台 partial 数据进入后续流程";
+  }
+  if (/login_required|security_check|登录态校验失败/i.test(text)) {
+    return "登录态或安全校验未通过，已阻断本平台 partial 数据进入后续流程";
+  }
+  return "";
+}
+
 function buildCollectionAlert(result) {
   const label = platformLabel(result.platform);
   const summary = loadCollectionSummary(result.rawPath);
@@ -281,6 +301,8 @@ async function main() {
         const collect = await runNodeAsync(["src/platforms/boss/boss_batch_collect.js", stageName, String(strategy.perKeyword), String(strategy.maxTotal), strategy.specText], "boss-collect");
         if (!collect.ok) {
           const partialPath = tryLatestFile(new RegExp(`^boss_${stageName}_jobs_.*\\.json$`));
+          const blockingReason = collectionBlockingReason("boss", partialPath, collect.stderr);
+          if (blockingReason) return { platform: "boss", ok: false, rawPath: partialPath, error: blockingReason, stderr: String(collect.stderr || "").slice(-4000) };
           if (partialPath) return { platform: "boss", ok: true, partial: true, rawPath: partialPath, error: "采集部分完成，部分关键词失败", stderr: String(collect.stderr || "").slice(-4000) };
           return { platform: "boss", ok: false, error: "采集进程失败", stderr: String(collect.stderr || "").slice(-4000) };
         }

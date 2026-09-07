@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory=$true)]
   [string]$ReportPath,
   [string]$Subject = "岗位搜索汇总"
@@ -63,3 +63,5 @@ $client.Credentials = New-Object System.Net.NetworkCredential($smtpUser, $smtpPa
 $client.Send($message)
 
 Write-Output "Email sent"
+
+

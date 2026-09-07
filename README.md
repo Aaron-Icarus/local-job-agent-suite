@@ -160,6 +160,7 @@ AI 调用采用“握手 + 流式 + 长总时限”协议，避免模型已开�
 
 ## 版本迭代
 
+- **2026-09-07 v0.3.1**：新用户模拟流程验收修复版。基于一份全新模拟目录完成从空包 preflight、BOSS/猎聘可见登录、采集、筛选、入库、草稿到飞书网关发送的完整验证；同步修复 `AI_GREETING_MODE=rules/disabled` 被话术模块忽略的问题，单步 `rules/disabled` 不再回退全局 AI；加强 BOSS 登录校验为页面状态 + 业务接口双校验，避免未登录/风控页误判；BOSS 37/38、安全验证、登录失败产生的 partial 数据会被阻断进入日报；登录脚本读取 `.env` 中的 CDP 端口/Profile 配置；PowerShell 脚本保持 UTF-8 BOM，兼容中文路径和中文提示。
 - **2026-09-04 v0.3.0**：本地 Codex 调用链升级为“握手 + 流式 + 长总时限”协议（`src/core/ai_router.js`）；统一 AI Router 覆盖候选人画像、搜索关键词、评分复核与打招呼话术；新增 `src/strategy/search_keyword_generator.js`（AI 关键词优化）、`src/evaluate/ai_fit_refiner.js`（AI 评分复核）；空包/示例画像下话术返回“候选人画像尚未配置”引导；晚间报告 `partial_success/failed` 在 21:00 前自动重试。
 
 ## 安全说明

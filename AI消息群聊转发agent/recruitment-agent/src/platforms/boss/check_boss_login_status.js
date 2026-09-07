@@ -1,120 +1,174 @@
 const { loadEnv } = require("../../core/load_env");
+const { cdpBaseUrl, getJson, sleep, openWsForTab, evaluate } = require("../../core/cdp_common");
 
 loadEnv();
 
 const targetUrl = process.env.BOSS_LOGIN_CHECK_URL || "https://www.zhipin.com/web/geek/jobs";
 const args = new Set(process.argv.slice(2));
 const useNewTab = args.has("--new");
-const cdpHost = process.env.CDP_HOST || "127.0.0.1";
-const cdpPort = process.env.CDP_PORT || "9222";
-const cdpBaseUrl = process.env.CDP_BASE_URL || `http://${cdpHost}:${cdpPort}`;
 
-async function getJson(url, options = {}) {
-  const res = await fetch(url, options);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${url}`);
-  return res.json();
+function bossTab(tab) {
+  return tab.type === "page" && tab.webSocketDebuggerUrl && /zhipin\.com/.test(tab.url || "");
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function cdp(wsUrl) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
-    let seq = 0;
-    const pending = new Map();
-    ws.onopen = () => resolve({
-      send(method, params = {}) {
-        const id = ++seq;
-        ws.send(JSON.stringify({ id, method, params }));
-        return new Promise((res, rej) => {
-          pending.set(id, { res, rej });
-          setTimeout(() => {
-            if (pending.has(id)) {
-              pending.delete(id);
-              rej(new Error(`CDP timeout: ${method}`));
-            }
-          }, 8000);
-        });
-      },
-      close() {
-        ws.close();
-      }
-    });
-    ws.onerror = () => reject(new Error("WebSocket error"));
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.id && pending.has(msg.id)) {
-        const { res, rej } = pending.get(msg.id);
-        pending.delete(msg.id);
-        if (msg.error) rej(new Error(JSON.stringify(msg.error)));
-        else res(msg.result);
-      }
-    };
-  });
-}
-
-async function findOrCreateTab() {
-  if (useNewTab) {
-    const encoded = encodeURIComponent(targetUrl);
-    return getJson(`${cdpBaseUrl}/json/new?${encoded}`, { method: "PUT" });
+async function findCurrentBossTab(base, preferredId = "") {
+  const tabs = await getJson(`${base}/json/list`);
+  if (preferredId) {
+    const preferred = tabs.find((tab) => tab.id === preferredId && bossTab(tab));
+    if (preferred) return preferred;
   }
-  const tabs = await getJson(`${cdpBaseUrl}/json/list`);
-  const existing = tabs.find((tab) => tab.type === "page" && tab.webSocketDebuggerUrl && (tab.url || "").includes("zhipin.com"));
-  if (existing) {
-    await fetch(`${cdpBaseUrl}/json/activate/${existing.id}`).catch(() => {});
-    const refreshed = await getJson(`${cdpBaseUrl}/json/list`).catch(() => []);
-    return refreshed.find((tab) => tab.id === existing.id) || existing;
+  return tabs.find(bossTab) || null;
+}
+
+async function findOrCreateTab(base) {
+  if (!useNewTab) {
+    const existing = await findCurrentBossTab(base);
+    if (existing) return existing;
   }
   const encoded = encodeURIComponent(targetUrl);
-  return getJson(`${cdpBaseUrl}/json/new?${encoded}`, { method: "PUT" });
+  return getJson(`${base}/json/new?${encoded}`, { method: "PUT" });
 }
 
 function classify({ href, text }) {
   const combined = `${href}\n${text}`;
   if (/安全验证|环境异常|verify|_security_check/.test(combined)) return "security_check";
-  if (/passport|扫码登录|请登录|登录后|验证码/.test(combined) && !/消息|简历|沟通/.test(text)) return "login_required";
+  if (/登录\/注册|登录注册|passport|扫码登录|请登录|登录后|验证码/.test(combined) && !/消息|简历|沟通/.test(text)) return "login_required";
   if (/职位|搜索职位|薪资待遇|工作经验/.test(text) && /消息|简历|沟通|收藏/.test(text)) return "logged_in";
   return "unknown";
 }
 
 function classifyValue(value) {
+  if (!value) return "unknown";
   if (value.hasSecurityText) return "security_check";
+  if (value.hasLoginEntry) return "login_required";
   if (value.hasLoginText && !value.hasUserArea) return "login_required";
   if (value.hasJobShell && value.hasUserArea) return "logged_in";
   return classify({ href: value.href || "", text: value.sample || "" });
 }
 
-async function main() {
-  const tab = await findOrCreateTab();
-  await sleep(useNewTab ? 6000 : 2000);
-  const freshTabs = await getJson(`${cdpBaseUrl}/json/list`);
-  const freshTab = freshTabs.find((item) => item.id === tab.id) || tab;
-  const client = await cdp(freshTab.webSocketDebuggerUrl);
+function classifyApiProbe(probe) {
+  if (!probe) return "";
+  const code = Number(probe.apiCode);
+  const text = `${probe.apiMessage || ""}\n${probe.rawSample || ""}`;
+  if ([37, 38].includes(code) || /环境存在异常|安全验证|verify|captcha|验证码/i.test(text)) return "security_check";
+  if (/请登录|登录后|未登录|passport|扫码登录/i.test(text)) return "login_required";
+  if (probe.apiStatus >= 200 && probe.apiStatus < 300 && code === 0) return "logged_in";
+  return "";
+}
+
+function combineStatus(domStatus, apiStatus) {
+  if (["security_check", "login_required"].includes(apiStatus)) return apiStatus;
+  if (["security_check", "login_required"].includes(domStatus)) return domStatus;
+  if (apiStatus === "logged_in" && domStatus === "logged_in") return "logged_in";
+  if (apiStatus === "logged_in" && domStatus !== "logged_in") return "unknown";
+  return domStatus || apiStatus || "unknown";
+}
+
+async function inspectDom(tab) {
+  const expr = `(() => {
+    const text = document.body ? document.body.innerText : "";
+    return {
+      title: document.title,
+      href: location.href,
+      textLength: text.length,
+      hasUserArea: /消息|简历|沟通|收藏/.test(text),
+      hasJobShell: /职位|搜索职位|薪资待遇|工作经验/.test(text),
+      hasLoginText: /扫码登录|请登录|登录后|验证码/.test(text),
+      hasLoginEntry: /登录\\/注册|登录注册/.test(text),
+      hasSecurityText: /安全验证|环境异常|verify|_security_check/.test(text + location.href),
+      sample: text.slice(0, 300)
+    };
+  })()`;
+  const ws = await openWsForTab(tab);
   try {
-    await client.send("Runtime.enable");
-    const expr = `(() => {
-      const text = document.body ? document.body.innerText : "";
-      return {
-        title: document.title,
-        href: location.href,
-        textLength: text.length,
-        hasUserArea: /消息|简历|沟通|收藏/.test(text),
-        hasJobShell: /职位|搜索职位|薪资待遇|工作经验/.test(text),
-        hasLoginText: /扫码登录|请登录|登录后|验证码/.test(text),
-        hasSecurityText: /安全验证|环境异常|verify|_security_check/.test(text + location.href),
-        sample: text.slice(0, 300)
-      };
-    })()`;
-    const result = await client.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
-    const value = result.result.value;
-    const loginStatus = classifyValue(value);
-    console.log(JSON.stringify({ loginStatus, tabId: freshTab.id, ...value }, null, 2));
-    if (loginStatus !== "logged_in") process.exitCode = 2;
+    return await evaluate(ws, expr, 30000);
   } finally {
-    client.close();
+    ws.close();
   }
+}
+
+async function inspectApi(tab) {
+  const expr = `(async () => {
+    try {
+      const params = new URLSearchParams({ scene: '1', query: 'AI项目经理', city: '101020100', page: '1', pageSize: '1' });
+      const resp = await fetch('/wapi/zpgeek/search/joblist.json', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { accept: 'application/json, text/plain, */*', 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: params.toString()
+      });
+      const raw = await resp.text();
+      let json = null;
+      try { json = JSON.parse(raw); } catch {}
+      return {
+        ok: true,
+        apiStatus: resp.status,
+        apiCode: json && json.code,
+        apiMessage: (json && json.message) || "",
+        hasJobList: Array.isArray(json && json.zpData && json.zpData.jobList),
+        resCount: json && json.zpData && json.zpData.resCount,
+        rawSample: raw.slice(0, 180)
+      };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  })()`;
+  const ws = await openWsForTab(tab);
+  try {
+    return await evaluate(ws, expr, 30000);
+  } finally {
+    ws.close();
+  }
+}
+
+async function retryProbe(base, initialTab, probe) {
+  let tab = initialTab;
+  let lastError = "";
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(2000);
+      tab = await findCurrentBossTab(base, tab.id) || tab;
+    }
+    try {
+      const value = await probe(tab);
+      if (value) return { value, tab };
+    } catch (error) {
+      lastError = error.message;
+      if (!/navigated|closed|timeout|WebSocket/i.test(lastError)) break;
+    }
+  }
+  return { value: null, tab, error: lastError || "probe returned no value" };
+}
+
+async function main() {
+  const base = cdpBaseUrl();
+  let tab = await findOrCreateTab(base);
+  await sleep(useNewTab ? 8000 : 3000);
+  tab = await findCurrentBossTab(base, tab.id) || tab;
+
+  const domProbe = await retryProbe(base, tab, inspectDom);
+  tab = domProbe.tab;
+  const apiProbe = await retryProbe(base, tab, inspectApi);
+  tab = apiProbe.tab;
+
+  const value = domProbe.value || {
+    title: tab.title || "",
+    href: tab.url || "",
+    textLength: 0,
+    hasUserArea: false,
+    hasJobShell: false,
+    hasLoginText: false,
+    hasLoginEntry: false,
+    hasSecurityText: false,
+    sample: "",
+    domProbeError: domProbe.error || "Runtime.evaluate returned no value"
+  };
+  const apiValue = apiProbe.value || { ok: false, error: apiProbe.error || "api probe returned no value" };
+  const domStatus = classifyValue(value);
+  const apiStatus = classifyApiProbe(apiValue);
+  const loginStatus = apiValue && apiValue.ok === false && domStatus === "logged_in" ? "unknown" : combineStatus(domStatus, apiStatus);
+  console.log(JSON.stringify({ loginStatus, domStatus, tabId: tab.id, ...value, apiProbe: apiValue }, null, 2));
+  if (loginStatus !== "logged_in") process.exitCode = 2;
 }
 
 main().catch((error) => {

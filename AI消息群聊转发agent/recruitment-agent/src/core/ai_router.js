@@ -76,7 +76,8 @@ function resolveAiConfig(purpose, overrides = {}) {
     providers: providerListForMode(requestedMode, requestedProviders, defaultProviders),
     model: configuredModel || defaultModel,
   } : null;
-  const routes = stepRoute ? [stepRoute, defaultRoute] : [defaultRoute];
+  const stepDisablesAi = stepRoute && ["rules", "disabled"].includes(stepRoute.mode);
+  const routes = stepRoute ? (stepDisablesAi ? [stepRoute] : [stepRoute, defaultRoute]) : [defaultRoute];
   // Handshake window: how long we wait for the model process to *start producing output*
   // before we give up and kill it. Keeps the old AI_DEFAULT_TIMEOUT_MS behaviour by default.
   const handshakeTimeoutMs = numberValue(
