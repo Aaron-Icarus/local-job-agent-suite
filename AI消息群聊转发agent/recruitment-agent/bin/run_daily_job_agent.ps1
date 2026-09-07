@@ -32,6 +32,7 @@ if ($Send) {
 }
 if ($DraftOnly) {
   [Environment]::SetEnvironmentVariable("SEND_MODE", "draft", "Process")
+  [Environment]::SetEnvironmentVariable("SUPPRESS_ALERTS", "true", "Process")
 }
 if ($Scheduled) {
   $scheduledSendMode = [Environment]::GetEnvironmentVariable("SCHEDULE_SEND_MODE", "Process")

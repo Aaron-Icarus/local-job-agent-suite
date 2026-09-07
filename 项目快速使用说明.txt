@@ -1,6 +1,7 @@
 找工作双项目：快速使用说明（脱敏构建包）
 
 版本更新摘要
+- 2026-09-07 v0.3.2：-DraftOnly 草稿验证模式会禁止日报和告警真实发送，只生成本地草稿/日志；BOSS 与猎聘采集改为顺序执行，避免共享 Chrome CDP 时两个平台互相抢页面导致登录态误判。
 - 2026-09-07 v0.3.1：已按新用户模拟流程补齐并验证修复。空包缺配置时只做 preflight 中文提示和日志，不启动 Chrome、不采集；BOSS 登录改为页面 + 业务接口双校验；BOSS 登录/安全验证类 partial 数据会被阻断，避免旧数据混入日报；AI_GREETING_MODE=rules/disabled 会直接走规则话术，不再回退调用 Codex/API；登录脚本会读取 .env 中的 CDP 端口和 Profile 配置。
 - 2026-09-04 v0.3.0：统一 AI Router 覆盖画像、搜索关键词、评分复核和打招呼话术；默认关闭 AI 和发送；晚间日报失败/部分成功可在 21:00 前重试。
 
@@ -26,7 +27,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\open_liepin_cdp_for_login.ps1
 完成登录后，正常定时运行会复用项目专用 Chrome Profile，并在非登录模式下后台运行。
 
 常用命令（均先 cd 到 recruitment-agent）
-- 仅生成草稿：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -DraftOnly
+- 仅生成草稿：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -DraftOnly（不会真实发送日报，也不会真实发送采集/预检告警）
 - 按调度窗口执行：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
 - 手工运行：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1
 
