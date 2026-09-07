@@ -188,6 +188,7 @@ powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
 
 ## 版本迭代说明
 
+- **2026-09-07（v0.3.2）草稿验证与 CDP 顺序采集修复版**：`-DraftOnly` 现在会同时把日报发送和采集/预检告警置为本地草稿/日志模式，避免验证流程误发真实飞书群；`daily_workflow` 对 BOSS、猎聘改为顺序登录校验和顺序采集，降低两个平台共用 Chrome CDP profile 时互相导航、登录态误判和页面抢占的概率。已用正式登录态的小规模草稿流程验证完整链路成功。
 - **2026-09-07（v0.3.1）新用户模拟验收修复版**：用全新模拟目录跑通空包 preflight、BOSS/猎聘可见登录、采集、筛选、评价、入库、分平台草稿和飞书网关发送。修复话术模块未读取 `AI_GREETING_MODE` 的问题，`AI_GREETING_MODE=rules/disabled` 现在会直接规则降级，不再偷偷调用 Codex/API；AI Router 的单步 `rules/disabled` 不再回退 `AI_DEFAULT_*`。BOSS 登录检查加强为 DOM + 业务接口双校验；BOSS 37/38、验证码/安全验证、登录态失败类 partial 会阻断下游，避免旧数据进入日报。登录辅助脚本会先读取 `.env`，支持项目级 `CDP_PORT` 和 `CHROME_CDP_PROFILE_DIR`；PowerShell 脚本保持 UTF-8 BOM 以兼容中文路径和中文输出。
 - **2026-09-04（v0.3.0）本地 Codex 调用链升级**：AI 调用改为“握手 + 流式 + 长总时限”协议——等待模型**开始产出输出**的握手窗口内无响应才 Kill（默认 90s，兼容旧 `AI_DEFAULT_TIMEOUT_MS`）；一旦启动则不再用短超时，改用 30 分钟总时限并持续流式记录进度（`logs/ai_runtime/`），避免 Codex 已在运行却因 90s 一刀切被误杀。同时统一 AI 路由覆盖画像、搜索关键词、评分复核与话术四类用途。
 - 分享包安全性：空包/示例画像下话术生成会返回“候选人画像尚未配置”引导，不会输出虚构感模板话术；渠道/路由默认关闭，须自行替换群 ID 并显式启用。
