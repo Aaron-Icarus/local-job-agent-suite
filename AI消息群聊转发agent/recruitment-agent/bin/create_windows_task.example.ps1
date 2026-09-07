@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$TaskName = "BOSS Job Agent Daily",
   [string]$StartTime = "09:00",
   [int]$IntervalMinutes = 30,
@@ -54,3 +54,5 @@ $xml = @"
 "@
 
 Register-ScheduledTask -TaskName $escapedTaskName -Xml $xml -Force
+
+

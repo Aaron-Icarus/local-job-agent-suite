@@ -188,6 +188,7 @@ powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
 
 ## 版本迭代说明
 
+- **2026-09-07（v0.3.1）新用户模拟验收修复版**：用全新模拟目录跑通空包 preflight、BOSS/猎聘可见登录、采集、筛选、评价、入库、分平台草稿和飞书网关发送。修复话术模块未读取 `AI_GREETING_MODE` 的问题，`AI_GREETING_MODE=rules/disabled` 现在会直接规则降级，不再偷偷调用 Codex/API；AI Router 的单步 `rules/disabled` 不再回退 `AI_DEFAULT_*`。BOSS 登录检查加强为 DOM + 业务接口双校验；BOSS 37/38、验证码/安全验证、登录态失败类 partial 会阻断下游，避免旧数据进入日报。登录辅助脚本会先读取 `.env`，支持项目级 `CDP_PORT` 和 `CHROME_CDP_PROFILE_DIR`；PowerShell 脚本保持 UTF-8 BOM 以兼容中文路径和中文输出。
 - **2026-09-04（v0.3.0）本地 Codex 调用链升级**：AI 调用改为“握手 + 流式 + 长总时限”协议——等待模型**开始产出输出**的握手窗口内无响应才 Kill（默认 90s，兼容旧 `AI_DEFAULT_TIMEOUT_MS`）；一旦启动则不再用短超时，改用 30 分钟总时限并持续流式记录进度（`logs/ai_runtime/`），避免 Codex 已在运行却因 90s 一刀切被误杀。同时统一 AI 路由覆盖画像、搜索关键词、评分复核与话术四类用途。
 - 分享包安全性：空包/示例画像下话术生成会返回“候选人画像尚未配置”引导，不会输出虚构感模板话术；渠道/路由默认关闭，须自行替换群 ID 并显式启用。
 
@@ -199,7 +200,7 @@ Windows 计划任务或后台进程可能拿不到交互终端里的 `PATH`。�
 
 AI 调用采用“握手 + 流式 + 长总时限”：`AI_DEFAULT_HANDSHAKE_TIMEOUT_MS`（默认 90000，兼容旧 `AI_DEFAULT_TIMEOUT_MS`）等待模型进程开始产出输出，窗口内无输出才 Kill；收到首个 stdout/stderr 即视为启动成功，改用 `AI_DEFAULT_TOTAL_TIMEOUT_MS`（默认 1800000，即 30 分钟）作为总预算并持续等待。Codex 以 `codex exec --ephemeral --skip-git-repo-check --sandbox read-only --json` 调用，JSONL 事件流实时写入 `logs/ai_runtime/<purpose>_<时间>.log`（含握手、进度与最终结果，空闲每 30 秒记录心跳），最终答案优先取事件流的 result 事件；OpenAI 兼容 API 兜底同样按长总时限（响应头到达即握手成功）。单步可用 `AI_<用途>_HANDSHAKE_TIMEOUT_MS` / `AI_<用途>_TOTAL_TIMEOUT_MS` 覆盖默认值。
 
-全局配置使用 `AI_DEFAULT_*`；也可用 `AI_GREETING_*`、`AI_PROFILE_*`、`AI_FIT_EVALUATION_*`、`AI_SEARCH_KEYWORDS_*` 覆盖单个步骤。步骤配置失败后才会完整回退至默认配置。调用日志不含简历、JD 或提示词；评分、关键词和话术输出都会标记 AI 成功或规则/静态降级。
+全局配置使用 `AI_DEFAULT_*`；也可用 `AI_GREETING_*`、`AI_PROFILE_*`、`AI_FIT_EVALUATION_*`、`AI_SEARCH_KEYWORDS_*` 覆盖单个步骤。当单步 `MODE=rules/disabled` 时，直接使用规则/静态兜底，不再回退全局 AI；当单步为 `auto/codex_runtime/openai_api` 且模型调用失败时，才会完整回退至默认配置。调用日志不含简历、JD 或提示词；评分、关键词和话术输出都会标记 AI 成功或规则/静态降级。
 
 提示词目前是源码内联，不是独立配置文件：画像生成在 `src/greeting/build_candidate_profile.js`，关键词优化在 `src/strategy/search_keyword_generator.js`，评分复核在 `src/evaluate/ai_fit_refiner.js`，打招呼话术在 `src/greeting/greeting_recommender.js`。部署者可以改源码 prompt，但暂未提供面向非开发者的 prompt JSON 或管理界面。
 

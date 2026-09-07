@@ -1,5 +1,10 @@
 # AI消息群聊转发agent PLAN
 
+## 构建包版本更新说明
+
+- **2026-09-07 v0.3.1**：根据新用户完整模拟流程复核并同步修复。重点包括：`AI_GREETING_MODE=rules/disabled` 被话术模块正确识别，单步禁用 AI 不再回退全局 AI；BOSS 登录检查改为 DOM 状态 + 业务接口双校验；BOSS 37/38、安全验证、登录失败导致的 partial 数据会被阻断，不进入后续筛选/日报；可见登录脚本读取 `.env` 中的 CDP 端口/Profile 配置；PowerShell 脚本保持 UTF-8 BOM，兼容中文路径。
+- **2026-09-04 v0.3.0**：统一 AI Router 覆盖候选人画像、搜索关键词、岗位评分复核和打招呼话术；分享包默认关闭采集、发送和 AI，需使用者显式配置后启用。
+
 ## 初始目标
 
 搭建一个可配置的群聊消息转发 Agent 框架，使飞书群、未来微信群等外部对话源可以作为智能体输入入口。用户在群里 `@机器人` 发送指令后，系统能识别真实消息、路由到指定 Agent、执行逻辑，并把结果回发到群里。
@@ -141,6 +146,6 @@
 - 推送：岗位按稳定 ID、目标分组、内容变化和实际送达记录去重。安静日可发送空摘要，但不会因日期变化重复列出历史岗位。
 - 话术：支持岗位编号、岗位文字、链接/OCR 转文字。未知 A/B 编号必须明确提示，不生成“未知岗位”话术。AI 不可用时按配置降级到规则话术。
 - 登录：日常 CDP 浏览器后台运行；需要人工扫码、失效恢复或安全验证时，使用 `recruitment-agent/tools/open_chrome_cdp_for_login.ps1` 打开可见浏览器。BOSS 登录失败会被隔离，不使用旧数据。
-- AI：候选人画像、搜索关键词、岗位评分和打招呼话术统一通过 `recruitment-agent/src/core/ai_router.js` 调用。分享包默认关闭 AI；启用后默认优先本机已登录 Codex，`openai_api` 仅作为可选兜底。步骤可用 `AI_<用途>_*` 覆盖模型/提供方，失败后才整体回退 `AI_DEFAULT_*`；调用状态写入脱敏的 `logs/ai_calls.log`，评分、关键词和话术均保留是否降级的可见状态。Windows 定时环境可能没有交互终端 `PATH`，如出现 `spawn codex ENOENT`，应在自己的 `.env` 设置 `CODEX_RUNTIME_BIN` 绝对路径或 `CODEX_RUNTIME_COMMAND`，不要提交个人路径。
+- AI：候选人画像、搜索关键词、岗位评分和打招呼话术统一通过 `recruitment-agent/src/core/ai_router.js` 调用。分享包默认关闭 AI；启用后默认优先本机已登录 Codex，`openai_api` 仅作为可选兜底。步骤可用 `AI_<用途>_*` 覆盖模型/提供方；单步 `MODE=rules/disabled` 时直接使用规则/静态兜底，不再回退全局 AI，只有单步 AI 模型调用失败时才整体回退 `AI_DEFAULT_*`。调用状态写入脱敏的 `logs/ai_calls.log`，评分、关键词和话术均保留是否降级的可见状态。Windows 定时环境可能没有交互终端 `PATH`，如出现 `spawn codex ENOENT`，应在自己的 `.env` 设置 `CODEX_RUNTIME_BIN` 绝对路径或 `CODEX_RUNTIME_COMMAND`，不要提交个人路径。
 - 关键词：静态策略仍在 `recruitment-agent/config/search_strategy.json`；启用 AI 后，关键词生成必须结合当前候选人画像、静态策略和最近历史关键词效果，减少空结果、重复首页和风控高发关键词，并补充 AI+项目/交付/产品/智能体/大模型等组合词。空构建包首次运行没有历史数据，会自然退化为画像+静态策略。
 - 翻页：当前 BOSS/猎聘采集仍以搜索结果第一页为主，BOSS 滚动只用于定位当前页详情；跨页采集、页码轮换和基于历史重复率的低频翻页是后续优化项，实施时必须考虑平台风控降频。

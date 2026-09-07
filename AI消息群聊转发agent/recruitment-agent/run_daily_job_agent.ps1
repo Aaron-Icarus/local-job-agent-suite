@@ -1,4 +1,4 @@
-param(
+﻿param(
   [switch]$Send,
   [switch]$SendLatestDraft,
   [switch]$Scheduled,
@@ -19,3 +19,5 @@ if ($EnvPath) { $forward += @("-EnvPath", $EnvPath) }
 
 powershell -NoProfile -ExecutionPolicy Bypass -File $script @forward
 exit $LASTEXITCODE
+
+

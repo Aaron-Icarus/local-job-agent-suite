@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$HostName = $env:CDP_HOST,
   [int]$Port = $(if ($env:CDP_PORT) { [int]$env:CDP_PORT } else { 9222 }),
   [string]$ChromePath = $env:CHROME_PATH,
@@ -95,3 +95,5 @@ while ((Get-Date) -lt $deadline) {
 }
 
 throw "Chrome CDP did not start on $HostName`:$Port within 25 seconds"
+
+

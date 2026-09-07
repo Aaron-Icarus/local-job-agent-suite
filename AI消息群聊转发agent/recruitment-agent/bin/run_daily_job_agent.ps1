@@ -1,4 +1,4 @@
-param(
+﻿param(
   [switch]$Send,
   [switch]$SendLatestDraft,
   [switch]$Scheduled,
@@ -56,3 +56,5 @@ if ($Scheduled) {
 }
 
 exit $LASTEXITCODE
+
+
