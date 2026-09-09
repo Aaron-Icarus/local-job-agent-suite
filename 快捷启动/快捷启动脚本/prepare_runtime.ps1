@@ -19,7 +19,7 @@ $downloadsDir = Join-Path $packagesDir "_downloads"
 $extractDir = Join-Path $packagesDir "_node_extract_tmp"
 $corepackHome = Join-Path $packagesDir "corepack"
 $pnpmStoreDir = Join-Path $packagesDir "pnpm-store"
-$messageVendorSourceDir = Join-Path $packageRoot "定时执行agent程序\message-platform\vendor"
+$messageVendorSourceDir = Join-Path $packageRoot "消息平台\message-platform\vendor"
 $messageVendorRuntimeDir = Join-Path $packagesDir "message-platform-vendor"
 
 function Assert-InsidePackageArea {
@@ -53,12 +53,11 @@ function Get-NodeVersion {
   }
 }
 
-function Test-Node20Plus {
+function Test-Node224Plus {
   param([string]$NodeExe)
   $version = Get-NodeVersion $NodeExe
   if (-not $version) { return $false }
-  $major = [int](($version -split "\.")[0])
-  return ($major -ge 20)
+  return ([version]$version -ge [version]"22.4.0")
 }
 
 function Find-SystemNode {
@@ -77,17 +76,17 @@ function Get-ArchitectureName {
   $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
   if ($arch -eq "x64") { return "win-x64" }
   if ($arch -eq "arm64") { return "win-arm64" }
-  throw "暂不支持当前 CPU 架构：$arch。请手动安装 Node.js 20+。"
+  throw "暂不支持当前 CPU 架构：$arch。请手动安装 Node.js 22.4+。"
 }
 
 function Download-PortableNode {
   $targetNode = Join-Path $nodeDir "node.exe"
-  if (-not $ForceNode -and (Test-Node20Plus $targetNode)) {
+  if (-not $ForceNode -and (Test-Node224Plus $targetNode)) {
     Write-Host ("OK  已存在随包 Node.js：{0} ({1})" -f $targetNode, (Get-NodeVersion $targetNode)) -ForegroundColor Green
     return $targetNode
   }
   if ($SkipDownload) {
-    throw "未找到可用的随包 Node.js，且已指定 SkipDownload。请安装 Node.js 20+，或去掉 SkipDownload 让脚本自动下载。"
+    throw "未找到可用的随包 Node.js，且已指定 SkipDownload。请安装 Node.js 22.4+，或去掉 SkipDownload 让脚本自动下载。"
   }
 
   Ensure-Directory $downloadsDir | Out-Null
@@ -147,7 +146,7 @@ function Download-PortableNode {
   Move-Item -LiteralPath $expanded.FullName -Destination $safeNodeDir
   Remove-Item -LiteralPath $safeExtractDir -Recurse -Force
 
-  if (-not (Test-Node20Plus $targetNode)) {
+  if (-not (Test-Node224Plus $targetNode)) {
     throw "Node.js 安装后仍不可用：$targetNode"
   }
   Write-Host ("OK  已准备随包 Node.js：{0} ({1})" -f $targetNode, (Get-NodeVersion $targetNode)) -ForegroundColor Green
@@ -164,7 +163,7 @@ function Prepare-Pnpm {
 
   $corepack = Join-Path $nodeHome "corepack.cmd"
   if (-not (Test-Path -LiteralPath $corepack)) {
-    throw "当前 Node.js 不包含 corepack：$corepack。请换用 Node.js 20+ 官方发行版。"
+    throw "当前 Node.js 不包含 corepack：$corepack。请换用 Node.js 22.4+ 官方发行版。"
   }
 
   Write-Host ("正在启用 pnpm（corepack -> pnpm@{0}）..." -f $PnpmVersion) -ForegroundColor Cyan
@@ -224,8 +223,8 @@ Write-Host ("依赖准备目录：{0}" -f $packagesDir) -ForegroundColor Cyan
 
 if ($UseSystemNode) {
   $nodeExe = Find-SystemNode
-  if (-not $nodeExe -or -not (Test-Node20Plus $nodeExe)) {
-    throw "未找到可用的系统 Node.js 20+。请安装 Node.js 20+，或改用随包 Node 模式。"
+  if (-not $nodeExe -or -not (Test-Node224Plus $nodeExe)) {
+    throw "未找到可用的系统 Node.js 22.4+。请安装 Node.js 22.4+，或改用随包 Node 模式。"
   }
   $pnpmExe = Find-SystemPnpm
   if (-not $pnpmExe) {

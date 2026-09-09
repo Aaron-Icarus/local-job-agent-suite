@@ -19,12 +19,11 @@ function Get-ToolVersion {
   }
 }
 
-function Test-Node20PlusVersion {
+function Test-Node224PlusVersion {
   param([string]$Version)
   if (-not $Version) { return $false }
   try {
-    $major = [int](($Version -split "\.")[0])
-    return ($major -ge 20)
+    return ([version]$Version -ge [version]"22.4.0")
   } catch {
     return $false
   }
@@ -33,7 +32,7 @@ function Test-Node20PlusVersion {
 $systemNode = Get-Command node -ErrorAction SilentlyContinue
 $systemNodeVersion = ""
 if ($systemNode) { $systemNodeVersion = Get-ToolVersion $systemNode.Source @("-p", "process.versions.node") }
-$systemNodeOk = Test-Node20PlusVersion $systemNodeVersion
+$systemNodeOk = Test-Node224PlusVersion $systemNodeVersion
 $systemPnpm = Get-Command pnpm -ErrorAction SilentlyContinue
 $systemPnpmVersion = ""
 if ($systemPnpm) { $systemPnpmVersion = Get-ToolVersion $systemPnpm.Source @("--version") }

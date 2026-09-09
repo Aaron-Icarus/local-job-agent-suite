@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "timezone": "Asia/Shanghai",
+  "collection_windows": [
+    {
+      "id": "morning",
+      "label": "上午采集",
+      "start": "09:00",
+      "end": "13:00",
+      "trigger_times": ["09:00", "10:00", "11:00", "12:00"],
+      "max_successful_runs": 1
+    },
+    {
+      "id": "afternoon",
+      "label": "下午采集",
+      "start": "13:00",
+      "end": "19:00",
+      "trigger_times": ["13:00", "14:00", "15:00", "16:00", "17:00", "18:00"],
+      "max_successful_runs": 1
+    }
+  ],
+  "minimum_collection_gap_hours": 2,
+  "collection_completion_statuses": ["success"],
+  "report_window": {
+    "start": "19:00",
+    "end": "21:00",
+    "trigger_times": ["19:00", "19:30", "20:00", "20:30"],
+    "retry_gap_minutes": 30,
+    "collect_if_last_success_older_than_hours": 2
+  },
+  "watchdog": {
+    "enabled": true,
+    "time": "21:05"
+  },
+  "windows_task": {
+    "wake_computer": false,
+    "start_when_available": false,
+    "multiple_instances": "IgnoreNew"
+  }
+}

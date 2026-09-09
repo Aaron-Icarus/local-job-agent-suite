@@ -18,19 +18,20 @@
 
 ```text
 分享包根目录/
-  AI消息群聊转发agent/          招聘信息智能体
-  定时执行agent程序/            消息发送转发与智能体调度平台
+  招聘智能体/          招聘信息智能体
+  消息平台/            飞书消息发送、转发与群聊 Agent 路由平台
   docs/prd/                    两份离线 PRD
   快捷启动/                    依赖准备、快捷脚本、页面 UI、AI 使用 Skill
 ```
 
-- `AI消息群聊转发agent/recruitment-agent`
+- `招聘智能体/recruitment-agent`
   - 招聘信息智能体。
   - 负责读取候选人画像、登录招聘渠道、采集岗位、清洗字段、评分筛选、维护本地岗位库、生成日报和岗位话术。
 
-- `定时执行agent程序/message-platform`
-  - 消息发送转发与智能体调度平台。
+- `消息平台/message-platform`
+  - 飞书消息发送、转发与群聊 Agent 路由平台；目录名中的“定时执行”是历史命名。
   - 负责飞书消息发送、重试、发送审计、群消息接收、会话路由和 Agent 调用。
+  - 不负责招聘岗位采集和 19:00 日报定时判断；这部分代码在招聘信息智能体内。
 
 - `快捷启动`
   - 面向电脑小白和新对话 AI 的入口层。
@@ -64,7 +65,7 @@
 
 分享包默认使用最小策略：`AI_DEFAULT_MODE=disabled`，不会自动调用 Codex、OpenAI 兼容 API 或其他外部 LLM，也不会要求 API Key。
 
-如果使用方明确开启 AI 模式，可以通过 `AI消息群聊转发agent/recruitment-agent/.env` 配置：
+如果使用方明确开启 AI 模式，可以通过 `招聘智能体/recruitment-agent/.env` 配置：
 
 - `AI_DEFAULT_MODE=auto`
 - `AI_DEFAULT_PROVIDER_ORDER=codex_runtime,openai_api`
@@ -94,11 +95,11 @@ AI 调用采用“握手 + 流式 + 长总时限”协议，避免模型已开�
 
 - `AI_DEFAULT_HANDSHAKE_TIMEOUT_MS`（默认 90000，兼容旧 `AI_DEFAULT_TIMEOUT_MS`）：等待模型进程**开始产出输出**的窗口；窗口内无任何输出才 Kill。
 - 收到首个输出即视为已启动，此后不再使用短时限，改用 `AI_DEFAULT_TOTAL_TIMEOUT_MS`（默认 1800000，即 30 分钟）作为总预算并持续等待；Codex 以 `codex exec --ephemeral --skip-git-repo-check --sandbox read-only --json` 调用，JSONL 事件流与进度实时写入 `logs/ai_runtime/`，最终答案优先取事件流 result 事件。
-- 单步可用 `AI_<用途>_HANDSHAKE_TIMEOUT_MS` / `AI_<用途>_TOTAL_TIMEOUT_MS` 覆盖；OpenAI 兼容 API 兜底同样按长总时限执行。详细说明见 `AI消息群聊转发agent/recruitment-agent/README.md`。
+- 单步可用 `AI_<用途>_HANDSHAKE_TIMEOUT_MS` / `AI_<用途>_TOTAL_TIMEOUT_MS` 覆盖；OpenAI 兼容 API 兜底同样按长总时限执行。详细说明见 `招聘智能体/recruitment-agent/README.md`。
 
 ## 搜索、评分与跟踪规则
 
-每日搜索关键词的基础策略在 `AI消息群聊转发agent/recruitment-agent/config/search_strategy.json`。它按三层组织：
+每日搜索关键词的基础策略在 `招聘智能体/recruitment-agent/config/search_strategy.json`。它按三层组织：
 
 - 岗位信息：直接搜索目标岗位名，命中更准。
 - 经历关键词：用简历经历和目标方向组合，发现标题不标准但职责匹配的岗位。
@@ -125,13 +126,13 @@ AI 调用采用“握手 + 流式 + 长总时限”协议，避免模型已开�
 - `src/store/job_store_update.js`：入库、快照和开放状态刷新。
 - `src/push/job_push_draft_and_send.js`：挑选新增/变化岗位生成日报，送达后才标记已推送。
 
-晚间 19:00-21:00 日报只有 `success` 会封版；如果出现 `partial_success` 或 `failed`，会在窗口内按 `SCHEDULE_REPORT_RETRY_GAP_MINUTES` 重试，默认 30 分钟。采集告警会写明含义、保存记录数、失败关键词、平台错误、影响和建议动作，便于判断是登录态、安全验证、平台风控还是浏览器/CDP 问题。
+调度规则集中在 `招聘智能体/recruitment-agent/config/schedule_policy.json`。上午 09:00-12:00、下午 13:00-18:00 各有独立的每小时触发器，19:00-20:30 有独立的每半小时日报触发器；错过不补、不唤醒电脑。每半天最多成功采集一次，两次成功采集至少相隔 2 小时。21:05 另有独立日报缺失 watchdog。修改 JSON 后必须重新运行计划任务注册脚本。
 
 ## 当前适配环境
 
 当前第一目标环境是个人电脑或个人 Windows 工作站：
 
-- Node.js 20+
+- Node.js 22.4.0+（项目使用稳定的全局 `WebSocket`）
 - PowerShell
 - Chrome 或 Chromium
 - 可持久化的浏览器 Profile
@@ -183,27 +184,37 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 首次使用建议顺序：
 
-1. 先双击 `快捷启动/快捷启动脚本/准备运行环境.cmd`。脚本会先检查本机 Node.js 20+ 和 pnpm；本机可用时推荐使用本机环境，只补飞书 SDK 依赖；本机缺失或版本过低时才推荐准备随包 Node/pnpm。
+1. 先双击 `快捷启动/快捷启动脚本/准备运行环境.cmd`。脚本会先检查本机 Node.js 22.4.0+ 和 pnpm；本机可用时推荐使用本机环境，只补飞书 SDK 依赖；本机缺失或版本过低时才推荐准备随包 Node/pnpm。
 2. 打开 `快捷启动/页面UI/index.html` 或双击 `快捷启动/快捷启动脚本/启动控制台.cmd`。
 3. 点击/运行“首次配置检查”，按中文提示补齐 Chrome、`.env`、飞书群和候选人画像。
 4. 复制两个应用中的 `.env.example` 为 `.env`，只填自己的凭据。
 5. 替换 `config/candidate_profiles/sample_candidate.md` 为自己的简历和求职目标。
-6. 保持采集、发送和浏览器自动启动默认关闭，先跑本地测试。
-7. 使用可见登录脚本完成 BOSS/猎聘登录。
+6. 在控制台确认 `config/platform_channels.json`：只开启需要的平台整条任务流；BOSS `detail_capture` 默认保持开启。
+7. 只对已开启的平台使用可见登录脚本完成人工登录，并查看 `config/schedule_policy.json` 是否符合自己的时间。
 8. 先运行草稿模式，确认岗位数据和日报内容。
 9. 最后再开启飞书真实推送和定时任务。
 
+## 三个容易误解的配置
+
+- BOSS 的 `detail_capture=false` 不代表“未登录”。登录由可见登录脚本和登录检查负责；该设置只决定采集时是否自动点击岗位详情。当前默认是 `true`，用于取得完整 JD；如果人工关闭，列表岗位仍可进入“需人工确认详情”的候选。
+- `targetSalaryK` 是用户在 `config/profile_rules.json` 中填写的目标薪资；`salary_min_k`、`salary_max_k` 和 `active_days` 是招聘网站针对每一条岗位返回的数据。网站字段缺失时应标记为“未知”，不能当作 0。
+- `SCHEDULE_SEND_MODE` 未填写时按 `draft` 处理，只生成草稿。只有明确填写 `SCHEDULE_SEND_MODE=send` 并通过发送配置检查后，晚间定时流程才会真实发送。
+
+某个关键词搜索到 0 条是正常情况，不会单独判为程序失败；系统会继续处理其他关键词。若所有关键词都是 0 条，只要采集接口正常，仍会生成一份“本次没有可推荐新岗位”的零结果日报。没有当天输入文件、没有开启任何处理阶段或应生成报告却没有报告文件，则属于异常，程序会报错而不是静默成功。
+
 ## 版本迭代
 
+- **2026-09-10 v0.4.2**：两个顶层目录按真实职责统一改名为 `招聘智能体`、`消息平台`；同步更新所有代码相对引用、快捷启动、UI、自动化测试、PRD 与 AI Skill。Skill 新增必填/按需配置清单和首次登录告知规则；项目移动或改名后必须重建 Windows 任务注册地址。当前可配置调度保持上午 09:00–12:00、下午 13:00–18:00 独立整点触发，日报 19:00–20:30 每半小时触发，21:05 watchdog，不唤醒、错过不补。
+- **2026-09-10 v0.4.1**：新增独立可配置调度策略、14 个互不依附的主任务触发时间、21:05 日报缺失 watchdog、BOSS/猎聘整条任务流开关和控制台复选框；BOSS 详情采集默认开启；平台历史状态刷新隔离；Node.js 最低版本统一为 22.4.0；飞书 HTTP 回调增加鉴权、签名和重放防护。09:00 错过不会再使当天其他独立时间全部失效。
 - **2026-09-09 v0.3.13**：`快捷启动/随项目必须的安装包/` 改为“目录结构 + 安装说明”交付：`node/`、`corepack/`、`pnpm-store/`、`message-platform-vendor/`、`_downloads/` 每个子目录都新增 `INSTALL.md`，写明下载来源、复制命令、预期文件和安装/清理方式。已清理本地实际 Node、pnpm、SDK vendor 和下载缓存，只保留说明文档，GitHub PR 可展示依赖结构但不上传大体积二进制。
-- **2026-09-09 v0.3.12**：运行环境准备改为“本机优先、随包兜底”。`准备运行环境.cmd` 会先检测本机 Node.js 20+ / pnpm；本机可用时推荐使用本机环境并只补飞书 SDK 依赖，本机缺失或版本过低时才准备随包 Node/pnpm。快捷入口也改为优先使用本机 Node.js 20+；文档说明 `快捷启动/随项目必须的安装包/` 中上百 MB 的运行时缓存不是 GitHub 必需内容，可按需删除或离线打包。
+- **2026-09-09 v0.3.12**：运行环境准备改为“本机优先、随包兜底”。本机可用时优先使用本机环境，本机缺失或版本过低时再准备随包运行时；当前最低版本已由 v0.4.1 统一为 Node.js 22.4.0。
 - **2026-09-09 v0.3.11**：HTML 控制台确认根目录由当前页面路径动态识别，不写死 D 盘；所有“复制命令”改为完整一行 PowerShell 命令，会先进入实际分享包根目录再执行英文 `.ps1` 脚本，可直接粘贴到 CMD 或 PowerShell，不依赖当前终端目录。文档同步改为“页面生成真实路径命令，静态文档只给 `<分享包实际安装目录>` 模板”。
 - **2026-09-09 v0.3.10**：运行环境准备升级为新手菜单：可选择随包 Node/pnpm、本机已有 Node/pnpm、只检查状态，或显式注册随包 Node 到当前用户 PATH；新增 `查看运行环境状态.cmd` 与 `注册随包Node到用户Path.cmd`。HTML 控制台补充“命令不是文件管理器地址”的说明，避免用户把 `.\快捷启动\...` 粘贴进资源管理器地址栏。
 - **2026-09-09 v0.3.9**：补齐分享包“随项目必须的安装包”逻辑。新增 `准备运行环境.cmd/.ps1`，可下载官方便携版 Node.js 到 `快捷启动/随项目必须的安装包/node/`，通过 corepack 准备 pnpm，并把消息平台飞书 SDK 依赖安装到 `快捷启动/随项目必须的安装包/message-platform-vendor/`；用于新电脑/小白/离线交付时兜底，避免完全依赖系统 PATH。同步修复 `message-platform/vendor/pnpm-workspace.yaml` 缺少 `packages` 字段导致新电脑 `pnpm install` 失败的问题。
 - **2026-09-09 v0.3.8**：分享包确认 `docs/prd/` 作为唯一离线 PRD 目录，并新增 `快捷启动/` 交付结构。`快捷启动` 下新增依赖准备目录、CMD/PowerShell 双入口脚本、本地 HTML 控制台、127.0.0.1 文件管理器 helper、给 AI 快速接手用的 `SKILL.md` 和人类使用说明；普通链接默认新标签页打开，文件夹按钮通过 helper 用 Windows 文件管理器打开白名单目录。
 - **2026-09-09 v0.3.7**：本地 HTML 控制台链接默认新标签页打开；新增本地 helper，可通过浏览器按钮调用 127.0.0.1 服务，用 Windows 文件管理器打开 config、candidate_profiles、outputs、data、logs 等白名单目录。
 - **2026-09-09 v0.3.6**：修复部分成功采集被调度器误判为“未采集”导致半小时内反复追跑的问题；`report_only` 会加载当天同平台最新原始数据；BOSS 部分成功告警增加 `invalid_json` / `fetch failed` 的中文解释。BOSS 列表采集新增候选池排序，默认从返回列表候选池中按 AI/项目管理/薪资/岗位匹配信号选取详情候选，而不是机械截取前 N 个。CDP 未启动时，登录检查会输出中文配置/启动建议。
-- **2026-09-08 v0.3.5**：修复 BOSS 采集可见页面反复刷新和计划任务重入问题。招聘 Agent 增加 `data/workflow.lock` 运行锁，手工补跑和计划任务不会同时抢同一个 Chrome CDP；16:00-19:00 如果下午采集缺失，会补一次 `collect_only`，不再直接跳过。采集新增 5 分钟空闲超时和 15 分钟单平台总上限；BOSS 默认 `BOSS_UI_DETAIL_CAPTURE=false`，只用列表接口采集，不自动输入搜索框、点击岗位或反复刷新可见页面。
+- **2026-09-08 v0.3.5**：当时增加运行锁、采集超时和非侵入式 BOSS 列表模式；其中“BOSS 详情默认关闭”已被 v0.4.1 的默认开启替代，保留本条仅用于版本历史。
 - **2026-09-08 v0.3.4**：修复 BOSS 登录态读取误判。登录检查和 BOSS 采集都会优先选择稳定的 `www.zhipin.com/web/geek/jobs` 页面，避开“加载中/请稍候/安全验证/登录页”等不稳定标签页；登录判断改为 DOM 已登录或业务接口返回有效职位列表任一强证据成立即可通过；单个平台登录检查新增 `LOGIN_CHECK_TIMEOUT_MS`，默认 90 秒快速失败，避免拖满整轮 45 分钟。
 - **2026-09-07 v0.3.3**：新增 `自动化测试/` 离线烟测目录，内置“上海软件开发方向”的虚构候选人画像、搜索策略、评分规则摘要、样例岗位数据和一键测试脚本。测试会复制临时项目副本运行，不污染分享包；同时修正规则话术模板，使 `AI_GREETING_MODE=rules` 时会从当前候选人画像和岗位文本抽取软件开发/后端/全栈/AI 应用等关键词，不再复用固定的 AI 项目交付话术。
 - **2026-09-07 v0.3.2**：修复草稿验证边界和共享浏览器稳定性。`-DraftOnly` 现在会同时禁止日报发送和采集/预检告警发送，只生成本地草稿与日志，避免测试时误发正式群；BOSS 与猎聘采集改为顺序执行，避免两个平台同时操作同一个 Chrome CDP profile 导致登录态误判或页面互相抢占。已用正式登录态的小规模草稿流程验证：BOSS/猎聘均可完成登录校验、采集、筛选、评分、入库和草稿生成。

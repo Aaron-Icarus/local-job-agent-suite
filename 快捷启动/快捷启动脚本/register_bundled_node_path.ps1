@@ -16,8 +16,7 @@ if (-not (Test-Path -LiteralPath $nodeExe)) {
 }
 
 $version = (& $nodeExe -p "process.versions.node").Trim()
-$major = [int](($version -split "\.")[0])
-if ($major -lt 20) {
+if ([version]$version -lt [version]"22.4.0") {
   throw "随包 Node.js 版本过低：$version。请重新运行准备脚本更新。"
 }
 
