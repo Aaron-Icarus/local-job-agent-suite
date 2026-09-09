@@ -10,6 +10,28 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
+function Find-NodeForSharePackage {
+  $packageRoot = Resolve-Path -LiteralPath (Join-Path $root "..\..")
+  $bundledNodeDir = Join-Path $packageRoot "快捷启动\随项目必须的安装包\node"
+  $bundledNode = Join-Path $bundledNodeDir "node.exe"
+  if (Test-Path -LiteralPath $bundledNode) {
+    $env:PATH = "$bundledNodeDir;$env:PATH"
+    return $bundledNode
+  }
+  $cmd = Get-Command node -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  return ""
+}
+
+$node = Find-NodeForSharePackage
+if (-not $node) {
+  $packageRoot = Resolve-Path -LiteralPath (Join-Path $root "..\..")
+  $safeRoot = ([string]$packageRoot).Replace("'", "''")
+  Write-Host "未找到 Node.js。请先复制运行下面的完整命令，或安装 Node.js 20+：" -ForegroundColor Yellow
+  Write-Host "powershell -NoProfile -ExecutionPolicy Bypass -Command `"Set-Location -LiteralPath '$safeRoot'; & '.\快捷启动\快捷启动脚本\prepare_runtime_menu.ps1'`"" -ForegroundColor Cyan
+  exit 127
+}
+
 if (Test-Path -LiteralPath $EnvPath) {
   Get-Content -LiteralPath $EnvPath | ForEach-Object {
     $line = $_.Trim()
@@ -40,7 +62,7 @@ if ($Scheduled) {
   [Environment]::SetEnvironmentVariable("PREFLIGHT_SEND_MODE", $scheduledSendMode, "Process")
 }
 
-node .\src\main\preflight.js
+& $node .\src\main\preflight.js
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if ($Scheduled) {
@@ -49,11 +71,11 @@ if ($Scheduled) {
     powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\ensure_chrome_cdp.ps1
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
-  node .\src\main\scheduled_entry.js
+  & $node .\src\main\scheduled_entry.js
 } elseif ($SendLatestDraft) {
-  node .\src\push\send_existing_draft.js
+  & $node .\src\push\send_existing_draft.js
 } else {
-  node .\src\main\daily_workflow.js
+  & $node .\src\main\daily_workflow.js
 }
 
 exit $LASTEXITCODE

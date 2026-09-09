@@ -2,8 +2,35 @@ const path = require("path");
 const { appendJsonLine } = require("../core/json_file");
 const { processFeishuBody } = require("../app/process_event");
 
+function resolveSdkPath() {
+  const messageRoot = path.resolve(__dirname, "../..");
+  const packageRoot = path.resolve(messageRoot, "../..");
+  const candidates = [];
+  const envNodeModules = process.env.MESSAGE_PLATFORM_VENDOR_NODE_MODULES;
+  const envVendorRoot = process.env.MESSAGE_PLATFORM_VENDOR_ROOT;
+  if (envNodeModules) {
+    candidates.push(path.join(envNodeModules, "@larksuiteoapi", "node-sdk"));
+  }
+  if (envVendorRoot) {
+    candidates.push(path.join(envVendorRoot, "node_modules", "@larksuiteoapi", "node-sdk"));
+  }
+  candidates.push(path.join(packageRoot, "快捷启动", "随项目必须的安装包", "message-platform-vendor", "node_modules", "@larksuiteoapi", "node-sdk"));
+  candidates.push(path.join(messageRoot, "vendor", "node_modules", "@larksuiteoapi", "node-sdk"));
+
+  for (const candidate of candidates) {
+    try {
+      return require.resolve(candidate);
+    } catch (_) {
+      // Try the next known runtime location.
+    }
+  }
+  const safeRoot = packageRoot.replace(/'/g, "''");
+  const command = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '${safeRoot}'; & '.\\快捷启动\\快捷启动脚本\\prepare_runtime_menu.ps1'"`;
+  throw new Error(`未找到飞书长连接 SDK。请先运行完整命令：${command}；或设置 MESSAGE_PLATFORM_VENDOR_ROOT。`);
+}
+
 function sdk() {
-  return require(path.resolve(__dirname, "../../vendor/node_modules/@larksuiteoapi/node-sdk"));
+  return require(resolveSdkPath());
 }
 
 function toFeishuBody(event) {
@@ -55,4 +82,4 @@ function startFeishuLongConnection(config, channel) {
   return client;
 }
 
-module.exports = { startFeishuLongConnection, toFeishuBody };
+module.exports = { startFeishuLongConnection, toFeishuBody, resolveSdkPath };

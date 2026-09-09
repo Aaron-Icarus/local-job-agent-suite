@@ -1,4 +1,5 @@
 {
+	"packageManager": "pnpm@9.15.9",
 	"dependencies": {
 		"@larksuiteoapi/node-sdk": "1.73.1"
 	}

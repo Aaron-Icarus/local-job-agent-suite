@@ -1,9 +1,30 @@
+function buildSharePackageCommand(relativeScript) {
+  const path = require("path");
+  const recruitmentRoot = path.resolve(__dirname, "..", "..");
+  const packageRoot = path.resolve(recruitmentRoot, "..", "..");
+  const safeRoot = packageRoot.replace(/'/g, "''");
+  const safeRelative = String(relativeScript || "").replace(/'/g, "''");
+  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '${safeRoot}'; & '${safeRelative}'"`;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function getJson(url, options = {}) {
-  const res = await fetch(url, options);
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (error) {
+    if (/^https?:\/\/(127\.0\.0\.1|localhost):\d+\/json/i.test(url)) {
+      const bossLoginCommand = buildSharePackageCommand(".\\快捷启动\\快捷启动脚本\\open_boss_login.ps1");
+      const scheduledCommand = buildSharePackageCommand(".\\快捷启动\\快捷启动脚本\\run_scheduled.ps1");
+      throw new Error(
+        `无法连接本机 Chrome CDP：${url}。如需人工登录/安全验证，请复制运行：${bossLoginCommand}。如需让定时入口自动拉起 CDP，请复制运行：${scheduledCommand}。原始错误：${error.message}`
+      );
+    }
+    throw error;
+  }
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${url}`);
   return res.json();
 }

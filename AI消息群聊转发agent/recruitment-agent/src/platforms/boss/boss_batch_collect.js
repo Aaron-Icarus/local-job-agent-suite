@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { loadEnv } = require("../../core/load_env");
+const { loadEnv, envBool, envNumber } = require("../../core/load_env");
 
 loadEnv();
 
@@ -14,6 +14,11 @@ const maxTotal = Number(process.argv[4] || 50);
 const cdpHost = process.env.CDP_HOST || "127.0.0.1";
 const cdpPort = process.env.CDP_PORT || "9222";
 const cdpBaseUrl = process.env.CDP_BASE_URL || `http://${cdpHost}:${cdpPort}`;
+const bossStableUrl = process.env.BOSS_COLLECT_URL || process.env.BOSS_LOGIN_CHECK_URL || "https://www.zhipin.com/web/geek/jobs";
+const enableUiDetailCapture = envBool("BOSS_UI_DETAIL_CAPTURE", false);
+const enableRankedCandidateSelection = envBool("BOSS_RANK_CANDIDATES", true);
+const bossListCandidatePool = envNumber("BOSS_LIST_CANDIDATE_POOL", 20);
+const stableJobsRe = /https?:\/\/www\.zhipin\.com\/web\/geek\/jobs/i;
 function parseKeywordSpec(text) {
   const raw = text.trim();
   const match = raw.match(/^([^:：]+)[:：]{2}(.+)$/);
@@ -36,16 +41,58 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function getJson(url) {
-  const res = await fetch(url);
+async function getJson(url, options = {}) {
+  const res = await fetch(url, options);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${url}`);
   return res.json();
 }
 
+function bossTab(item) {
+  return item.type === "page" && item.webSocketDebuggerUrl && /zhipin\.com/.test(item.url || "");
+}
+
+function bossTabScore(item) {
+  if (!bossTab(item)) return -1000;
+  const url = item.url || "";
+  const title = item.title || "";
+  let score = 0;
+  if (stableJobsRe.test(url)) score += 100;
+  if (/\/job_detail\//i.test(url)) score += 40;
+  if (/www\.zhipin\.com/i.test(url)) score += 20;
+  if (/passport|login|_security_check|verify|captcha/i.test(url + title)) score -= 100;
+  if (/加载中|请稍候|loading/i.test(title)) score -= 30;
+  if (url === "about:blank") score -= 100;
+  return score;
+}
+
+function isUnstableBossTab(item) {
+  const text = `${item?.url || ""}\n${item?.title || ""}`;
+  return /加载中|请稍候|loading|passport|login|_security_check|verify|captcha/i.test(text);
+}
+
+async function activateTab(tab) {
+  if (!tab?.id) return;
+  try {
+    await getJson(`${cdpBaseUrl}/json/activate/${tab.id}`);
+  } catch {
+    // Best-effort only.
+  }
+}
+
+async function createStableTab() {
+  const encoded = encodeURIComponent(bossStableUrl);
+  return getJson(`${cdpBaseUrl}/json/new?${encoded}`, { method: "PUT" });
+}
+
 async function findTab() {
   const tabs = await getJson(`${cdpBaseUrl}/json`);
-  const tab = tabs.find((item) => item.type === "page" && item.webSocketDebuggerUrl && (item.url || "").includes("zhipin.com"));
-  if (!tab) throw new Error(`No zhipin.com page found on CDP endpoint ${cdpBaseUrl}.`);
+  const candidates = tabs.filter(bossTab).sort((a, b) => bossTabScore(b) - bossTabScore(a));
+  let tab = candidates[0];
+  if (!tab || isUnstableBossTab(tab) || bossTabScore(tab) < 60) {
+    tab = await createStableTab();
+    await sleep(3000);
+  }
+  await activateTab(tab);
   return tab;
 }
 
@@ -102,6 +149,17 @@ async function openWs() {
   await ws.cmd("Runtime.enable");
   await ws.cmd("Network.enable");
   await ws.cmd("Page.enable");
+  try {
+    const hrefResult = await ws.cmd("Runtime.evaluate", { expression: "location.href", returnByValue: true }, 5000);
+    const href = hrefResult.result?.value || "";
+    if (!stableJobsRe.test(href)) {
+      await ws.cmd("Page.navigate", { url: bossStableUrl }, 15000);
+      await sleep(5000);
+    }
+  } catch {
+    // The API fetch path still works on any authenticated zhipin origin; avoid
+    // failing the whole run only because a navigation probe was transient.
+  }
   return { tab, ws };
 }
 
@@ -248,6 +306,60 @@ function overallPriority(parts) {
   return "中";
 }
 
+function bossListCandidateScore(job, keyword, index) {
+  const title = String(job?.jobName || "");
+  const company = String(job?.brandName || "");
+  const skills = Array.isArray(job?.skills) ? job.skills.join(" ") : "";
+  const text = `${title} ${company} ${skills}`;
+  const salary = parseSalary(job?.salaryDesc || "");
+  const salaryPri = salaryPriority(salary.salary_min_k, salary.salary_max_k);
+  const fit = roleFit(title, "", job?.skills || []);
+  let score = 1000 - index;
+
+  if (/AI|人工智能|智能体|Agent|大模型|AIGC|LLM|机器人|具身智能/i.test(text)) score += 60;
+  if (/项目经理|项目管理|产品经理|交付|实施|解决方案|PMO|FDE|TPM/i.test(title)) score += 45;
+  if (/AI项目经理|AI 项目经理|人工智能项目经理|智能体项目经理|大模型项目经理|AI产品经理|AI 产品经理/i.test(title)) score += 55;
+  if (/具身智能|机器人/i.test(text) && /项目经理|项目管理|交付/i.test(title)) score += 45;
+  if (/上市|大厂|互联网|软件|人工智能|科技|数码/i.test(company)) score += 8;
+  if (job?.bossOnline === true) score += 8;
+  if (salaryPri.salary_priority === "保留") score += 22;
+  if (salaryPri.salary_priority === "低优先") score -= 8;
+  if (salaryPri.salary_priority === "暂不考虑") score -= 35;
+  if (fit.role_fit === "高") score += 35;
+  if (fit.role_fit === "中高") score += 18;
+  if (/销售|商务|BD|客户经理|渠道|市场推广|直播|电商运营/.test(title)) score -= 120;
+  if (/实习|实习生|在校|应届|小白|助理|储备|管培|销售/.test(title)) score -= 65;
+
+  const keywordTerms = String(keyword || "")
+    .split(/[+＋,，、|｜\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  for (const term of keywordTerms) {
+    if (term && title.includes(term)) score += 10;
+  }
+  return score;
+}
+
+function selectBossListJobs(listJobs, limit, keyword) {
+  const allJobs = Array.isArray(listJobs) ? listJobs : [];
+  if (!enableRankedCandidateSelection) return allJobs.slice(0, limit);
+  const poolSize = Math.max(limit, bossListCandidatePool);
+  return allJobs
+    .slice(0, poolSize)
+    .map((job, index) => ({
+      job: {
+        ...job,
+        _bossListRank: index + 1,
+        _selectionScore: bossListCandidateScore(job, keyword, index),
+      },
+      index,
+    }))
+    .sort((a, b) => (b.job._selectionScore - a.job._selectionScore) || (a.index - b.index))
+    .slice(0, limit)
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.job);
+}
+
 function pick(obj, keys) {
   for (const key of keys) {
     if (obj && obj[key] != null && obj[key] !== "") return obj[key];
@@ -334,7 +446,13 @@ async function fetchList(ws, keyword, pageSize) {
 async function searchUi(ws, keyword, firstJobName) {
   const expr = `(() => {
     const input = [...document.querySelectorAll('input')].find((el) => (el.placeholder || '').includes('搜索'));
-    if (!input) return { ok: false, reason: 'search input not found' };
+    if (!input) {
+      const url = new URL('/web/geek/jobs', location.origin);
+      url.searchParams.set('city', '101020100');
+      url.searchParams.set('query', ${JSON.stringify(keyword)});
+      location.href = url.toString();
+      return { ok: true, via: 'url_navigation', reason: 'search input not found, navigated by query url', value: ${JSON.stringify(keyword)}, href: url.toString() };
+    }
     input.focus();
     input.value = ${JSON.stringify(keyword)};
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -570,8 +688,11 @@ function extractRecord(item) {
       role_fit: fit.role_fit,
       activity_priority: activity.activity_priority,
       overall_priority: priority,
-      collection_status: item.error || (pageHasTarget ? "page_text_fallback" : "detail_not_captured"),
+      boss_list_rank: item.listJob?._bossListRank || "",
+      selection_score: item.listJob?._selectionScore || "",
+      collection_status: item.detailSkipped ? "list_api_only" : (item.error || (pageHasTarget ? "page_text_fallback" : "detail_not_captured")),
       notes: [
+        item.detailSkipped ? "未启用 UI 详情捕获，使用列表接口字段；不会操作或刷新 BOSS 页面" : "",
         pageHasTarget ? "详情接口未捕获，使用页面文本兜底" : "",
         locPri.location_note,
         salPri.salary_note,
@@ -641,6 +762,8 @@ function extractRecord(item) {
     role_fit: fit.role_fit,
     activity_priority: activity.activity_priority,
     overall_priority: priority,
+    boss_list_rank: item.listJob?._bossListRank || "",
+    selection_score: item.listJob?._selectionScore || "",
     notes: [locPri.location_note, salPri.salary_note, fit.role_note, activity.activity_note].filter(Boolean).join("；"),
     collection_status: "ok",
   };
@@ -693,6 +816,8 @@ const headers = [
   "role_fit",
   "activity_priority",
   "overall_priority",
+  "boss_list_rank",
+  "selection_score",
   "notes",
   "collection_status",
 ];
@@ -741,6 +866,8 @@ const zhHeaders = {
   role_fit: "岗位匹配度",
   activity_priority: "活跃度优先级",
   overall_priority: "综合优先级",
+  boss_list_rank: "BOSS列表原始排名",
+  selection_score: "候选池选择分",
   notes: "判断备注",
   collection_status: "采集状态",
 };
@@ -771,11 +898,14 @@ async function main() {
     let jobs;
     let ui;
     let ws;
+    let tab;
     try {
-      ({ ws } = await openWs());
-      list = await fetchList(ws, keyword, Math.max(perKeyword * 2, 20));
-      jobs = (list.jobs || []).slice(0, perKeyword);
-      ui = await searchUi(ws, keyword, jobs[0]?.jobName);
+      ({ tab, ws } = await openWs());
+      list = await fetchList(ws, keyword, Math.max(perKeyword * 2, bossListCandidatePool));
+      jobs = selectBossListJobs(list.jobs || [], perKeyword, keyword);
+      ui = enableUiDetailCapture
+        ? await searchUi(ws, keyword, jobs[0]?.jobName)
+        : { skipped: true, reason: "BOSS_UI_DETAIL_CAPTURE=false; list API only", href: tab?.url || "" };
     } catch (err) {
       partial = true;
       keywordStats.push({ strategyType, keyword, collectionError: err.message, candidates: 0 });
@@ -793,6 +923,8 @@ async function main() {
       listCode: list.json?.code,
       listMessage: list.json?.message,
       resCount: list.json?.zpData?.resCount,
+      candidatePool: (list.jobs || []).length,
+      selection: enableRankedCandidateSelection ? "ranked_pool" : "top_n",
       candidates: jobs.length,
       ui,
     });
@@ -808,7 +940,16 @@ async function main() {
 
       let raw;
       try {
-        raw = await clickAndCapture(job, keyword, strategyType);
+        raw = enableUiDetailCapture
+          ? await clickAndCapture(job, keyword, strategyType)
+          : {
+            keyword,
+            searchStrategyType: strategyType,
+            listJob: job,
+            captures: [],
+            page: {},
+            detailSkipped: true,
+          };
       } catch (err) {
         // One card must not make the whole batch unusable. extractRecord can
         // retain list-side fields and label this item for review.

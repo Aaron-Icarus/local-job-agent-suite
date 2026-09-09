@@ -37,8 +37,8 @@ function normalizeGreetingLength(text, options = {}) {
   const minLength = Math.min(Number(options.minLength || process.env.GREETING_MIN_LENGTH || 100), maxLength);
   let message = trimMessage(text, maxLength);
   const additions = [
-    "我也愿意结合岗位实际职责进一步说明相关项目经验和可落地的协作方式，期待与您沟通。",
-    "如有机会，希望结合团队当前业务目标和岗位重点，分享我在需求协同、交付推进及问题闭环方面的实践。"
+    "我也愿意结合岗位实际职责进一步说明相关经历和可落地的协作方式，期待与您沟通。",
+    "如有机会，希望结合团队当前业务目标和岗位重点，分享我在需求拆解、实现推进及问题闭环方面的实践。"
   ];
   for (const addition of additions) {
     if (message.length >= minLength) break;
@@ -58,34 +58,53 @@ function envBool(name, defaultValue = false) {
   return ["1", "true", "yes", "y", "on"].includes(String(value).toLowerCase());
 }
 
+function candidateProfileTextSafe() {
+  try {
+    return loadCurrentCandidateProfile().markdown || "";
+  } catch {
+    return "";
+  }
+}
+
+function pushIfMatched(strengths, text, regex, label) {
+  if (regex.test(text)) strengths.push(label);
+}
+
+function inferRuleStrengths(row) {
+  const jobText = textOf(row);
+  const profileText = candidateProfileTextSafe();
+  const combined = `${profileText} ${jobText}`;
+  const title = String(row.job_title || "");
+  const strengths = [];
+
+  pushIfMatched(strengths, combined, /Java|Spring\s*Boot|Spring\s*Cloud/i, "Java/Spring Boot后端开发");
+  pushIfMatched(strengths, combined, /微服务|分布式|REST|API|接口/i, "微服务和接口设计");
+  pushIfMatched(strengths, combined, /MySQL|Redis|消息队列|MQ|Kafka|Rabbit/i, "MySQL/Redis/消息队列");
+  pushIfMatched(strengths, combined, /React|Vue|TypeScript|Node\.?js|前端|全栈/i, "前后端协作和全栈开发");
+  pushIfMatched(strengths, combined, /Docker|Kubernetes|K8s|CI\/CD|DevOps|云原生/i, "云原生部署和CI/CD");
+  pushIfMatched(strengths, combined, /AI应用|大模型|RAG|知识库|智能体|AI\s*Agent|Agent/i, "AI应用工程化");
+  pushIfMatched(strengths, combined, /需求|方案|评审|排期|代码评审|灰度|上线|故障|性能优化|问题闭环/i, "需求拆解、技术评审和上线闭环");
+
+  if (/项目经理|项目管理|交付|PMO|实施|UAT|验收/i.test(title + jobText)) {
+    pushIfMatched(strengths, combined, /项目|交付|实施|UAT|验收|客户|产研|跨部门/i, "项目推进和跨团队协作");
+  }
+  if (/产品|需求|方案|PRD|原型/i.test(title + jobText)) {
+    pushIfMatched(strengths, combined, /产品|需求|方案|PRD|原型|流程/i, "产品需求和方案设计");
+  }
+
+  if (!strengths.length) {
+    pushIfMatched(strengths, profileText, /开发|研发|工程|系统|平台/i, "软件研发");
+  }
+  if (!strengths.length) strengths.push("岗位相关项目实践");
+  return [...new Set(strengths)].slice(0, 6);
+}
+
 function ruleGreetingResult(row, options = {}) {
   const maxLength = options.maxLength || 200;
-  const text = textOf(row);
-  const title = String(row.job_title || "");
-  const isAiAgent = hasAny(text, [/智能体/i, /\bAgent\b/i, /AI\s*Agent/i, /大模型/i, /AGI/i]);
-  const isPrivateDelivery = hasAny(text, [/私有化/i, /部署/i, /实施/i, /交付/i, /UAT/i, /验收/i, /系统集成/i]);
-  const isProduct = hasAny(text, [/产品/i, /需求/i, /方案/i, /PRD/i, /原型/i, /流程/i]);
-  const isOperation = hasAny(title + text, [/运营/i, /业务自动化/i, /推广/i, /培训/i, /一线/i, /效果评估/i]);
-  const asksPmp = /PMP/i.test(text);
-  const asksMcp = /\bMCP\b/i.test(text);
-  const asksPrompt = /Prompt|提示词|低代码|Vibe/i.test(text);
-
-  const strengths = [];
-  if (isAiAgent) strengths.push("企业AGI智能体/大模型项目落地");
-  else strengths.push("AI项目交付");
-  if (isPrivateDelivery) strengths.push("私有化平台交付");
-  if (isProduct || isOperation) strengths.push("需求梳理与方案设计");
-  if (isOperation) strengths.push("一线培训推广和效果评估");
-  if (asksPmp) strengths.push("PMP");
-  if (asksMcp) strengths.push("MCP工具设计");
-  if (asksPrompt) strengths.push("VibeCoding/AI工具实践");
-  strengths.push("产研客户协同");
-  strengths.push("UAT验收和问题闭环");
-
-  const uniqueStrengths = [...new Set(strengths)].slice(0, 6);
+  const uniqueStrengths = inferRuleStrengths(row);
   const prefix = "您好，";
   const suffix = "与岗位匹配，期待沟通。";
-  const message = normalizeGreetingLength(`${prefix}我有${uniqueStrengths.join("、")}经验，负责过千万级AI项目，${suffix}`, { maxLength });
+  const message = normalizeGreetingLength(`${prefix}我有${uniqueStrengths.join("、")}经验，能结合业务目标推进落地，${suffix}`, { maxLength });
   return {
     message,
     strategy: "rules",

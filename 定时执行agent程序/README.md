@@ -4,14 +4,16 @@
 
 ```powershell
 # 回归自测
-node .\message-platform\tests\run_tests.js
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\定时执行agent程序'; node '.\message-platform\tests\run_tests.js'"
 
 # 启动飞书长连接接收（需已配置本地环境文件）
-node .\message-platform\src\cli\start_feishu_long_connection.js
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\定时执行agent程序'; node '.\message-platform\src\cli\start_feishu_long_connection.js'"
 
 # 从标准输入发送一条主动通知
-'{"text":"测试消息","topic":"manual_test","idempotency_key":"manual-test-001"}' | node .\message-platform\src\cli\send_notification.js
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\定时执行agent程序'; '{\"text\":\"测试消息\",\"topic\":\"manual_test\",\"idempotency_key\":\"manual-test-001\"}' | node '.\message-platform\src\cli\send_notification.js'"
 ```
+
+说明：上面的 `<分享包实际安装目录>` 是静态文档占位符。需要复制即用的真实命令，请打开 `快捷启动/页面UI/index.html`，页面会按当前安装位置自动生成。
 
 消息平台只通过招聘 Agent 接口处理岗位话术，不读取招聘项目内部岗位 JSON。根目录 `plan.md` 和 `飞书机器人配置与接收格式参考.txt` 保留历史与配置参考。
 
