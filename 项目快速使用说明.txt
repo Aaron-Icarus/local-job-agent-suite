@@ -1,8 +1,10 @@
 找工作双项目：快速使用说明（脱敏构建包）
 
 版本更新摘要
+- 2026-09-10 v0.4.2：顶层目录已按真实职责改名为 招聘智能体、消息平台，并同步代码、快捷启动、UI、测试、PRD 和 SKILL 路径。项目移动或改名后必须重新注册 Windows 任务。SKILL 已增加必填/按需配置清单和首次登录必须说明的当前定时规则。
 - 2026-09-09 v0.3.13：快捷启动\随项目必须的安装包\ 改为“目录结构 + 安装说明”交付。node、corepack、pnpm-store、message-platform-vendor、_downloads 每个子目录都新增 INSTALL.md，说明下载来源、命令、预期文件和安装/清理方式；本地实际 Node、pnpm、飞书 SDK vendor 和 zip 下载缓存已清理，只保留说明文档，GitHub PR 可保留结构但不上传大体积二进制。
-- 2026-09-09 v0.3.12：运行环境准备改为“本机优先、随包兜底”。先检测本机 Node.js 20+ / pnpm，本机可用时推荐只补飞书 SDK 依赖；本机缺失或版本过低时才准备随包 Node/pnpm。快捷入口也改为优先使用本机 Node.js 20+。文档明确随包运行时缓存可删除，GitHub 不包含上百 MB 的 Node/pnpm/SDK 缓存。
+- 2026-09-10 v0.4.1：定时策略独立到 config\schedule_policy.json；主任务使用 14 个互不依附的时间点，另有 21:05 watchdog，均不唤醒、不补跑。BOSS/猎聘整条任务流开关放到 config\platform_channels.json 并接入控制台；BOSS 详情采集默认开启；最低 Node.js 统一为 22.4.0。
+- 2026-09-09 v0.3.12：运行环境准备改为“本机优先、随包兜底”。本机可用时推荐只补飞书 SDK 依赖；本机缺失或版本过低时才准备随包 Node/pnpm。当前最低版本已由 v0.4.1 统一为 Node.js 22.4.0。
 - 2026-09-09 v0.3.11：HTML 控制台会根据当前 index.html 的真实位置动态识别分享包根目录，不写死 D 盘路径；所有“复制命令”都改为完整一行 PowerShell 命令，会先进入实际分享包根目录再执行英文 .ps1 脚本，可直接粘贴到 CMD 或 PowerShell。静态文档不写死本机路径，只给 <分享包实际安装目录> 模板。
 - 2026-09-09 v0.3.10：运行环境准备升级为新手菜单。用户可选择随包 Node/pnpm、本机已有 Node/pnpm、只查看状态，或显式注册随包 Node 到当前用户 PATH；新增 查看运行环境状态.cmd 和 注册随包Node到用户Path.cmd。HTML 控制台补充说明：页面里的 .\快捷启动\... 是命令行命令，不是文件管理器地址。
 - 2026-09-09 v0.3.9：补齐 随项目必须的安装包 逻辑。新增 准备运行环境.cmd/.ps1，可下载官方便携版 Node.js 到 快捷启动\随项目必须的安装包\node\，通过 corepack 准备 pnpm，并把消息平台飞书 SDK 依赖安装到 快捷启动\随项目必须的安装包\message-platform-vendor\；用于新电脑/小白/离线交付时兜底，避免完全依赖系统 PATH。
@@ -18,8 +20,8 @@
 - 2026-09-04 v0.3.0：统一 AI Router 覆盖画像、搜索关键词、评分复核和打招呼话术；默认关闭 AI 和发送；晚间日报失败/部分成功可在 21:00 前重试。
 
 目录约定
-- 招聘信息智能体：AI消息群聊转发agent\recruitment-agent
-- 消息平台：定时执行agent程序\message-platform
+- 招聘信息智能体：招聘智能体\recruitment-agent
+- 消息平台：消息平台\message-platform（负责飞书收发、重试、审计和群聊 Agent 路由，不负责招聘日报定时判断）
 - PRD 文档：docs\prd\
 - 小白/AI 快捷入口：快捷启动\
 - 本包不含任何岗位库、候选人资料、登录态、飞书群 ID 或密钥。
@@ -39,8 +41,8 @@
 首次使用
 1. 双击 快捷启动\快捷启动脚本\启动控制台.cmd，打开本地控制台。
 2. 点击或运行 快捷启动\快捷启动脚本\首次配置检查.cmd。
-3. 首次换电脑使用，先运行 快捷启动\快捷启动脚本\准备运行环境.cmd。脚本会先检查本机 Node.js 20+ 和 pnpm；本机可用时优先用本机环境，只补飞书 SDK 依赖；本机缺失时再准备随包便携环境。
-4. 如果不能联网，可以手动安装 Node.js 20+ 和 pnpm；如不使用飞书长连接，只跑草稿/本地测试可先不安装飞书 SDK。
+3. 首次换电脑使用，先运行 快捷启动\快捷启动脚本\准备运行环境.cmd。脚本会先检查本机 Node.js 22.4.0+ 和 pnpm；本机可用时优先用本机环境，只补飞书 SDK 依赖；本机缺失时再准备随包便携环境。
+4. 如果不能联网，可以手动安装 Node.js 22.4.0+ 和 pnpm；如不使用飞书长连接，只跑草稿/本地测试可先不安装飞书 SDK。
 5. 复制两个项目中的 .env.example 为 .env，只填自己的凭据。
 6. 用自己的简历生成或填写 recruitment-agent\config\candidate_profiles\sample_candidate.md，并更新 current.json。
 7. 在 message-platform 的 channels.config.json 和 routes.config.json 替换 oc_test_* 示例群 ID；确认后才将 enabled 设为 true。
@@ -54,8 +56,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\open_liepin_login.ps1'"
 
 也可以在 recruitment-agent 目录执行原项目脚本：
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\tools\open_chrome_cdp_for_login.ps1'"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\tools\open_liepin_cdp_for_login.ps1'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\招聘智能体\recruitment-agent'; & '.\tools\open_chrome_cdp_for_login.ps1'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\招聘智能体\recruitment-agent'; & '.\tools\open_liepin_cdp_for_login.ps1'"
 
 完成登录后，正常定时运行会复用项目专用 Chrome Profile，并在非登录模式下后台运行。
 
@@ -66,9 +68,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 - 按调度窗口执行：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\run_scheduled.ps1'"
 
 高级用户也可以直接调用 recruitment-agent；静态模板如下：
-- 仅生成草稿：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1' -DraftOnly"（不会真实发送日报，也不会真实发送采集/预检告警）
-- 按调度窗口执行：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1' -Scheduled"
-- 手工运行：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1'"
+- 仅生成草稿：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\招聘智能体\recruitment-agent'; & '.\run_daily_job_agent.ps1' -DraftOnly"（不会真实发送日报，也不会真实发送采集/预检告警）
+- 按调度窗口执行：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\招聘智能体\recruitment-agent'; & '.\run_daily_job_agent.ps1' -Scheduled"
+- 手工运行：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\招聘智能体\recruitment-agent'; & '.\run_daily_job_agent.ps1'"
 
 自动化测试（无需登录、无需飞书、无需 AI）
 静态模板如下：
@@ -85,22 +87,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 1. 安装运行环境
    - 推荐双击 快捷启动\快捷启动脚本\准备运行环境.cmd。
-   - 该脚本会先检查本机 Node.js 20+ 和 pnpm，再显示菜单：本机可用时推荐使用本机环境，本机不可用时推荐准备随包 Node/pnpm；也可以只检查状态，或显式注册随包 Node 到当前用户 PATH。
+   - 该脚本会先检查本机 Node.js 22.4.0+ 和 pnpm，再显示菜单：本机可用时推荐使用本机环境，本机不可用时推荐准备随包 Node/pnpm；也可以只检查状态，或显式注册随包 Node 到当前用户 PATH。
    - 随包模式会把便携版 Node.js 放到 快捷启动\随项目必须的安装包\node\，用 corepack 准备 pnpm，并把飞书 SDK 依赖安装到 快捷启动\随项目必须的安装包\message-platform-vendor\。
    - 如果本机已有合格 Node.js/pnpm，且不需要给小白离线拷贝，可以删除 快捷启动\随项目必须的安装包\ 下由准备脚本生成的 node、corepack、pnpm-store、message-platform-vendor、_downloads 等大目录，只保留 README.md。
 
 2. 配置候选人资料和招聘策略
-   - 在 AI消息群聊转发agent\recruitment-agent 中复制 .env.example 为 .env。
+   - 在 招聘智能体\recruitment-agent 中复制 .env.example 为 .env。
    - 把 config\candidate_profiles\sample_candidate.md 替换为自己的真实、可验证经历和求职目标；确认 config\candidate_profiles\current.json 指向该文件。
    - 按需求调整 config\search_strategy.json 与 config\profile_rules.json。
-   - 首次建议只开启草稿流程：ENABLE_COLLECT=true，选择 ENABLE_BOSS=true 或 ENABLE_LIEPIN=true，ENABLE_PUSH=true，SEND_MODE=draft。不要先设为 send。
+   - 先在 config\platform_channels.json 或本地控制台开启 BOSS/猎聘所需平台。平台 enabled=false 会关闭登录、采集、筛选、评分、状态刷新和日报整条链路；旧 ENABLE_BOSS/ENABLE_LIEPIN 默认不覆盖这个文件。
+   - BOSS 的 detail_capture 默认 true，会打开岗位详情补齐 JD；这不是平台开关，也不代表是否已登录。
+   - 首次建议只开启草稿流程：ENABLE_COLLECT=true，ENABLE_PUSH=true，SEND_MODE=draft。不要先设为 send。
 
 3. 登录招聘网站
    - 在 recruitment-agent 目录运行一次可见登录命令，完成 BOSS 或猎聘的扫码、验证码和安全验证。
    - 登录成功后，正常运行会使用项目专用 Chrome Profile；自动后台运行前可保持 AUTO_START_CDP=false，确认无误后再按需开启。
 
 4. 配置飞书消息平台
-   - 在 定时执行agent程序\message-platform 中复制 .env.example 为 .env，填写自己的 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_TEST_CHAT_ID/FEISHU_CHAT_ID 等信息。
+   - 在 消息平台\message-platform 中复制 .env.example 为 .env，填写自己的 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_TEST_CHAT_ID/FEISHU_CHAT_ID 等信息。
    - 在 channels.config.json 中，将 oc_test_moi_group、oc_test_jobs_group 替换为自己的测试群 ID，并更新 allowed_chat_ids。
    - 在 routes.config.json 中替换相同的群 ID。
    - 完成飞书应用权限、机器人入群和事件订阅后，才将对应 channel 与 conversation 的 enabled 改为 true。
@@ -109,29 +113,35 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 5. 首次验证与逐步启用
    - 在 message-platform 目录运行：node .\tests\run_tests.js。该测试不发送真实飞书消息。
    - 在 recruitment-agent 目录运行 -DraftOnly，确认 data\、outputs\、草稿和日志符合预期。
-   - 确认草稿后才配置 SEND_MODE=send 或 SCHEDULE_SEND_MODE=send，并注册/启用定时任务。
+   - 查看 config\schedule_policy.json 的时间规则；确认草稿后才配置 SEND_MODE=send 或 SCHEDULE_SEND_MODE=send，并注册/启用定时任务。每次修改时间 JSON 后都要重新注册，注册脚本会自动校验。
 
 项目架构、步骤与使用逻辑
 
 本项目由两个可以独立运行、也可以协作的应用组成。
 
-1. 招聘信息智能体（AI消息群聊转发agent\recruitment-agent）
+1. 招聘信息智能体（招聘智能体\recruitment-agent）
    - 输入：个人简历/求职目标、搜索策略、已登录的 BOSS/猎聘浏览器。
    - 流程：构建候选人画像 -> 采集岗位 -> 初筛与匹配评价 -> 建立本地岗位库和岗位编号 -> 生成日报草稿与打招呼话术。
    - 输出：本地 data\ 中的岗位库/状态，outputs\ 中的采集和评价结果，以及 drafts\ 中的待确认报告。首次运行后才会生成这些数据。
    - 可独立使用：不配置飞书时保持 SEND_MODE=draft，即可只做采集、筛选和草稿生成。
 
-2. 消息发送转发与智能体调度平台（定时执行agent程序\message-platform）
+2. 飞书消息发送转发与群聊 Agent 路由平台（消息平台\message-platform）
    - 主动发送：接收招聘 Agent 的日报或告警请求，统一处理飞书发送、三次重试、幂等和发送审计。
    - 入站处理：接收群内 @机器人消息 -> 清洗文本 -> 路由到 Agent -> 维护多轮会话 -> 引用回复。
    - 可独立使用：可单独作为飞书消息桥接、ping 测试或其他 Agent 的统一发送网关；岗位编号话术功能需要相邻招聘 Agent 已生成岗位数据。
+
+容易误解的配置
+- BOSS 的 detail_capture=false 只表示不自动点击岗位详情，不表示未登录。当前默认 true；人工关闭后列表模式仍会给出初步候选，并标记“投递前需人工确认详情”。
+- targetSalaryK 是你填写的目标薪资；salary_min_k、salary_max_k、active_days 是招聘网站返回的单个岗位字段。网站字段为空时现在按“未知”处理，不会误当作 0。
+- SCHEDULE_SEND_MODE 未填写时只生成草稿；只有显式填写 send 并通过飞书配置检查，定时流程才会真实发送。
+- 单个关键词搜不到岗位属于正常情况。全部关键词都为 0 但接口正常时，系统仍生成零结果日报；没有当天输入或没有启用任何阶段则会报错。
 
 3. 两应用协作的标准顺序
    - 先准备简历和求职目标，建立候选人画像。
    - 完成招聘网站登录，运行招聘 Agent 获取最新岗位并生成本地岗位库。
    - 先审阅日报草稿；确认后才通过消息平台推送飞书。
    - 群内需要生成打招呼话术时，可提供岗位编号；也可粘贴职位链接、JD 文字或截图识别文字，由消息平台调用招聘 Agent。
-   - 定时模式会在设定窗口判断上午、下午采集与晚间报告；电脑未开机的时段不会补跑。任何配置、登录或发送异常都会记录本地日志并在具备飞书凭据时发送告警。
+   - 定时模式的每个时间点彼此独立；电脑未开机的时间不会补跑，也不会被唤醒。21:05 watchdog 独立检查日报与发送回执。任何配置、登录或发送异常都会记录本地日志并在具备飞书凭据时发送告警。
 
 运行后产生的 .env、Chrome Profile、data、outputs、logs 都是本机运行资料，不应再次打包或分享。
 

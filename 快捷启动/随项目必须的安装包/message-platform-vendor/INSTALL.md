@@ -6,7 +6,7 @@
 
 ## 推荐自动安装命令
 
-如果本机已有 Node.js 20+ 和 pnpm：
+如果本机已有 Node.js 22.4.0+ 和 pnpm：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\prepare_runtime.ps1' -UseSystemNode"
@@ -23,9 +23,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 安装源不是随便联网拉一个包，而是读取项目内的锁定文件：
 
 ```text
-定时执行agent程序/message-platform/vendor/package.json
-定时执行agent程序/message-platform/vendor/pnpm-lock.yaml
-定时执行agent程序/message-platform/vendor/pnpm-workspace.yaml
+消息平台/message-platform/vendor/package.json
+消息平台/message-platform/vendor/pnpm-lock.yaml
+消息平台/message-platform/vendor/pnpm-workspace.yaml
 ```
 
 准备脚本会把这几个文件复制到本目录，再执行 `pnpm install --frozen-lockfile`，确保安装版本与项目锁文件一致。
@@ -35,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 ```powershell
 $root = '<分享包实际安装目录>'
 $packages = Join-Path $root '快捷启动\随项目必须的安装包'
-$source = Join-Path $root '定时执行agent程序\message-platform\vendor'
+$source = Join-Path $root '消息平台\message-platform\vendor'
 $target = Join-Path $packages 'message-platform-vendor'
 New-Item -ItemType Directory -Force -Path $target | Out-Null
 Copy-Item -LiteralPath (Join-Path $source 'package.json') -Destination $target -Force

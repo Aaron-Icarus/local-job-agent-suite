@@ -20,12 +20,12 @@ function Get-NodeVersion {
   }
 }
 
-function Test-Node20Plus {
+function Test-Node224Plus {
   param([string]$NodeExe)
   $version = Get-NodeVersion $NodeExe
   if (-not $version) { return $false }
   try {
-    return ([int](($version -split "\.")[0]) -ge 20)
+    return ([version]$version -ge [version]"22.4.0")
   } catch {
     return $false
   }
@@ -33,7 +33,7 @@ function Test-Node20Plus {
 
 function Find-Node {
   $cmd = Get-Command node -ErrorAction SilentlyContinue
-  if ($cmd -and (Test-Node20Plus $cmd.Source)) { return $cmd.Source }
+  if ($cmd -and (Test-Node224Plus $cmd.Source)) { return $cmd.Source }
 
   $candidates = @(
     (Join-Path $packageRoot "快捷启动\随项目必须的安装包\node\node.exe"),
@@ -41,7 +41,7 @@ function Find-Node {
     (Join-Path $packageRoot "runtime\node\node.exe")
   )
   foreach ($candidate in $candidates) {
-    if (Test-Node20Plus $candidate) { return $candidate }
+    if (Test-Node224Plus $candidate) { return $candidate }
   }
   return ""
 }
@@ -60,7 +60,7 @@ if (-not (Test-Path -LiteralPath $dashboardPath)) {
 $node = Find-Node
 if (-not $node) {
   Write-Host "未找到 Node.js。将打开静态控制台页面；文件管理器按钮不可用。" -ForegroundColor Yellow
-  Write-Host "请先运行下面的完整命令，或手动安装 Node.js 20+：" -ForegroundColor Yellow
+  Write-Host "请先运行下面的完整命令，或手动安装 Node.js 22.4+：" -ForegroundColor Yellow
   Write-Host (Get-CopyPasteCommand ".\快捷启动\快捷启动脚本\prepare_runtime_menu.ps1") -ForegroundColor Cyan
   Invoke-Item -LiteralPath $dashboardPath
   exit 2

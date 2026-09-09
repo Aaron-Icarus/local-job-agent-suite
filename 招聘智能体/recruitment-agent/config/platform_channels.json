@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "platforms": {
+    "boss": {
+      "label": "BOSS直聘",
+      "enabled": false,
+      "detail_capture": true
+    },
+    "liepin": {
+      "label": "猎聘",
+      "enabled": false,
+      "detail_capture": false
+    }
+  }
+}

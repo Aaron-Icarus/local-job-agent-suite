@@ -18,7 +18,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 ## 手工生成命令
 
-如果已经有 Node.js 20+：
+如果已经有 Node.js 22.4.0+：
 
 ```powershell
 $root = '<分享包实际安装目录>'
