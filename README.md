@@ -183,7 +183,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 首次使用建议顺序：
 
-1. 先双击 `快捷启动/快捷启动脚本/准备运行环境.cmd`，按菜单选择“随包准备”或“使用本机已有 Node/pnpm”。
+1. 先双击 `快捷启动/快捷启动脚本/准备运行环境.cmd`。脚本会先检查本机 Node.js 20+ 和 pnpm；本机可用时推荐使用本机环境，只补飞书 SDK 依赖；本机缺失或版本过低时才推荐准备随包 Node/pnpm。
 2. 打开 `快捷启动/页面UI/index.html` 或双击 `快捷启动/快捷启动脚本/启动控制台.cmd`。
 3. 点击/运行“首次配置检查”，按中文提示补齐 Chrome、`.env`、飞书群和候选人画像。
 4. 复制两个应用中的 `.env.example` 为 `.env`，只填自己的凭据。
@@ -195,9 +195,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 ## 版本迭代
 
+- **2026-09-09 v0.3.12**：运行环境准备改为“本机优先、随包兜底”。`准备运行环境.cmd` 会先检测本机 Node.js 20+ / pnpm；本机可用时推荐使用本机环境并只补飞书 SDK 依赖，本机缺失或版本过低时才准备随包 Node/pnpm。快捷入口也改为优先使用本机 Node.js 20+；文档说明 `快捷启动/随项目必须的安装包/` 中 200MB+ 的运行时缓存不是 GitHub 必需内容，可按需删除或离线打包。
 - **2026-09-09 v0.3.11**：HTML 控制台确认根目录由当前页面路径动态识别，不写死 D 盘；所有“复制命令”改为完整一行 PowerShell 命令，会先进入实际分享包根目录再执行英文 `.ps1` 脚本，可直接粘贴到 CMD 或 PowerShell，不依赖当前终端目录。文档同步改为“页面生成真实路径命令，静态文档只给 `<分享包实际安装目录>` 模板”。
 - **2026-09-09 v0.3.10**：运行环境准备升级为新手菜单：可选择随包 Node/pnpm、本机已有 Node/pnpm、只检查状态，或显式注册随包 Node 到当前用户 PATH；新增 `查看运行环境状态.cmd` 与 `注册随包Node到用户Path.cmd`。HTML 控制台补充“命令不是文件管理器地址”的说明，避免用户把 `.\快捷启动\...` 粘贴进资源管理器地址栏。
-- **2026-09-09 v0.3.9**：补齐分享包“随项目必须的安装包”逻辑。新增 `准备运行环境.cmd/.ps1`，可下载官方便携版 Node.js 到 `快捷启动/随项目必须的安装包/node/`，通过 corepack 准备 pnpm，并把消息平台飞书 SDK 依赖安装到 `快捷启动/随项目必须的安装包/message-platform-vendor/`；快捷运行入口会优先使用随包 Node，避免换电脑后依赖系统 PATH。同步修复 `message-platform/vendor/pnpm-workspace.yaml` 缺少 `packages` 字段导致新电脑 `pnpm install` 失败的问题。
+- **2026-09-09 v0.3.9**：补齐分享包“随项目必须的安装包”逻辑。新增 `准备运行环境.cmd/.ps1`，可下载官方便携版 Node.js 到 `快捷启动/随项目必须的安装包/node/`，通过 corepack 准备 pnpm，并把消息平台飞书 SDK 依赖安装到 `快捷启动/随项目必须的安装包/message-platform-vendor/`；用于新电脑/小白/离线交付时兜底，避免完全依赖系统 PATH。同步修复 `message-platform/vendor/pnpm-workspace.yaml` 缺少 `packages` 字段导致新电脑 `pnpm install` 失败的问题。
 - **2026-09-09 v0.3.8**：分享包确认 `docs/prd/` 作为唯一离线 PRD 目录，并新增 `快捷启动/` 交付结构。`快捷启动` 下新增依赖准备目录、CMD/PowerShell 双入口脚本、本地 HTML 控制台、127.0.0.1 文件管理器 helper、给 AI 快速接手用的 `SKILL.md` 和人类使用说明；普通链接默认新标签页打开，文件夹按钮通过 helper 用 Windows 文件管理器打开白名单目录。
 - **2026-09-09 v0.3.7**：本地 HTML 控制台链接默认新标签页打开；新增本地 helper，可通过浏览器按钮调用 127.0.0.1 服务，用 Windows 文件管理器打开 config、candidate_profiles、outputs、data、logs 等白名单目录。
 - **2026-09-09 v0.3.6**：修复部分成功采集被调度器误判为“未采集”导致半小时内反复追跑的问题；`report_only` 会加载当天同平台最新原始数据；BOSS 部分成功告警增加 `invalid_json` / `fetch failed` 的中文解释。BOSS 列表采集新增候选池排序，默认从返回列表候选池中按 AI/项目管理/薪资/岗位匹配信号选取详情候选，而不是机械截取前 N 个。CDP 未启动时，登录检查会输出中文配置/启动建议。

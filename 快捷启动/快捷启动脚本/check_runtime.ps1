@@ -23,6 +23,25 @@ function Get-ToolVersion {
   }
 }
 
+function Test-Node20PlusVersion {
+  param([string]$Version)
+  if (-not $Version) { return $false }
+  try {
+    $major = [int](($Version -split "\.")[0])
+    return ($major -ge 20)
+  } catch {
+    return $false
+  }
+}
+
+function Get-DirectorySizeMB {
+  param([string]$Dir)
+  if (-not (Test-Path -LiteralPath $Dir)) { return 0 }
+  $sum = (Get-ChildItem -LiteralPath $Dir -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+  if (-not $sum) { return 0 }
+  return [math]::Round($sum / 1MB, 2)
+}
+
 function Find-Chrome {
   $roots = @(
     [Environment]::GetEnvironmentVariable("ProgramFiles"),
@@ -59,30 +78,32 @@ function Get-PnpmProjectVersion {
   }
 }
 
-Write-Host "运行环境依赖清单：" -ForegroundColor Cyan
-Write-Host "1. Node.js 20+：必需。可使用随包便携版，也可使用本机已安装版本。"
-Write-Host "2. pnpm：消息平台飞书 SDK 依赖安装需要。随包模式会通过 corepack 准备。"
-Write-Host "3. @larksuiteoapi/node-sdk：飞书长连接 SDK，安装在快捷启动依赖区。"
+Write-Host "运行环境依赖清单（先检测本机，再检测可选随包依赖）：" -ForegroundColor Cyan
+Write-Host "1. Node.js 20+：运行项目必需。优先使用本机已安装版本；没有或版本过低时再用随包便携版。"
+Write-Host "2. pnpm：安装/修复消息平台飞书 SDK 依赖时需要。本机可用则优先使用本机 pnpm。"
+Write-Host "3. @larksuiteoapi/node-sdk：飞书长连接 SDK，默认安装在快捷启动依赖区。"
 Write-Host "4. Chrome：招聘网站登录和采集需要，建议系统安装或在 .env 配置 CHROME_PATH。"
 Write-Host "5. Codex CLI / OpenAI API：仅启用 AI 模式时可选；分享包默认关闭 AI。"
 Write-Host ""
 
-$bundledNodeVersion = Get-ToolVersion $bundledNode @("-p", "process.versions.node")
-Print-Status "随包 Node.js" ([bool]$bundledNodeVersion) ($(if ($bundledNodeVersion) { "$bundledNode ($bundledNodeVersion)" } else { "未准备；可运行 准备运行环境.cmd 下载到快捷启动依赖区" }))
-
-$bundledPnpmVersion = Get-PnpmProjectVersion $bundledPnpm $messageVendorRoot
-if (-not $bundledPnpmVersion) { $bundledPnpmVersion = Get-ToolVersion $bundledPnpm @("--version") }
-Print-Status "随包 pnpm（消息平台项目上下文）" ([bool]$bundledPnpmVersion) ($(if ($bundledPnpmVersion) { "$bundledPnpm ($bundledPnpmVersion)" } else { "未准备；随包 Node 准备后会自动生成" }))
-
 $systemNode = Get-Command node -ErrorAction SilentlyContinue
 $systemNodeVersion = ""
 if ($systemNode) { $systemNodeVersion = Get-ToolVersion $systemNode.Source @("-p", "process.versions.node") }
-Print-Status "本机 PATH Node.js" ([bool]$systemNodeVersion) ($(if ($systemNodeVersion) { "$($systemNode.Source) ($systemNodeVersion)" } else { "未在 PATH 中找到；不影响随包快捷脚本" }))
+$systemNodeOk = Test-Node20PlusVersion $systemNodeVersion
+Print-Status "本机 PATH Node.js 20+" $systemNodeOk ($(if ($systemNodeVersion) { "$($systemNode.Source) ($systemNodeVersion)" } else { "未在 PATH 中找到" }))
 
 $systemPnpm = Get-Command pnpm -ErrorAction SilentlyContinue
 $systemPnpmVersion = ""
 if ($systemPnpm) { $systemPnpmVersion = Get-ToolVersion $systemPnpm.Source @("--version") }
-Print-Status "本机 PATH pnpm" ([bool]$systemPnpmVersion) ($(if ($systemPnpmVersion) { "$($systemPnpm.Source) ($systemPnpmVersion)" } else { "未在 PATH 中找到；随包模式可自动准备" }))
+Print-Status "本机 PATH pnpm" ([bool]$systemPnpmVersion) ($(if ($systemPnpmVersion) { "$($systemPnpm.Source) ($systemPnpmVersion)" } else { "未在 PATH 中找到；可用随包模式自动准备" }))
+
+$bundledNodeVersion = Get-ToolVersion $bundledNode @("-p", "process.versions.node")
+$bundledNodeOk = Test-Node20PlusVersion $bundledNodeVersion
+Print-Status "可选随包 Node.js 20+" $bundledNodeOk ($(if ($bundledNodeVersion) { "$bundledNode ($bundledNodeVersion)" } else { "未准备；仅当本机没有 Node.js 20+ 时需要下载" }))
+
+$bundledPnpmVersion = Get-PnpmProjectVersion $bundledPnpm $messageVendorRoot
+if (-not $bundledPnpmVersion) { $bundledPnpmVersion = Get-ToolVersion $bundledPnpm @("--version") }
+Print-Status "可选随包 pnpm（消息平台项目上下文）" ([bool]$bundledPnpmVersion) ($(if ($bundledPnpmVersion) { "$bundledPnpm ($bundledPnpmVersion)" } else { "未准备；仅随包模式需要" }))
 
 $hasSdk = (Test-Path -LiteralPath $messageVendorRuntime) -or (Test-Path -LiteralPath $messageVendorVirtual)
 Print-Status "飞书 SDK 运行依赖" $hasSdk ($(if ($hasSdk) { Join-Path $packagesDir "message-platform-vendor" } else { "未安装；运行 准备运行环境.cmd 后生成" }))
@@ -91,4 +112,13 @@ $chrome = Find-Chrome
 Print-Status "Chrome" ([bool]$chrome) ($(if ($chrome) { $chrome } else { "未发现常见安装路径；可安装 Chrome 或在招聘 Agent .env 配置 CHROME_PATH" }))
 
 Write-Host ""
-Write-Host "说明：常用快捷脚本会临时使用随包 Node，不要求注册 PATH。只有你想在任意终端直接输入 node/pnpm 时，才需要注册用户 PATH。" -ForegroundColor Cyan
+$packagesSize = Get-DirectorySizeMB $packagesDir
+Write-Host ("可选随包依赖目录当前体积：{0} MB" -f $packagesSize) -ForegroundColor Cyan
+if ($systemNodeOk -and $systemPnpmVersion) {
+  Write-Host "建议：本机 Node.js/pnpm 已可用。通常不需要下载随包 Node；如已生成 node/corepack/pnpm-store 且不做离线拷贝，可删除这些大目录，只保留 README.md。" -ForegroundColor Green
+} elseif ($bundledNodeOk) {
+  Write-Host "建议：本机 Node.js/pnpm 不完整，当前可使用随包 Node/pnpm 兜底。常用快捷脚本不要求注册 PATH。" -ForegroundColor Yellow
+} else {
+  Write-Host "建议：未发现可用 Node.js 20+。请选择准备运行环境菜单中的随包准备，或自行安装 Node.js 20+ 后重试。" -ForegroundColor Yellow
+}
+Write-Host "说明：PATH 注册只是可选项。只有你想在任意终端直接输入 node/pnpm 时，才需要注册用户 PATH。" -ForegroundColor Cyan

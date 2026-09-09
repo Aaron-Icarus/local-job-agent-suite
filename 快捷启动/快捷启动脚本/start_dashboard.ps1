@@ -10,17 +10,39 @@ $packageRoot = Resolve-Path -LiteralPath (Join-Path $scriptDir "..\..")
 $dashboardPath = Join-Path $packageRoot "快捷启动\页面UI\index.html"
 $serverScript = Join-Path $scriptDir "local_dashboard_server.js"
 
+function Get-NodeVersion {
+  param([string]$NodeExe)
+  if (-not $NodeExe -or -not (Test-Path -LiteralPath $NodeExe)) { return "" }
+  try {
+    return ((& $NodeExe -p "process.versions.node" 2>$null) | Select-Object -First 1).Trim()
+  } catch {
+    return ""
+  }
+}
+
+function Test-Node20Plus {
+  param([string]$NodeExe)
+  $version = Get-NodeVersion $NodeExe
+  if (-not $version) { return $false }
+  try {
+    return ([int](($version -split "\.")[0]) -ge 20)
+  } catch {
+    return $false
+  }
+}
+
 function Find-Node {
+  $cmd = Get-Command node -ErrorAction SilentlyContinue
+  if ($cmd -and (Test-Node20Plus $cmd.Source)) { return $cmd.Source }
+
   $candidates = @(
     (Join-Path $packageRoot "快捷启动\随项目必须的安装包\node\node.exe"),
     (Join-Path $packageRoot "快捷启动\随项目必须的安装包\nodejs\node.exe"),
     (Join-Path $packageRoot "runtime\node\node.exe")
   )
   foreach ($candidate in $candidates) {
-    if (Test-Path -LiteralPath $candidate) { return $candidate }
+    if (Test-Node20Plus $candidate) { return $candidate }
   }
-  $cmd = Get-Command node -ErrorAction SilentlyContinue
-  if ($cmd) { return $cmd.Source }
   return ""
 }
 
