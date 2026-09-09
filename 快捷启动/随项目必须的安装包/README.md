@@ -44,11 +44,16 @@
 随项目必须的安装包/
   README.md
   node/                 便携版 Node.js，准备脚本下载生成；node.exe 应直接在这一层
+    INSTALL.md          下载来源、命令、校验和目录要求
   corepack/             corepack/pnpm 缓存
+    INSTALL.md          corepack/pnpm 准备命令
   pnpm-store/           pnpm 依赖缓存
+    INSTALL.md          pnpm store 生成和清理说明
   message-platform-vendor/
                         消息平台飞书 SDK 运行依赖
+    INSTALL.md          飞书 SDK vendor 安装命令
   _downloads/           Node.js zip 下载缓存
+    INSTALL.md          下载缓存用途和可删除说明
 ```
 
 ## 为什么 GitHub 里默认不直接放 node.exe
@@ -70,3 +75,13 @@ _downloads/
 ```
 
 删除后，保留本 README 即可。后续如果换到没有 Node/pnpm 的电脑，再重新运行 `准备运行环境.cmd` 生成。
+
+## 给 AI/维护者的重建入口
+
+每个子目录都有独立 `INSTALL.md`，可直接交给 AI 或维护者按说明重建：
+
+- `node/INSTALL.md`：下载官方 Node.js 便携 zip、校验 SHA256、解压为 `node/`。
+- `corepack/INSTALL.md`：通过 Node 自带 corepack 准备 `pnpm@9.15.9`。
+- `pnpm-store/INSTALL.md`：说明 pnpm 缓存如何在安装依赖时生成。
+- `message-platform-vendor/INSTALL.md`：从 `message-platform/vendor` 的锁文件安装飞书 SDK。
+- `_downloads/INSTALL.md`：说明下载缓存用途；该目录可以为空或删除。
