@@ -80,6 +80,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 分享包默认关闭采集、发送和 AI。配置不完整时，程序应输出中文配置清单并退出，不应启动 Chrome 或真实发送。
 
-首次换电脑运行时，先执行 `快捷启动/快捷启动脚本/准备运行环境.cmd`。它会准备随包 Node.js、pnpm，并把消息平台飞书 SDK 依赖安装到 `快捷启动/随项目必须的安装包/message-platform-vendor/`；之后快捷运行入口应优先使用随包 Node。
+首次换电脑运行时，先执行 `快捷启动/快捷启动脚本/准备运行环境.cmd`。它会先检查本机 Node.js 20+ 和 pnpm；本机可用时优先使用本机环境并只补飞书 SDK 依赖，本机缺失或版本过低时才准备随包 Node/pnpm。快捷运行入口应优先使用本机 Node.js 20+，再用随包 Node 兜底。
 
 不要把命令粘贴到 Windows 文件管理器地址栏；文件管理器地址栏只适合输入文件夹路径，不执行命令。HTML 控制台的“复制命令”会生成实际安装路径下的完整一行命令。

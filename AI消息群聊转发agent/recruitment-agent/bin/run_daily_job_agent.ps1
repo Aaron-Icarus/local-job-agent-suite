@@ -14,12 +14,35 @@ function Find-NodeForSharePackage {
   $packageRoot = Resolve-Path -LiteralPath (Join-Path $root "..\..")
   $bundledNodeDir = Join-Path $packageRoot "快捷启动\随项目必须的安装包\node"
   $bundledNode = Join-Path $bundledNodeDir "node.exe"
-  if (Test-Path -LiteralPath $bundledNode) {
+
+  function Get-NodeVersion {
+    param([string]$NodeExe)
+    if (-not $NodeExe -or -not (Test-Path -LiteralPath $NodeExe)) { return "" }
+    try {
+      return ((& $NodeExe -p "process.versions.node" 2>$null) | Select-Object -First 1).Trim()
+    } catch {
+      return ""
+    }
+  }
+
+  function Test-Node20Plus {
+    param([string]$NodeExe)
+    $version = Get-NodeVersion $NodeExe
+    if (-not $version) { return $false }
+    try {
+      return ([int](($version -split "\.")[0]) -ge 20)
+    } catch {
+      return $false
+    }
+  }
+
+  $cmd = Get-Command node -ErrorAction SilentlyContinue
+  if ($cmd -and (Test-Node20Plus $cmd.Source)) { return $cmd.Source }
+
+  if (Test-Node20Plus $bundledNode) {
     $env:PATH = "$bundledNodeDir;$env:PATH"
     return $bundledNode
   }
-  $cmd = Get-Command node -ErrorAction SilentlyContinue
-  if ($cmd) { return $cmd.Source }
   return ""
 }
 

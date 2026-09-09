@@ -9,12 +9,22 @@
 
 # Optional portable runtime downloaded by 快捷启动/快捷启动脚本/准备运行环境.cmd.
 # Keep GitHub/source distribution light; local/offline ZIP packages may include these folders.
-快捷启动/随项目必须的安装包/_downloads/
+快捷启动/随项目必须的安装包/_downloads/*
+!快捷启动/随项目必须的安装包/_downloads/
+!快捷启动/随项目必须的安装包/_downloads/INSTALL.md
 快捷启动/随项目必须的安装包/_node_extract_tmp/
-快捷启动/随项目必须的安装包/corepack/
-快捷启动/随项目必须的安装包/message-platform-vendor/
-快捷启动/随项目必须的安装包/node/
-快捷启动/随项目必须的安装包/pnpm-store/
+快捷启动/随项目必须的安装包/corepack/*
+!快捷启动/随项目必须的安装包/corepack/
+!快捷启动/随项目必须的安装包/corepack/INSTALL.md
+快捷启动/随项目必须的安装包/message-platform-vendor/*
+!快捷启动/随项目必须的安装包/message-platform-vendor/
+!快捷启动/随项目必须的安装包/message-platform-vendor/INSTALL.md
+快捷启动/随项目必须的安装包/node/*
+!快捷启动/随项目必须的安装包/node/
+!快捷启动/随项目必须的安装包/node/INSTALL.md
+快捷启动/随项目必须的安装包/pnpm-store/*
+!快捷启动/随项目必须的安装包/pnpm-store/
+!快捷启动/随项目必须的安装包/pnpm-store/INSTALL.md
 
 # Runtime logs and state
 **/logs/

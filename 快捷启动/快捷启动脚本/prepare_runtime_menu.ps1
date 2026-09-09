@@ -9,27 +9,71 @@ $prepareScript = Join-Path $scriptDir "prepare_runtime.ps1"
 $checkScript = Join-Path $scriptDir "check_runtime.ps1"
 $registerScript = Join-Path $scriptDir "register_bundled_node_path.ps1"
 
+function Get-ToolVersion {
+  param([string]$Command, [string[]]$ToolArgs)
+  if (-not $Command -or -not (Test-Path -LiteralPath $Command)) { return "" }
+  try {
+    return ((& $Command @ToolArgs 2>$null) | Select-Object -First 1).Trim()
+  } catch {
+    return ""
+  }
+}
+
+function Test-Node20PlusVersion {
+  param([string]$Version)
+  if (-not $Version) { return $false }
+  try {
+    $major = [int](($Version -split "\.")[0])
+    return ($major -ge 20)
+  } catch {
+    return $false
+  }
+}
+
+$systemNode = Get-Command node -ErrorAction SilentlyContinue
+$systemNodeVersion = ""
+if ($systemNode) { $systemNodeVersion = Get-ToolVersion $systemNode.Source @("-p", "process.versions.node") }
+$systemNodeOk = Test-Node20PlusVersion $systemNodeVersion
+$systemPnpm = Get-Command pnpm -ErrorAction SilentlyContinue
+$systemPnpmVersion = ""
+if ($systemPnpm) { $systemPnpmVersion = Get-ToolVersion $systemPnpm.Source @("--version") }
+$systemReady = $systemNodeOk -and [bool]$systemPnpmVersion
+
 Write-Host "本地招聘 Agent 套件：运行环境准备" -ForegroundColor Cyan
-Write-Host "下面会先展示依赖状态，然后由你选择安装/使用方式。" -ForegroundColor Cyan
+Write-Host "下面会先检查本机 Node/pnpm，再检查可选随包运行环境，然后由你选择安装/使用方式。" -ForegroundColor Cyan
 Write-Host ""
 & $checkScript
 
 Write-Host ""
 Write-Host "请选择：" -ForegroundColor Cyan
-Write-Host "1. 推荐：准备随包 Node.js + pnpm + 飞书 SDK 依赖，不修改系统 PATH"
-Write-Host "2. 使用本机已有 Node.js/pnpm，只把飞书 SDK 依赖安装到快捷启动依赖区"
-Write-Host "3. 准备随包 Node.js + pnpm + 飞书 SDK，并注册随包 Node 到当前用户 PATH"
+if ($systemReady) {
+  Write-Host "1. 推荐：使用本机已有 Node.js/pnpm，只把飞书 SDK 依赖安装到快捷启动依赖区"
+  Write-Host "2. 准备可选随包 Node.js + pnpm + 飞书 SDK 依赖，不修改系统 PATH"
+  Write-Host "3. 准备可选随包依赖，并注册随包 Node 到当前用户 PATH"
+} else {
+  Write-Host "1. 推荐：准备可选随包 Node.js + pnpm + 飞书 SDK 依赖，不修改系统 PATH"
+  Write-Host "2. 使用本机已有 Node.js/pnpm，只把飞书 SDK 依赖安装到快捷启动依赖区"
+  Write-Host "3. 准备可选随包依赖，并注册随包 Node 到当前用户 PATH"
+}
 Write-Host "4. 只查看状态，不安装"
 Write-Host "0. 退出"
 
 $choice = Read-Host "请输入数字"
 switch ($choice) {
   "1" {
-    & $prepareScript
+    if ($systemReady) {
+      & $prepareScript -UseSystemNode
+    } else {
+      & $prepareScript
+    }
     exit $LASTEXITCODE
   }
   "2" {
-    & $prepareScript -UseSystemNode
+    if ($systemReady) {
+      & $prepareScript
+    } else {
+      & $prepareScript -UseSystemNode
+    }
     exit $LASTEXITCODE
   }
   "3" {

@@ -31,11 +31,33 @@ function Find-Chrome {
   return ""
 }
 
+function Get-NodeVersion {
+  param([string]$NodeExe)
+  if (-not $NodeExe -or -not (Test-Path -LiteralPath $NodeExe)) { return "" }
+  try {
+    return ((& $NodeExe -p "process.versions.node" 2>$null) | Select-Object -First 1).Trim()
+  } catch {
+    return ""
+  }
+}
+
+function Test-Node20Plus {
+  param([string]$NodeExe)
+  $version = Get-NodeVersion $NodeExe
+  if (-not $version) { return $false }
+  try {
+    return ([int](($version -split "\.")[0]) -ge 20)
+  } catch {
+    return $false
+  }
+}
+
 function Find-Node {
-  $candidate = Join-Path $packageRoot "快捷启动\随项目必须的安装包\node\node.exe"
-  if (Test-Path -LiteralPath $candidate) { return $candidate }
   $cmd = Get-Command node -ErrorAction SilentlyContinue
-  if ($cmd) { return $cmd.Source }
+  if ($cmd -and (Test-Node20Plus $cmd.Source)) { return $cmd.Source }
+
+  $candidate = Join-Path $packageRoot "快捷启动\随项目必须的安装包\node\node.exe"
+  if (Test-Node20Plus $candidate) { return $candidate }
   return ""
 }
 
@@ -49,16 +71,8 @@ Test-ItemReadable "消息平台示例配置" (Join-Path $messageRoot ".env.examp
 
 $node = Find-Node
 if ($node) {
-  $nodeVersion = ""
-  try { $nodeVersion = (& $node -p "process.versions.node" 2>$null).Trim() } catch { $nodeVersion = "" }
-  $nodeMajor = 0
-  if ($nodeVersion) { $nodeMajor = [int](($nodeVersion -split "\.")[0]) }
-  if ($nodeMajor -ge 20) {
-    Write-Host ("OK  Node.js：{0} ({1})" -f $node, $nodeVersion) -ForegroundColor Green
-  } else {
-    Write-Host ("版本过低 Node.js：{0} ({1})。请运行 快捷启动\快捷启动脚本\准备运行环境.cmd，或安装 Node.js 20+。" -f $node, $nodeVersion) -ForegroundColor Yellow
-    $node = ""
-  }
+  $nodeVersion = Get-NodeVersion $node
+  Write-Host ("OK  Node.js 20+：{0} ({1})" -f $node, $nodeVersion) -ForegroundColor Green
 } else {
   Write-Host "缺失 Node.js。请运行 快捷启动\快捷启动脚本\准备运行环境.cmd，或安装 Node.js 20+。" -ForegroundColor Yellow
 }
