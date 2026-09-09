@@ -6,14 +6,16 @@
 
 ```powershell
 # 让调度器按当前时段判断是否执行
-powershell -ExecutionPolicy Bypass -File .\recruitment-agent\run_daily_job_agent.ps1 -Scheduled
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent'; & '.\recruitment-agent\run_daily_job_agent.ps1' -Scheduled"
 
 # 打开可见浏览器，供 BOSS/猎聘单次人工登录或验证
-powershell -ExecutionPolicy Bypass -File .\recruitment-agent\tools\open_chrome_cdp_for_login.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent'; & '.\recruitment-agent\tools\open_chrome_cdp_for_login.ps1'"
 
 # 手工跑完整流程；默认以 .env 中 SEND_MODE 决定草稿或发送
-powershell -ExecutionPolicy Bypass -File .\recruitment-agent\run_daily_job_agent.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent'; & '.\recruitment-agent\run_daily_job_agent.ps1'"
 ```
+
+说明：上面的 `<分享包实际安装目录>` 是静态文档占位符。需要复制即用的真实命令，请打开 `快捷启动/页面UI/index.html`，页面会按当前安装位置自动生成。
 
 Windows 任务 `BOSS Job Agent Daily` 是正式环境沿用的任务名；分享包首次使用时需要接收者自行创建计划任务。自动流程不使用历史岗位文件补位；BOSS 登录失效时只处理当日成功平台的数据并记录部分成功。
 

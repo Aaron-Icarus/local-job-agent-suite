@@ -2,6 +2,13 @@
 
 这个目录是“定时搜索岗位 -> 存本地 -> 评价匹配度 -> 生成岗位搜索汇总草稿 -> 可选推送”的项目根目录。
 
+## 版本更新说明
+
+- **2026-09-09 v0.3.11**：分享包 HTML 控制台的复制命令改为按当前安装位置动态生成完整一行 PowerShell 命令，可直接粘贴到 CMD 或 PowerShell；CDP 连接失败提示也会输出完整快捷启动命令，不再只提示相对脚本路径。
+- **2026-09-09 v0.3.8**：分享包沿用 `docs/prd/` 作为唯一离线 PRD 目录，并新增 `快捷启动/`。小白用户优先双击 `快捷启动/快捷启动脚本/启动控制台.cmd`；页面 UI 位于 `快捷启动/页面UI/index.html`；AI 接手项目优先读取 `快捷启动/SKILL.md`。
+- **2026-09-09 v0.3.7**：本地 HTML 控制台普通链接默认新标签页打开；通过本地 127.0.0.1 helper，可用浏览器按钮打开项目白名单目录的 Windows 文件管理器窗口。
+- **2026-09-09 v0.3.6**：修复 `partial_success` 被调度器误判为未采集导致反复追跑；`report_only` 可加载当天同平台最新 raw 数据；BOSS 告警增加 `invalid_json` / `fetch failed` 中文解释；BOSS 列表采集新增候选池排序，默认从返回列表中按 AI/项目管理/薪资/岗位匹配信号选取，而不是机械截取前 N 个；CDP 未启动时登录检查输出中文启动建议。
+
 ## 当前工程结构
 
 ```text
@@ -79,10 +86,12 @@ recruitment-agent/
 
 ## 常用命令
 
+下面的 `<分享包实际安装目录>` 是静态文档占位符。需要复制即用的真实命令，请打开 `快捷启动/页面UI/index.html`，页面会按当前安装位置自动生成。
+
 先确保 Chrome 用 CDP 模式启动，并且已经登录需要采集的平台：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -DraftOnly
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1' -DraftOnly"
 ```
 
 根目录 `run_daily_job_agent.ps1` 是兼容 wrapper，真实实现位于 `bin/run_daily_job_agent.ps1`。保留这个 wrapper 是为了不破坏已经注册的 Windows 计划任务。
@@ -90,37 +99,37 @@ powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -DraftOnly
 单独检查 BOSS 登录态并新开一个页面：
 
 ```powershell
-node .\src\platforms\boss\check_boss_login_status.js --new
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$packageRoot='<分享包实际安装目录>'; $node=Join-Path $packageRoot '快捷启动\随项目必须的安装包\node\node.exe'; if (!(Test-Path -LiteralPath $node)) { $node='node' }; Set-Location -LiteralPath (Join-Path $packageRoot 'AI消息群聊转发agent\recruitment-agent'); & $node '.\src\platforms\boss\check_boss_login_status.js' --new"
 ```
 
 单独检查猎聘登录态：
 
 ```powershell
-node .\src\platforms\liepin\check_liepin_login_status.js --new
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$packageRoot='<分享包实际安装目录>'; $node=Join-Path $packageRoot '快捷启动\随项目必须的安装包\node\node.exe'; if (!(Test-Path -LiteralPath $node)) { $node='node' }; Set-Location -LiteralPath (Join-Path $packageRoot 'AI消息群聊转发agent\recruitment-agent'); & $node '.\src\platforms\liepin\check_liepin_login_status.js' --new"
 ```
 
 如果定时任务失败在登录态预检，先打开本项目专用 CDP Chrome 做人工扫码或安全验证：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\open_chrome_cdp_for_login.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\tools\open_chrome_cdp_for_login.ps1'"
 ```
 
 如果猎聘需要首次登录或重新验证：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\open_liepin_cdp_for_login.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\tools\open_liepin_cdp_for_login.ps1'"
 ```
 
 确认草稿无误后，可手动发送最新草稿：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -SendLatestDraft
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1' -SendLatestDraft"
 ```
 
 创建 Windows 计划任务示例：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\bin\create_windows_task.example.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\bin\create_windows_task.example.ps1'"
 ```
 
 默认任务名仍是历史遗留的 `BOSS Job Agent Daily`，但实际执行的是当前多平台流程。保留这个名字是为了避免和已经注册的计划任务割裂。
@@ -162,7 +171,7 @@ npm run greeting-agent -- --id A001 --json
 触发命令：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1' -Scheduled"
 ```
 
 上午和下午时段只做：登录态预检 -> 搜索岗位。
@@ -188,6 +197,9 @@ powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
 
 ## 版本迭代说明
 
+- **2026-09-08（v0.3.5）采集重入与 BOSS 非侵入式采集修复版**：`daily_workflow` 增加 `data/workflow.lock` 运行锁，检测到已有活跃流程时返回 `skipped_locked`，避免计划任务、手工补跑或测试流程同时抢同一个 Chrome CDP。`scheduled_entry` 在 16:00-19:00 如果下午采集缺失，会补一次 `collect_only`；BOSS/猎聘采集新增空闲超时和总时长上限，默认 5 分钟无输出才切平台、15 分钟单平台硬上限。BOSS 默认 `BOSS_UI_DETAIL_CAPTURE=false`，只使用列表接口字段生成 `list_api_only` 记录，不自动操作搜索框、点击岗位卡片或反复刷新可见页面；需要详情抓取时可显式开启。
+- **2026-09-08（v0.3.4）BOSS 登录态读取修复版**：BOSS 登录检查不再盲选第一个 `zhipin.com` 标签页，而是按稳定 jobs 页、详情页、登录/安全验证页、加载中标题等信号打分选择；遇到“加载中/请稍候/安全验证/登录页”会新开稳定 jobs 页。登录状态改为 DOM 已登录或业务接口返回 `code=0` 且存在职位列表任一强证据成立即可通过；`daily_workflow` 对平台登录检查增加 `LOGIN_CHECK_TIMEOUT_MS`（默认 90000ms），避免 BOSS 校验异常拖满整轮 45 分钟。BOSS 采集脚本同步使用相同标签页选择策略，并在搜索框不可用时通过稳定 URL 导航兜底。
+- **2026-09-07（v0.3.3）离线自动化测试与规则话术修复版**：分享包新增根目录 `自动化测试/`，内置上海软件开发方向的虚构候选人画像、测试搜索策略、测试规则、样例岗位和一键离线烟测脚本。规则话术在 `AI_GREETING_MODE=rules` 下会读取当前候选人画像和岗位文本，提取 Java/Spring、后端、微服务、全栈、AI 应用、云原生等关键词，不再复用固定的 AI 项目交付模板。
 - **2026-09-07（v0.3.2）草稿验证与 CDP 顺序采集修复版**：`-DraftOnly` 现在会同时把日报发送和采集/预检告警置为本地草稿/日志模式，避免验证流程误发真实飞书群；`daily_workflow` 对 BOSS、猎聘改为顺序登录校验和顺序采集，降低两个平台共用 Chrome CDP profile 时互相导航、登录态误判和页面抢占的概率。已用正式登录态的小规模草稿流程验证完整链路成功。
 - **2026-09-07（v0.3.1）新用户模拟验收修复版**：用全新模拟目录跑通空包 preflight、BOSS/猎聘可见登录、采集、筛选、评价、入库、分平台草稿和飞书网关发送。修复话术模块未读取 `AI_GREETING_MODE` 的问题，`AI_GREETING_MODE=rules/disabled` 现在会直接规则降级，不再偷偷调用 Codex/API；AI Router 的单步 `rules/disabled` 不再回退 `AI_DEFAULT_*`。BOSS 登录检查加强为 DOM + 业务接口双校验；BOSS 37/38、验证码/安全验证、登录态失败类 partial 会阻断下游，避免旧数据进入日报。登录辅助脚本会先读取 `.env`，支持项目级 `CDP_PORT` 和 `CHROME_CDP_PROFILE_DIR`；PowerShell 脚本保持 UTF-8 BOM 以兼容中文路径和中文输出。
 - **2026-09-04（v0.3.0）本地 Codex 调用链升级**：AI 调用改为“握手 + 流式 + 长总时限”协议——等待模型**开始产出输出**的握手窗口内无响应才 Kill（默认 90s，兼容旧 `AI_DEFAULT_TIMEOUT_MS`）；一旦启动则不再用短超时，改用 30 分钟总时限并持续流式记录进度（`logs/ai_runtime/`），避免 Codex 已在运行却因 90s 一刀切被误杀。同时统一 AI 路由覆盖画像、搜索关键词、评分复核与话术四类用途。
@@ -283,5 +295,5 @@ node .\src\store\job_store_update.js snapshot
 - BOSS 有风控，建议每日总量先控制在 50 条左右。
 - 猎聘第一版采集以页面 DOM 列表卡片为主，字段和 BOSS 分开保存，再在评价阶段映射到统一打分字段。
 - 为避免页面跳转后出现 `about:blank` 干扰，猎聘详情补采默认关闭；需要单独验证详情页稳定性时再设置 `LIEPIN_ENABLE_DETAIL=true`。
-- BOSS/猎聘当前采集仍以搜索结果第一页为主；BOSS 的页面滚动用于定位当前页详情，不等于跨页轮换。后续如要避免通用关键词长期只看到第一页，应增加低频、可配置、带风控降频的页码轮换策略。
+- BOSS/猎聘当前采集仍以搜索结果第一页为主；BOSS 默认不会点击岗位详情，而是从列表接口返回的候选池中按 AI/项目管理/薪资/岗位匹配信号排序选取，避免只机械处理列表前 N 个。后续如要进一步避免通用关键词长期只看到同一页，应增加低频、可配置、带风控降频的页码轮换策略。
 - 采集失败或部分成功的告警会写明含义、保存记录数、失败关键词、平台错误、影响和建议动作；原始诊断仍保存在 `logs/daily_workflow.log`。

@@ -6,9 +6,29 @@ loadEnv();
 const targetUrl = process.env.BOSS_LOGIN_CHECK_URL || "https://www.zhipin.com/web/geek/jobs";
 const args = new Set(process.argv.slice(2));
 const useNewTab = args.has("--new");
+const stableJobsRe = /https?:\/\/www\.zhipin\.com\/web\/geek\/jobs/i;
 
 function bossTab(tab) {
   return tab.type === "page" && tab.webSocketDebuggerUrl && /zhipin\.com/.test(tab.url || "");
+}
+
+function bossTabScore(tab) {
+  if (!bossTab(tab)) return -1000;
+  const url = tab.url || "";
+  const title = tab.title || "";
+  let score = 0;
+  if (stableJobsRe.test(url)) score += 100;
+  if (/\/job_detail\//i.test(url)) score += 40;
+  if (/www\.zhipin\.com/i.test(url)) score += 20;
+  if (/passport|login|_security_check|verify|captcha/i.test(url + title)) score -= 100;
+  if (/加载中|请稍候|loading/i.test(title)) score -= 30;
+  if (url === "about:blank") score -= 100;
+  return score;
+}
+
+function isUnstableBossTab(tab) {
+  const text = `${tab?.url || ""}\n${tab?.title || ""}`;
+  return /加载中|请稍候|loading|passport|login|_security_check|verify|captcha/i.test(text);
 }
 
 async function findCurrentBossTab(base, preferredId = "") {
@@ -17,16 +37,39 @@ async function findCurrentBossTab(base, preferredId = "") {
     const preferred = tabs.find((tab) => tab.id === preferredId && bossTab(tab));
     if (preferred) return preferred;
   }
-  return tabs.find(bossTab) || null;
+  const candidates = tabs.filter(bossTab).sort((a, b) => bossTabScore(b) - bossTabScore(a));
+  return candidates[0] || null;
+}
+
+async function activateTab(base, tab) {
+  if (!tab?.id) return;
+  try {
+    await getJson(`${base}/json/activate/${tab.id}`);
+  } catch {
+    // Activation is best-effort; CDP Runtime evaluation can still work without it.
+  }
+}
+
+async function createStableTab(base) {
+  const encoded = encodeURIComponent(targetUrl);
+  return getJson(`${base}/json/new?${encoded}`, { method: "PUT" });
 }
 
 async function findOrCreateTab(base) {
   if (!useNewTab) {
     const existing = await findCurrentBossTab(base);
-    if (existing) return existing;
+    if (existing && stableJobsRe.test(existing.url || "") && !isUnstableBossTab(existing) && bossTabScore(existing) >= 100) {
+      await activateTab(base, existing);
+      return existing;
+    }
+    if (existing && !isUnstableBossTab(existing) && bossTabScore(existing) >= 60) {
+      await activateTab(base, existing);
+      return existing;
+    }
   }
-  const encoded = encodeURIComponent(targetUrl);
-  return getJson(`${base}/json/new?${encoded}`, { method: "PUT" });
+  const created = await createStableTab(base);
+  await activateTab(base, created);
+  return created;
 }
 
 function classify({ href, text }) {
@@ -52,15 +95,14 @@ function classifyApiProbe(probe) {
   const text = `${probe.apiMessage || ""}\n${probe.rawSample || ""}`;
   if ([37, 38].includes(code) || /环境存在异常|安全验证|verify|captcha|验证码/i.test(text)) return "security_check";
   if (/请登录|登录后|未登录|passport|扫码登录/i.test(text)) return "login_required";
-  if (probe.apiStatus >= 200 && probe.apiStatus < 300 && code === 0) return "logged_in";
+  if (probe.apiStatus >= 200 && probe.apiStatus < 300 && code === 0 && (probe.hasJobList || Number.isFinite(Number(probe.resCount)))) return "logged_in";
   return "";
 }
 
 function combineStatus(domStatus, apiStatus) {
+  if (apiStatus === "logged_in" || domStatus === "logged_in") return "logged_in";
   if (["security_check", "login_required"].includes(apiStatus)) return apiStatus;
   if (["security_check", "login_required"].includes(domStatus)) return domStatus;
-  if (apiStatus === "logged_in" && domStatus === "logged_in") return "logged_in";
-  if (apiStatus === "logged_in" && domStatus !== "logged_in") return "unknown";
   return domStatus || apiStatus || "unknown";
 }
 
@@ -166,12 +208,16 @@ async function main() {
   const apiValue = apiProbe.value || { ok: false, error: apiProbe.error || "api probe returned no value" };
   const domStatus = classifyValue(value);
   const apiStatus = classifyApiProbe(apiValue);
-  const loginStatus = apiValue && apiValue.ok === false && domStatus === "logged_in" ? "unknown" : combineStatus(domStatus, apiStatus);
-  console.log(JSON.stringify({ loginStatus, domStatus, tabId: tab.id, ...value, apiProbe: apiValue }, null, 2));
+  const loginStatus = combineStatus(domStatus, apiStatus);
+  console.log(JSON.stringify({ loginStatus, domStatus, apiStatus, tabScore: bossTabScore(tab), tabId: tab.id, ...value, apiProbe: apiValue }, null, 2));
   if (loginStatus !== "logged_in") process.exitCode = 2;
 }
 
-main().catch((error) => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message || String(error));
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { classify, classifyValue, classifyApiProbe, combineStatus, bossTabScore, isUnstableBossTab, findCurrentBossTab };

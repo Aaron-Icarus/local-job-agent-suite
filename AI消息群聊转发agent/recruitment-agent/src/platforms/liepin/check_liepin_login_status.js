@@ -65,6 +65,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error.stack || error.message);
+  console.error(error.message || String(error));
   process.exitCode = 1;
 });

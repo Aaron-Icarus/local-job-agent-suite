@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>本地招聘 Agent 套件控制台</title>
+  <base target="_blank" />
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #fff;
+      --text: #172033;
+      --muted: #667085;
+      --line: #dbe3ef;
+      --primary: #2563eb;
+      --soft: #e8f0ff;
+      --green: #047857;
+      --green-soft: #ecfdf5;
+      --amber: #b45309;
+      --amber-soft: #fff7ed;
+      --cyan-soft: #ecfeff;
+      --shadow: 0 18px 50px rgba(15, 23, 42, .08);
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: radial-gradient(circle at top left, #eaf1ff 0, transparent 30rem), var(--bg);
+      line-height: 1.65;
+    }
+    .page { max-width: 1180px; margin: 0 auto; padding: 32px 20px 56px; }
+    .hero { display: grid; grid-template-columns: 1.35fr .9fr; gap: 18px; margin-bottom: 18px; }
+    .panel, .card {
+      background: rgba(255,255,255,.9);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+    }
+    h1, h2, h3 { margin: 0 0 10px; line-height: 1.25; }
+    h1 { font-size: 34px; letter-spacing: -.04em; }
+    h2 { font-size: 20px; }
+    h3 { font-size: 15px; color: #344054; }
+    p { margin: 0 0 12px; }
+    .muted { color: var(--muted); }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      border-radius: 999px; padding: 4px 10px;
+      background: var(--soft); color: #1d4ed8; border: 1px solid #c7d7fe; font-size: 13px;
+    }
+    .badge.ok { background: var(--green-soft); color: var(--green); border-color: #a7f3d0; }
+    .badge.warn { background: var(--amber-soft); color: var(--amber); border-color: #fed7aa; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .card { border-radius: 18px; min-height: 210px; box-shadow: 0 10px 30px rgba(15, 23, 42, .045); }
+    .wide { grid-column: span 2; }
+    .links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    a.button, button.copy, button.folder {
+      appearance: none; border: 0; border-radius: 12px; padding: 9px 12px;
+      font-size: 14px; text-decoration: none; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    a.button { background: var(--primary); color: #fff; }
+    a.secondary { background: #eef2f7; color: #344054; border: 1px solid #d0d7e2; }
+    button.copy { background: #334155; color: #fff; font-size: 12px; padding: 6px 9px; margin-bottom: 8px; }
+    button.folder { background: var(--cyan-soft); color: #155e75; border: 1px solid #a5f3fc; }
+    pre {
+      margin: 8px 0 12px; padding: 13px; border-radius: 14px;
+      background: #0f172a; color: #e5e7eb; overflow: auto;
+      white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.5;
+    }
+    .tree { font-family: Consolas, "Courier New", monospace; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 12px; }
+    .status {
+      margin-top: 12px; padding: 10px 12px; border-radius: 12px;
+      background: var(--amber-soft); color: #7c2d12; border: 1px solid #fed7aa;
+      font-size: 13px; white-space: pre-wrap;
+    }
+    @media (max-width: 920px) {
+      .hero, .grid { grid-template-columns: 1fr; }
+      .wide { grid-column: span 1; }
+      h1 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="panel">
+        <h1>本地招聘 Agent 套件控制台</h1>
+        <p class="muted">给电脑小白和新对话 AI 用的前台入口：看四块项目结构、进入配置、触发单次登录、打开候选人 Md 文件夹、复制常用命令。</p>
+        <div class="badge-row">
+          <span class="badge ok">分享包本地运行</span>
+          <span class="badge ok">普通链接新标签页打开</span>
+          <span class="badge">路径随项目目录自动定位</span>
+          <span class="badge warn">真实发送前必须先配置并确认</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>推荐首次顺序</h2>
+        <ol>
+          <li>第一次换电脑先双击 <code>快捷启动脚本/准备运行环境.cmd</code>。</li>
+          <li>再双击 <code>快捷启动脚本/启动控制台.cmd</code>。</li>
+          <li>运行“首次配置检查”，按提示补 `.env`、候选人画像、飞书群。</li>
+          <li>分别打开 BOSS / 猎聘登录窗口，人工扫码或验证。</li>
+          <li>先跑草稿测试，再开启采集、推送和定时。</li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:16px;">
+      <h2>分享包四块结构</h2>
+      <div class="tree">分享包根目录/
+├─ AI消息群聊转发agent/          招聘 Agent：采集、评分、岗位库、日报、话术
+├─ 定时执行agent程序/            消息平台：飞书发送、入站、路由、审计
+├─ docs/prd/                    两份离线 PRD
+└─ 快捷启动/                    依赖准备、启动脚本、页面 UI、AI 使用 Skill</div>
+      <div class="links">
+        <button class="folder" data-folder="recruitment_agent">文件管理器打开招聘 Agent</button>
+        <button class="folder" data-folder="message_platform">文件管理器打开消息平台</button>
+        <button class="folder" data-folder="prd">文件管理器打开 PRD</button>
+        <button class="folder" data-folder="launcher">文件管理器打开快捷启动</button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>配置入口</h2>
+        <p class="muted">先复制 `.env.example` 为 `.env`。分享包默认关闭采集、发送和 AI，配置完整后再打开。</p>
+        <div class="links">
+          <a class="button" href="../../AI消息群聊转发agent/recruitment-agent/.env.example">招聘 Agent 示例配置</a>
+          <a class="button secondary" href="../../定时执行agent程序/message-platform/.env.example">消息平台示例配置</a>
+          <a class="button secondary" href="../../AI消息群聊转发agent/recruitment-agent/config/search_strategy.json">搜索策略</a>
+          <a class="button secondary" href="../../AI消息群聊转发agent/recruitment-agent/config/profile_rules.json">评分规则</a>
+          <button class="folder" data-folder="recruitment_config">文件管理器打开招聘配置</button>
+          <button class="folder" data-folder="message_config">文件管理器打开消息配置</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>运行环境准备</h2>
+        <p class="muted">第一次换电脑使用，先准备 Node.js、pnpm 和飞书 SDK。你可以选择用随包便携版，也可以使用自己电脑已有的 Node/pnpm。</p>
+        <p class="muted">下面的“复制命令”会按当前页面所在位置自动生成完整命令，可直接粘贴到 CMD 或 PowerShell，不需要你关心当前终端在哪个目录。</p>
+
+        <h3>菜单式准备</h3>
+        <button class="copy" data-copy="prepare-runtime">复制命令</button>
+        <pre id="prepare-runtime">正在根据当前安装位置生成完整命令...</pre>
+        <p class="muted">注意：上面是给 CMD/PowerShell 用的一行命令，不是文件管理器地址。小白用户也可以直接在文件夹里双击这个 `.cmd` 文件。</p>
+
+        <div class="links">
+          <a class="button secondary" href="../快捷启动脚本/准备运行环境.cmd">查看 CMD（不会执行）</a>
+          <a class="button secondary" href="../快捷启动脚本/prepare_runtime_menu.ps1">查看菜单脚本</a>
+          <a class="button secondary" href="../快捷启动脚本/check_runtime.ps1">查看环境检查脚本</a>
+          <button class="folder" data-folder="packages">文件管理器打开依赖目录</button>
+          <button class="folder" data-folder="launcher_scripts">文件管理器打开脚本目录</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>候选人信息 Md</h2>
+        <p class="muted">候选人画像用于关键词、岗位评分和打招呼话术。分享包默认是示例画像，正式使用要替换成自己的。</p>
+        <div class="links">
+          <a class="button" href="../../AI消息群聊转发agent/recruitment-agent/config/candidate_profiles/">候选人文件夹</a>
+          <a class="button secondary" href="../../AI消息群聊转发agent/recruitment-agent/config/candidate_profiles/current.json">当前候选人指针</a>
+          <a class="button secondary" href="../../AI消息群聊转发agent/recruitment-agent/config/candidate_profiles/sample_candidate.md">示例画像 Md</a>
+          <button class="folder" data-folder="candidate_profiles">文件管理器打开候选人文件夹</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>PRD 与说明</h2>
+        <p class="muted">产品边界、流程设计和后续规划都在这里。AI 接手项目时优先读 SKILL，再读快速说明。</p>
+        <div class="links">
+          <a class="button" href="../../docs/prd/">PRD 目录</a>
+          <a class="button secondary" href="../../docs/prd/招聘信息智能体_PRD_v2.1.md">招聘 PRD</a>
+          <a class="button secondary" href="../../docs/prd/消息发送转发与智能体调度平台_PRD_v1.1.md">消息平台 PRD</a>
+          <a class="button secondary" href="../SKILL.md">AI 使用 Skill</a>
+          <a class="button secondary" href="../使用说明.md">快捷启动说明</a>
+        </div>
+      </article>
+
+      <article class="card wide">
+        <h2>单次登录 / 安全验证</h2>
+        <p class="muted">登录必须人工完成。下面的脚本会打开项目专用可见 Chrome，不会用后台最小化窗口糊弄你。</p>
+
+        <h3>BOSS 登录</h3>
+        <button class="copy" data-copy="boss-login">复制命令</button>
+        <pre id="boss-login">正在根据当前安装位置生成完整命令...</pre>
+
+        <h3>猎聘登录</h3>
+        <button class="copy" data-copy="liepin-login">复制命令</button>
+        <pre id="liepin-login">正在根据当前安装位置生成完整命令...</pre>
+
+        <div class="links">
+          <a class="button secondary" href="../快捷启动脚本/打开BOSS登录.cmd">查看 BOSS CMD</a>
+          <a class="button secondary" href="../快捷启动脚本/打开猎聘登录.cmd">查看猎聘 CMD</a>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>常用运行</h2>
+        <p class="muted">建议先检查运行环境和配置，再跑草稿。分享包默认不会真实采集和发送。</p>
+
+        <h3>查看运行环境状态</h3>
+        <button class="copy" data-copy="runtime-status">复制命令</button>
+        <pre id="runtime-status">正在根据当前安装位置生成完整命令...</pre>
+
+        <h3>首次配置检查</h3>
+        <button class="copy" data-copy="check-config">复制命令</button>
+        <pre id="check-config">正在根据当前安装位置生成完整命令...</pre>
+
+        <h3>草稿测试</h3>
+        <button class="copy" data-copy="draft-run">复制命令</button>
+        <pre id="draft-run">正在根据当前安装位置生成完整命令...</pre>
+
+        <h3>定时流程入口</h3>
+        <button class="copy" data-copy="scheduled-run">复制命令</button>
+        <pre id="scheduled-run">正在根据当前安装位置生成完整命令...</pre>
+      </article>
+
+      <article class="card">
+        <h2>结果与日志</h2>
+        <p class="muted">排障优先看日志。分享包空项目里的 data、outputs、logs 默认应为空或只有占位文件。</p>
+        <div class="links">
+          <button class="folder" data-folder="recruitment_outputs">招聘 outputs</button>
+          <button class="folder" data-folder="recruitment_logs">招聘 logs</button>
+          <button class="folder" data-folder="message_logs">消息 logs</button>
+          <button class="folder" data-folder="packages">依赖准备目录</button>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <h2>文件管理器按钮说明</h2>
+      <p class="muted">页面里有两类按钮：蓝色/灰色按钮是普通链接，浏览器可以自己打开；青色“文件管理器打开...”按钮需要本地 helper，才能调起 Windows 文件管理器。</p>
+      <p class="muted">如果你是直接双击 <code>index.html</code> 打开的页面，普通链接可能能跳，但文件管理器按钮会失败。请改为双击 <code>快捷启动\快捷启动脚本\启动控制台.cmd</code>，它会打开页面并启动 helper。</p>
+      <div id="helper-status" class="status">本地 helper 状态：正在检测...</div>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <h2>页面里的路径/命令怎么理解？</h2>
+      <p class="muted">本页面会根据当前 <code>index.html</code> 的真实位置反推分享包根目录。你现在看到的盘符和目录来自当前安装位置，不是写死值；把分享包挪到 E 盘或其他文件夹后，重新打开页面会显示新位置。</p>
+      <div id="root-path-status" class="status">分享包根目录：正在识别...</div>
+      <p class="muted">页面中的复制命令已经是完整一行命令：会先进入分享包根目录，再执行对应脚本；可直接粘贴到 CMD 或 PowerShell，不依赖当前终端目录。</p>
+      <p class="muted">如果你只是想打开文件夹，请不要把命令粘贴到文件管理器地址栏。请点击青色“文件管理器打开...”按钮，或在文件管理器里直接双击 <code>快捷启动\快捷启动脚本</code> 下的 `.cmd` 文件。</p>
+    </section>
+  </main>
+
+  <script>
+    for (const button of document.querySelectorAll("button.copy")) {
+      button.addEventListener("click", async () => {
+        const target = document.getElementById(button.dataset.copy);
+        const text = target ? target.innerText.trim() : "";
+        try {
+          await navigator.clipboard.writeText(text);
+          const old = button.innerText;
+          button.innerText = "已复制";
+          setTimeout(() => { button.innerText = old; }, 1200);
+        } catch (error) {
+          window.prompt("复制失败，请手动复制：", text);
+        }
+      });
+    }
+
+    const helperStatus = document.getElementById("helper-status");
+    const rootPathStatus = document.getElementById("root-path-status");
+    const helperBase = "http://127.0.0.1:17321";
+    const commandTargets = {
+      "prepare-runtime": ".\\快捷启动\\快捷启动脚本\\prepare_runtime_menu.ps1",
+      "boss-login": ".\\快捷启动\\快捷启动脚本\\open_boss_login.ps1",
+      "liepin-login": ".\\快捷启动\\快捷启动脚本\\open_liepin_login.ps1",
+      "runtime-status": ".\\快捷启动\\快捷启动脚本\\check_runtime.ps1",
+      "check-config": ".\\快捷启动\\快捷启动脚本\\first_config_check.ps1",
+      "draft-run": ".\\快捷启动\\快捷启动脚本\\run_draft.ps1",
+      "scheduled-run": ".\\快捷启动\\快捷启动脚本\\run_scheduled.ps1"
+    };
+
+    function windowsPathFromFileUrlPath(pathname) {
+      let value = decodeURIComponent(pathname || "");
+      if (value.startsWith("/") && /^[A-Za-z]:\//.test(value.slice(1))) {
+        value = value.slice(1);
+      }
+      return value.replace(/\//g, "\\");
+    }
+
+    function getPackageRootPath() {
+      const pagePath = windowsPathFromFileUrlPath(window.location.pathname);
+      const marker = "\\快捷启动\\页面UI\\index.html";
+      if (pagePath.toLowerCase().endsWith(marker.toLowerCase())) {
+        return pagePath.slice(0, pagePath.length - marker.length);
+      }
+      return "";
+    }
+
+    function escapePowerShellSingleQuoted(value) {
+      return String(value || "").replace(/'/g, "''");
+    }
+
+    function buildCopyPasteCommand(relativeScript) {
+      const safeRelative = escapePowerShellSingleQuoted(relativeScript);
+      const rootPath = getPackageRootPath();
+      if (!rootPath) {
+        return `powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host '请先把 <分享包根目录> 替换为实际安装位置'; Set-Location -LiteralPath '<分享包根目录>'; & '${safeRelative}'"`;
+      }
+      const safeRoot = escapePowerShellSingleQuoted(rootPath);
+      return `powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '${safeRoot}'; & '${safeRelative}'"`;
+    }
+
+    function refreshCopyCommands() {
+      const rootPath = getPackageRootPath();
+      if (rootPath) {
+        rootPathStatus.textContent = `分享包根目录：${rootPath}（由当前页面位置自动识别，不是写死路径）`;
+        rootPathStatus.style.background = "#ecfdf5";
+        rootPathStatus.style.borderColor = "#a7f3d0";
+        rootPathStatus.style.color = "#047857";
+      } else {
+        rootPathStatus.textContent = "分享包根目录：未能从当前页面 URL 自动识别。请把页面放在 快捷启动\\页面UI\\index.html 后重新打开。";
+        rootPathStatus.style.background = "#fff7ed";
+        rootPathStatus.style.borderColor = "#fed7aa";
+        rootPathStatus.style.color = "#7c2d12";
+      }
+      for (const [id, relativeScript] of Object.entries(commandTargets)) {
+        const target = document.getElementById(id);
+        if (target) target.textContent = buildCopyPasteCommand(relativeScript);
+      }
+    }
+
+    function getLauncherHelpText() {
+      const rootPath = getPackageRootPath();
+      const scriptDir = rootPath ? `${rootPath}\\快捷启动\\快捷启动脚本` : "分享包\\快捷启动\\快捷启动脚本";
+      const launcherCommand = buildCopyPasteCommand(".\\快捷启动\\快捷启动脚本\\start_dashboard.ps1");
+      const commandPart = rootPath
+        ? `命令行用户可直接复制：\n${launcherCommand}`
+        : `命令行用户做法：\n把 <分享包根目录> 替换成实际安装位置后运行：\n${buildCopyPasteCommand(".\\快捷启动\\快捷启动脚本\\start_dashboard.ps1")}`;
+      return [
+        "当前是“文件管理器打开文件夹”按钮，但本地 helper 没有启动，所以浏览器不能直接调起 Windows 文件管理器。",
+        "",
+        "小白用户做法：",
+        `1. 在文件管理器打开：${scriptDir}`,
+        "2. 双击：启动控制台.cmd",
+        "",
+        "不要把命令粘贴到文件管理器地址栏；文件管理器地址栏只接受文件夹路径，不执行命令。",
+        "",
+        commandPart
+      ].join("\n");
+    }
+
+    function setHelperStatus(text, ok = false) {
+      helperStatus.textContent = text;
+      helperStatus.style.background = ok ? "#ecfdf5" : "#fff7ed";
+      helperStatus.style.borderColor = ok ? "#a7f3d0" : "#fed7aa";
+      helperStatus.style.color = ok ? "#047857" : "#7c2d12";
+    }
+
+    async function checkHelperHealth() {
+      try {
+        const response = await fetch(`${helperBase}/health`, { method: "GET" });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        setHelperStatus("本地 helper 已启动。青色“文件管理器打开...”按钮可以直接打开 Windows 文件管理器。", true);
+      } catch (error) {
+        setHelperStatus(getLauncherHelpText(), false);
+      }
+    }
+
+    async function openFolder(target) {
+      try {
+        const response = await fetch(`${helperBase}/open-folder?target=${encodeURIComponent(target)}`, { method: "POST" });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        setHelperStatus(`已用文件管理器打开：${data.label}`, true);
+      } catch (error) {
+        const helpText = getLauncherHelpText();
+        setHelperStatus(helpText, false);
+        window.alert(helpText);
+      }
+    }
+
+    for (const button of document.querySelectorAll("button.folder")) {
+      button.addEventListener("click", () => openFolder(button.dataset.folder));
+    }
+
+    refreshCopyCommands();
+    checkHelperHealth();
+  </script>
+</body>
+</html>

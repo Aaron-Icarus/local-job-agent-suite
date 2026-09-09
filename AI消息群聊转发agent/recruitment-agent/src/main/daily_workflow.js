@@ -9,8 +9,10 @@ const { resolveSearchStrategy } = require("../strategy/search_keyword_generator"
 loadEnv();
 
 const rootDir = path.resolve(__dirname, "..", "..");
+const dataDir = path.join(rootDir, "data");
 const outputsDir = path.join(rootDir, "outputs");
 const logDir = path.join(rootDir, "logs");
+const workflowLockPath = path.join(dataDir, "workflow.lock");
 const today = shanghaiDateKey();
 
 function ensureDir(dir) {
@@ -23,6 +25,75 @@ function appendLog(message, detail = {}) {
   fs.appendFileSync(path.join(logDir, "daily_workflow.log"), `${JSON.stringify(entry)}\n`, "utf8");
   console.log(JSON.stringify(entry));
 }
+
+function processAlive(pid) {
+  const numeric = Number(pid);
+  if (!Number.isInteger(numeric) || numeric <= 0) return false;
+  try {
+    process.kill(numeric, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readWorkflowLock() {
+  try {
+    return JSON.parse(fs.readFileSync(workflowLockPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function acquireWorkflowLock() {
+  if (envBool("DISABLE_WORKFLOW_LOCK", false)) return { ok: true, disabled: true };
+  if (process.env.WORKFLOW_LOCK_HELD) return { ok: true, inherited: true };
+  ensureDir(dataDir);
+  const staleMinutes = envNumber("WORKFLOW_LOCK_STALE_MINUTES", envNumber("SCHEDULE_WORKFLOW_TIMEOUT_MINUTES", 45) + 15);
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const payload = {
+    pid: process.pid,
+    token,
+    startedAt: new Date().toISOString(),
+    command: process.argv.join(" "),
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = fs.openSync(workflowLockPath, "wx");
+      fs.writeFileSync(fd, JSON.stringify(payload, null, 2), "utf8");
+      fs.closeSync(fd);
+      return { ok: true, token };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const existing = readWorkflowLock();
+      const ageMinutes = existing?.startedAt ? (Date.now() - new Date(existing.startedAt).getTime()) / 60000 : Infinity;
+      const alive = processAlive(existing?.pid);
+      if (!alive || ageMinutes > staleMinutes) {
+        try { fs.unlinkSync(workflowLockPath); } catch { /* ignore stale-lock cleanup race */ }
+        continue;
+      }
+      return {
+        ok: false,
+        existing: {
+          pid: existing?.pid,
+          startedAt: existing?.startedAt,
+          ageMinutes: Number(ageMinutes.toFixed(1)),
+          command: existing?.command || "",
+        }
+      };
+    }
+  }
+  return { ok: false, existing: readWorkflowLock() };
+}
+
+function releaseWorkflowLock(lock) {
+  if (!lock?.ok || lock.disabled || lock.inherited || !lock.token) return;
+  const existing = readWorkflowLock();
+  if (existing?.token !== lock.token) return;
+  try { fs.unlinkSync(workflowLockPath); } catch { /* ignore */ }
+}
+
+let activeWorkflowLock = null;
 
 function alertsSuppressed() {
   return envBool("SUPPRESS_ALERTS", false)
@@ -61,26 +132,52 @@ function runNodeOptional(args, label) {
   }
 }
 
-function runNodeAsync(args, label, env = process.env) {
+function runNodeAsync(args, label, env = process.env, options = {}) {
   appendLog(`${label} started`, { args });
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, { cwd: rootDir, env });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    let timeoutKind = "";
+    let timer = null;
+    let idleTimer = null;
+    const timeoutMs = Number(options.timeoutMs || 0);
+    const idleTimeoutMs = Number(options.idleTimeoutMs || 0);
+    const stopForTimeout = (kind, ms) => {
+      if (timedOut) return;
+      timedOut = true;
+      timeoutKind = kind;
+      stderr += `\n${label} ${kind} timed out after ${ms}ms`;
+      try { child.kill(); } catch { /* ignore */ }
+    };
+    const resetIdleTimer = () => {
+      if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0 || timedOut) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => stopForTimeout("idle", idleTimeoutMs), idleTimeoutMs);
+    };
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timer = setTimeout(() => stopForTimeout("total", timeoutMs), timeoutMs);
+    }
+    resetIdleTimer();
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
       stdout += text;
       process.stdout.write(text);
+      resetIdleTimer();
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString();
       stderr += text;
       process.stderr.write(text);
+      resetIdleTimer();
     });
     child.on("close", (status) => {
-      if (status === 0) appendLog(`${label} finished`);
-      else appendLog(`${label} failed`, { status, stderr: stderr.slice(-2000) });
-      resolve({ ok: status === 0, status, stdout, stderr });
+      if (timer) clearTimeout(timer);
+      if (idleTimer) clearTimeout(idleTimer);
+      if (status === 0 && !timedOut) appendLog(`${label} finished`);
+      else appendLog(`${label} failed`, { status, timedOut, timeoutKind, stderr: stderr.slice(-2000) });
+      resolve({ ok: status === 0 && !timedOut, status, timedOut, timeoutKind, stdout, stderr });
     });
   });
 }
@@ -118,6 +215,35 @@ function assertFreshInput(filePath, expectedDate, label) {
   return filePath;
 }
 
+function hasPlatformPath(paths, platform) {
+  return paths.some((item) => item.platform === platform && item.path);
+}
+
+function addFreshPath(paths, platform, filePath, label) {
+  if (!filePath || hasPlatformPath(paths, platform)) return false;
+  paths.push({ platform, path: assertFreshInput(filePath, today, label) });
+  return true;
+}
+
+function loadLatestDailyRawInputs(rawPaths, { enableBoss, enableLiepin }) {
+  const suffix = today.replace(/-/g, "");
+  const loaded = [];
+  if (enableBoss) {
+    const filePath = tryLatestFile(new RegExp(`^boss_daily_${suffix}_jobs_.*\\.json$`));
+    if (addFreshPath(rawPaths, "boss", filePath, "BOSS latest raw")) {
+      loaded.push({ platform: "boss", path: filePath });
+    }
+  }
+  if (enableLiepin) {
+    const filePath = tryLatestFile(new RegExp(`^liepin_daily_${suffix}_jobs_.*\\.json$`));
+    if (addFreshPath(rawPaths, "liepin", filePath, "猎聘 latest raw")) {
+      loaded.push({ platform: "liepin", path: filePath });
+    }
+  }
+  appendLog("latest daily raw inputs loaded for report-only", { loaded });
+  return loaded;
+}
+
 function requiredOutputPath(parsed, field, label) {
   const filePath = parsed?.[field];
   if (!filePath || !fs.existsSync(filePath)) throw new Error(`${label} did not return a usable ${field}`);
@@ -143,6 +269,19 @@ async function keywordSpecText() {
 
 function platformEnabled(name, defaultValue) {
   return envBool(`ENABLE_${name.toUpperCase()}`, defaultValue);
+}
+
+function platformTimeoutMs(platform, purpose, defaultValue) {
+  const platformKey = `${platform.toUpperCase()}_${purpose.toUpperCase()}_TIMEOUT_MS`;
+  const sharedKey = `PLATFORM_${purpose.toUpperCase()}_TIMEOUT_MS`;
+  return envNumber(platformKey, envNumber(sharedKey, defaultValue));
+}
+
+function platformIdleTimeoutMs(platform, purpose, defaultValue) {
+  const platformKey = `${platform.toUpperCase()}_${purpose.toUpperCase()}_IDLE_TIMEOUT_MS`;
+  const sharedKey = `PLATFORM_${purpose.toUpperCase()}_IDLE_TIMEOUT_MS`;
+  const legacyKey = `PLATFORM_${purpose.toUpperCase()}_TIMEOUT_MS`;
+  return envNumber(platformKey, envNumber(sharedKey, envNumber(legacyKey, defaultValue)));
 }
 
 function parseLastJson(stdout) {
@@ -206,6 +345,14 @@ function loadCollectionSummary(filePath) {
 function extractDiagnosticHints(result) {
   const text = String(result?.stderr || result?.error || "");
   const hints = [];
+  const invalidJsonMatches = Array.from(text.matchAll(/BOSS job list business error:\s*invalid_json\b/gi));
+  if (invalidJsonMatches.length) {
+    hints.push(`BOSS 返回了非职位 JSON（${invalidJsonMatches.length}次），常见原因是访问过频触发风控/验证页、登录态临时异常、网络代理异常或接口结构变化。`);
+  }
+  const fetchFailedMatches = Array.from(text.matchAll(/\bfetch failed\b/gi));
+  if (fetchFailedMatches.length) {
+    hints.push(`浏览器内接口请求失败（${fetchFailedMatches.length}次），可能是网络/CDP 会话不稳或平台短时拒绝请求。`);
+  }
   const businessMatches = Array.from(text.matchAll(/BOSS job list business error:\s*(\d+)\s*([^\r\n.。]+)/g));
   if (businessMatches.length) {
     const grouped = new Map();
@@ -286,6 +433,13 @@ function buildCollectionAlert(result) {
 }
 
 async function main() {
+  activeWorkflowLock = acquireWorkflowLock();
+  if (!activeWorkflowLock.ok) {
+    appendLog("workflow skipped because another run is active", { lock: activeWorkflowLock.existing });
+    console.log(JSON.stringify({ type: "workflow_result", status: "skipped_locked", reason: "another workflow is running", lock: activeWorkflowLock.existing }));
+    process.exitCode = 3;
+    return;
+  }
   ensureDir(outputsDir);
   appendLog("workflow started", { today });
   const enableBoss = platformEnabled("boss", true);
@@ -302,24 +456,34 @@ async function main() {
   if (process.env.INPUT_EVALUATED_JSON) evaluatedPaths.push({ platform: "boss", path: assertFreshInput(process.env.INPUT_EVALUATED_JSON, today, "BOSS evaluated") });
   if (process.env.INPUT_LIEPIN_EVALUATED_JSON) evaluatedPaths.push({ platform: "liepin", path: assertFreshInput(process.env.INPUT_LIEPIN_EVALUATED_JSON, today, "猎聘 evaluated") });
 
-  if (envBool("ENABLE_COLLECT", true)) {
+  const collectEnabled = envBool("ENABLE_COLLECT", true);
+  if (!collectEnabled) {
+    loadLatestDailyRawInputs(rawPaths, { enableBoss, enableLiepin });
+  }
+
+  if (collectEnabled) {
     const strategy = await keywordSpecText();
     appendLog("search keyword strategy resolved", strategy.ai);
     const stageName = `daily_${today.replace(/-/g, "")}`;
     const tasks = [];
+    const loginCheckTimeoutMs = envNumber("LOGIN_CHECK_TIMEOUT_MS", envNumber("BOSS_LOGIN_CHECK_TIMEOUT_MS", 90000));
+    const bossCollectIdleTimeoutMs = platformIdleTimeoutMs("BOSS", "COLLECT", 300000);
+    const liepinCollectIdleTimeoutMs = platformIdleTimeoutMs("LIEPIN", "COLLECT", 300000);
+    const bossCollectTotalTimeoutMs = platformTimeoutMs("BOSS", "COLLECT_TOTAL", 900000);
+    const liepinCollectTotalTimeoutMs = platformTimeoutMs("LIEPIN", "COLLECT_TOTAL", 900000);
     if (enableBoss) {
       tasks.push(async () => {
         if (envBool("ENABLE_LOGIN_CHECK", true)) {
-          const login = await runNodeAsync(["src/platforms/boss/check_boss_login_status.js"], "boss-login-check");
-          if (!login.ok) return { platform: "boss", ok: false, error: "登录态校验失败", stderr: String(login.stderr || "").slice(-4000) };
+          const login = await runNodeAsync(["src/platforms/boss/check_boss_login_status.js"], "boss-login-check", process.env, { timeoutMs: loginCheckTimeoutMs });
+          if (!login.ok) return { platform: "boss", ok: false, error: login.timedOut ? "登录态校验超时" : "登录态校验失败", stderr: String(login.stderr || "").slice(-4000) };
         }
-        const collect = await runNodeAsync(["src/platforms/boss/boss_batch_collect.js", stageName, String(strategy.perKeyword), String(strategy.maxTotal), strategy.specText], "boss-collect");
+        const collect = await runNodeAsync(["src/platforms/boss/boss_batch_collect.js", stageName, String(strategy.perKeyword), String(strategy.maxTotal), strategy.specText], "boss-collect", process.env, { idleTimeoutMs: bossCollectIdleTimeoutMs, timeoutMs: bossCollectTotalTimeoutMs });
         if (!collect.ok) {
           const partialPath = tryLatestFile(new RegExp(`^boss_${stageName}_jobs_.*\\.json$`));
           const blockingReason = collectionBlockingReason("boss", partialPath, collect.stderr);
           if (blockingReason) return { platform: "boss", ok: false, rawPath: partialPath, error: blockingReason, stderr: String(collect.stderr || "").slice(-4000) };
-          if (partialPath) return { platform: "boss", ok: true, partial: true, rawPath: partialPath, error: "采集部分完成，部分关键词失败", stderr: String(collect.stderr || "").slice(-4000) };
-          return { platform: "boss", ok: false, error: "采集进程失败", stderr: String(collect.stderr || "").slice(-4000) };
+          if (partialPath) return { platform: "boss", ok: true, partial: true, rawPath: partialPath, error: collect.timedOut ? `采集${collect.timeoutKind === "idle" ? "空闲" : "总时长"}超时，仅保留超时前已完成数据` : "采集部分完成，部分关键词失败", timedOut: collect.timedOut, timeoutKind: collect.timeoutKind, stderr: String(collect.stderr || "").slice(-4000) };
+          return { platform: "boss", ok: false, error: collect.timedOut ? `采集${collect.timeoutKind === "idle" ? "空闲" : "总时长"}超时` : "采集进程失败", timedOut: collect.timedOut, timeoutKind: collect.timeoutKind, stderr: String(collect.stderr || "").slice(-4000) };
         }
         return { platform: "boss", ok: true, rawPath: latestFile(new RegExp(`^boss_${stageName}_jobs_.*\\.json$`)) };
       });
@@ -327,16 +491,16 @@ async function main() {
     if (enableLiepin) {
       tasks.push(async () => {
         if (envBool("ENABLE_LOGIN_CHECK", true)) {
-          const login = await runNodeAsync(["src/platforms/liepin/check_liepin_login_status.js"], "liepin-login-check");
-          if (!login.ok) return { platform: "liepin", ok: false, error: "登录态校验失败", stderr: String(login.stderr || "").slice(-4000) };
+          const login = await runNodeAsync(["src/platforms/liepin/check_liepin_login_status.js"], "liepin-login-check", process.env, { timeoutMs: loginCheckTimeoutMs });
+          if (!login.ok) return { platform: "liepin", ok: false, error: login.timedOut ? "登录态校验超时" : "登录态校验失败", stderr: String(login.stderr || "").slice(-4000) };
         }
         const per = envNumber("LIEPIN_PER_KEYWORD", envNumber("PER_KEYWORD", strategy.perKeyword));
         const max = envNumber("LIEPIN_MAX_TOTAL", envNumber("MAX_TOTAL", strategy.maxTotal));
-        const collect = await runNodeAsync(["src/platforms/liepin/liepin_batch_collect.js", stageName, String(per), String(max), strategy.specText], "liepin-collect");
+        const collect = await runNodeAsync(["src/platforms/liepin/liepin_batch_collect.js", stageName, String(per), String(max), strategy.specText], "liepin-collect", process.env, { idleTimeoutMs: liepinCollectIdleTimeoutMs, timeoutMs: liepinCollectTotalTimeoutMs });
         if (!collect.ok) {
           const partialPath = tryLatestFile(new RegExp(`^liepin_${stageName}_jobs_.*\\.json$`));
-          if (partialPath) return { platform: "liepin", ok: true, partial: true, rawPath: partialPath, error: "采集部分完成，部分关键词失败", stderr: String(collect.stderr || "").slice(-4000) };
-          return { platform: "liepin", ok: false, error: "采集进程失败", stderr: String(collect.stderr || "").slice(-4000) };
+          if (partialPath) return { platform: "liepin", ok: true, partial: true, rawPath: partialPath, error: collect.timedOut ? `采集${collect.timeoutKind === "idle" ? "空闲" : "总时长"}超时，仅保留超时前已完成数据` : "采集部分完成，部分关键词失败", timedOut: collect.timedOut, timeoutKind: collect.timeoutKind, stderr: String(collect.stderr || "").slice(-4000) };
+          return { platform: "liepin", ok: false, error: collect.timedOut ? `采集${collect.timeoutKind === "idle" ? "空闲" : "总时长"}超时` : "采集进程失败", timedOut: collect.timedOut, timeoutKind: collect.timeoutKind, stderr: String(collect.stderr || "").slice(-4000) };
         }
         return { platform: "liepin", ok: true, rawPath: latestFile(new RegExp(`^liepin_${stageName}_jobs_.*\\.json$`)) };
       });
@@ -428,6 +592,8 @@ async function main() {
   appendLog("workflow finished", { workflowStatus, partialPlatforms, failedPlatforms, rawPaths, screenedPaths, evaluatedPaths });
   console.log(JSON.stringify({ type: "workflow_result", status: workflowStatus, partialPlatforms, failedPlatforms, rawPaths, screenedPaths, evaluatedPaths }));
   if (partialPlatforms.length || failedPlatforms.length) process.exitCode = 2;
+  releaseWorkflowLock(activeWorkflowLock);
+  activeWorkflowLock = null;
 }
 
 main().catch(async (error) => {
@@ -439,4 +605,7 @@ main().catch(async (error) => {
     appendLog("failure alert failed", { error: alertError.message });
   }
   process.exitCode = 1;
+}).finally(() => {
+  releaseWorkflowLock(activeWorkflowLock);
+  activeWorkflowLock = null;
 });

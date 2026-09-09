@@ -71,6 +71,15 @@ function lastSuccessfulRun(state) {
     .sort((a, b) => new Date(b.at) - new Date(a.at))[0] || null;
 }
 
+function isUsableCollectionRun(run) {
+  // A partial collection still means the platform/browser was touched and at
+  // least some fresh data was saved. Count it for scheduling cadence so a
+  // partial BOSS run does not cause half-hourly catch-up loops and extra
+  // platform pressure. Reporting is stricter below: only a successful evening
+  // report seals the day.
+  return ["success", "partial_success"].includes(run?.status);
+}
+
 function hasSuccessfulEveningReport(state, dateKey) {
   return (state.reportRuns || []).some((run) => run.dateKey === dateKey && run.status === "success");
 }
@@ -96,7 +105,7 @@ function decide(state, now = new Date()) {
   }
   const parts = shanghaiParts(now);
   const slot = slotFor(parts);
-  const todaysRuns = (state.collectRuns || []).filter((run) => run.dateKey === parts.dateKey && run.status === "success");
+  const todaysRuns = (state.collectRuns || []).filter((run) => run.dateKey === parts.dateKey && isUsableCollectionRun(run));
   const minGapHours = Number(process.env.SCHEDULE_MIN_COLLECTION_GAP_HOURS || 2);
   const lastToday = [...todaysRuns].sort((a, b) => new Date(b.at) - new Date(a.at))[0] || null;
   const gapSatisfied = elapsedHoursSince(lastToday, now) >= minGapHours;
@@ -123,12 +132,17 @@ function decide(state, now = new Date()) {
   if (slot === "pre_report") {
     const afternoon = todaysRuns.find((run) => run.slot === "afternoon");
     const exists = todaysRuns.some((run) => run.slot === "pre_report");
+    const shouldRun = Boolean(!exists && gapSatisfied);
     return {
-      shouldRun: Boolean(afternoon && !exists && gapSatisfied),
-      action: afternoon && !exists && gapSatisfied ? "collect_only" : "skip",
+      shouldRun,
+      action: shouldRun ? "collect_only" : "skip",
       slot,
       dateKey: parts.dateKey,
-      reason: !afternoon ? "no afternoon collection to refresh" : (exists ? "pre-report collection already completed" : (!gapSatisfied ? `minimum ${minGapHours}h collection gap not reached` : "afternoon data is early; refresh before delivery"))
+      reason: exists
+        ? "pre-report collection already completed"
+        : (!gapSatisfied
+          ? `minimum ${minGapHours}h collection gap not reached`
+          : (afternoon ? "afternoon data is early; refresh before delivery" : "afternoon collection missing; catch up before delivery window"))
     };
   }
   if (slot === "delivery") {
@@ -172,7 +186,7 @@ function decide(state, now = new Date()) {
         action: "collect_and_report",
         slot,
         dateKey: parts.dateKey,
-        reason: "no successful collection today; collect before delayed delivery"
+        reason: "no usable collection today; collect before delayed delivery"
       };
     }
     const elapsedHours = elapsedHoursSince(lastToday, now);
@@ -234,6 +248,13 @@ function runWorkflow(decision) {
   return result;
 }
 
+function statusForWorkflowResult(result) {
+  if (result.status === 0) return "success";
+  if (result.status === 2) return "partial_success";
+  if (result.status === 3) return "skipped_locked";
+  return "failed";
+}
+
 function main() {
   const state = loadState();
   const decision = decide(state, testNow());
@@ -253,24 +274,26 @@ function main() {
     dateKey: decision.dateKey || shanghaiParts().dateKey,
     slot: decision.slot,
     action: decision.action,
-    status: result.status === 0 ? "success" : result.status === 2 ? "partial_success" : "failed",
+    status: statusForWorkflowResult(result),
     exitCode: result.status
   };
-  state.collectRuns = state.collectRuns || [];
-  state.reportRuns = state.reportRuns || [];
-  if (decision.action === "collect_only" || decision.action === "collect_and_report") {
-    state.collectRuns.push(runRecord);
+  if (runRecord.status !== "skipped_locked") {
+    state.collectRuns = state.collectRuns || [];
+    state.reportRuns = state.reportRuns || [];
+    if (decision.action === "collect_only" || decision.action === "collect_and_report") {
+      state.collectRuns.push(runRecord);
+    }
+    if (decision.action === "report_only" || decision.action === "collect_and_report") {
+      state.reportRuns.push(runRecord);
+    }
+    state.collectRuns = state.collectRuns.slice(-100);
+    state.reportRuns = state.reportRuns.slice(-100);
+    saveState(state);
   }
-  if (decision.action === "report_only" || decision.action === "collect_and_report") {
-    state.reportRuns.push(runRecord);
-  }
-  state.collectRuns = state.collectRuns.slice(-100);
-  state.reportRuns = state.reportRuns.slice(-100);
-  saveState(state);
   appendLog("schedule run recorded", runRecord);
-  if (result.status !== 0) process.exitCode = result.status || 1;
+  if (result.status !== 0 && result.status !== 3) process.exitCode = result.status || 1;
 }
 
 if (require.main === module) main();
 
-module.exports = { decide, slotFor, shanghaiParts, hasFinalizedReportAttempt };
+module.exports = { decide, slotFor, shanghaiParts, hasFinalizedReportAttempt, isUsableCollectionRun };

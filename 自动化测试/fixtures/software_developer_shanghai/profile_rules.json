@@ -1,0 +1,53 @@
+{
+  "targetLocation": "上海",
+  "lowerPriorityDistricts": [
+    "临港",
+    "金山",
+    "奉贤"
+  ],
+  "targetSalaryK": {
+    "min": 25,
+    "max": 35
+  },
+  "targetRoles": [
+    "Java后端开发",
+    "后端开发工程师",
+    "全栈开发工程师",
+    "AI应用开发工程师",
+    "软件开发工程师",
+    "云原生后端开发"
+  ],
+  "preferredTopics": [
+    "Java",
+    "Spring Boot",
+    "微服务",
+    "MySQL",
+    "Redis",
+    "消息队列",
+    "React",
+    "Vue",
+    "TypeScript",
+    "Docker",
+    "Kubernetes",
+    "CI/CD",
+    "大模型应用",
+    "RAG",
+    "知识库",
+    "AI Agent",
+    "企业服务",
+    "SaaS"
+  ],
+  "avoidTopics": [
+    "电话销售",
+    "渠道销售",
+    "数据标注",
+    "审核客服",
+    "纯算法研究",
+    "长期驻场"
+  ],
+  "activityRules": {
+    "activeWithinDaysHigh": 7,
+    "activeWithinDaysLow": 14,
+    "inactiveOverDaysIgnore": 30
+  }
+}

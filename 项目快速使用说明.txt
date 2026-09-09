@@ -1,6 +1,16 @@
 找工作双项目：快速使用说明（脱敏构建包）
 
 版本更新摘要
+- 2026-09-09 v0.3.11：HTML 控制台会根据当前 index.html 的真实位置动态识别分享包根目录，不写死 D 盘路径；所有“复制命令”都改为完整一行 PowerShell 命令，会先进入实际分享包根目录再执行英文 .ps1 脚本，可直接粘贴到 CMD 或 PowerShell。静态文档不写死本机路径，只给 <分享包实际安装目录> 模板。
+- 2026-09-09 v0.3.10：运行环境准备升级为新手菜单。用户可选择随包 Node/pnpm、本机已有 Node/pnpm、只查看状态，或显式注册随包 Node 到当前用户 PATH；新增 查看运行环境状态.cmd 和 注册随包Node到用户Path.cmd。HTML 控制台补充说明：页面里的 .\快捷启动\... 是命令行命令，不是文件管理器地址。
+- 2026-09-09 v0.3.9：补齐 随项目必须的安装包 逻辑。新增 准备运行环境.cmd/.ps1，可下载官方便携版 Node.js 到 快捷启动\随项目必须的安装包\node\，通过 corepack 准备 pnpm，并把消息平台飞书 SDK 依赖安装到 快捷启动\随项目必须的安装包\message-platform-vendor\；快捷运行入口会优先使用随包 Node，避免换电脑后依赖系统 PATH。
+  同步修复 message-platform\vendor\pnpm-workspace.yaml 缺少 packages 字段导致新电脑 pnpm install 失败的问题。
+- 2026-09-09 v0.3.8：确认 docs\prd\ 作为唯一离线 PRD 目录，并新增 快捷启动\ 交付结构。快捷启动内包含依赖准备目录、CMD/PowerShell 双入口脚本、本地 HTML 控制台、文件管理器 helper、给 AI 使用的 SKILL.md 和人类使用说明；普通链接默认新标签页打开，文件夹按钮可通过 127.0.0.1 helper 用 Windows 文件管理器打开白名单目录。
+- 2026-09-09 v0.3.7：本地 HTML 控制台支持新标签页打开；新增 helper 后可用浏览器按钮打开 config、candidate_profiles、outputs、data、logs 等项目文件夹。
+- 2026-09-09 v0.3.6：修复 partial_success 被误判为未采集导致反复追跑；report-only 可读取当天新鲜 raw 数据；BOSS 告警增加 invalid_json/fetch failed 中文解释；BOSS 候选池改为排序选取，不再机械取列表前 N 个。
+- 2026-09-08 v0.3.5：修复 BOSS 可见页面反复刷新和计划任务重入；新增运行锁，手工/定时不会同时抢 CDP；16-19 点下午采集缺失会补采；采集默认 5 分钟无输出切平台、15 分钟单平台总上限；BOSS 默认只走列表接口，不再自动输入/点击/刷新页面。
+- 2026-09-08 v0.3.4：修复 BOSS 登录态读取误判；登录检查和采集优先稳定 jobs 页面，避开加载中/安全验证/登录页；DOM 已登录或业务接口返回职位列表任一强证据成立即通过；登录检查默认 90 秒快速失败，避免拖满整轮流程。
+- 2026-09-07 v0.3.3：新增 自动化测试\ 离线烟测目录，内置上海软件开发方向的虚构候选人画像、搜索策略和样例岗位；规则话术会读取候选人画像/岗位文本提取软件开发关键词，不再固定套用 AI 项目交付模板。
 - 2026-09-07 v0.3.2：-DraftOnly 草稿验证模式会禁止日报和告警真实发送，只生成本地草稿/日志；BOSS 与猎聘采集改为顺序执行，避免共享 Chrome CDP 时两个平台互相抢页面导致登录态误判。
 - 2026-09-07 v0.3.1：已按新用户模拟流程补齐并验证修复。空包缺配置时只做 preflight 中文提示和日志，不启动 Chrome、不采集；BOSS 登录改为页面 + 业务接口双校验；BOSS 登录/安全验证类 partial 数据会被阻断，避免旧数据混入日报；AI_GREETING_MODE=rules/disabled 会直接走规则话术，不再回退调用 Codex/API；登录脚本会读取 .env 中的 CDP 端口和 Profile 配置。
 - 2026-09-04 v0.3.0：统一 AI Router 覆盖画像、搜索关键词、评分复核和打招呼话术；默认关闭 AI 和发送；晚间日报失败/部分成功可在 21:00 前重试。
@@ -8,28 +18,61 @@
 目录约定
 - 招聘信息智能体：AI消息群聊转发agent\recruitment-agent
 - 消息平台：定时执行agent程序\message-platform
+- PRD 文档：docs\prd\
+- 小白/AI 快捷入口：快捷启动\
 - 本包不含任何岗位库、候选人资料、登录态、飞书群 ID 或密钥。
 
+最推荐入口
+1. 第一次换电脑使用，先双击：快捷启动\快捷启动脚本\准备运行环境.cmd，然后按菜单选择依赖准备方式。
+2. 小白用户日常优先双击：快捷启动\快捷启动脚本\启动控制台.cmd
+3. 如果在命令行运行，请优先打开 HTML 控制台复制“完整命令”。该命令会按当前安装位置自动生成，可直接粘贴到 CMD 或 PowerShell。
+   静态模板如下，使用前把 <分享包实际安装目录> 替换成你的真实目录：
+   powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\start_dashboard.ps1'"
+4. 页面 UI 文件位置：
+   快捷启动\页面UI\index.html
+5. 文件管理器按钮需要 helper 支持；双击“启动控制台.cmd”会自动启动 helper。helper 只监听 127.0.0.1:17321，只打开分享包内白名单目录。
+   如果是直接打开 页面UI\index.html，普通链接可能能跳，但“文件管理器打开...”按钮会失败；请改为双击 启动控制台.cmd。
+6. AI 接手本项目时，先读：快捷启动\SKILL.md
+
 首次使用
-1. 安装 Node.js 20+；进入 message-platform\vendor 后执行 pnpm install --frozen-lockfile。
-2. 复制两个项目中的 .env.example 为 .env，只填自己的凭据。
-3. 用自己的简历生成或填写 recruitment-agent\config\candidate_profiles\sample_candidate.md，并更新 current.json。
-4. 在 message-platform 的 channels.config.json 和 routes.config.json 替换 oc_test_* 示例群 ID；确认后才将 enabled 设为 true。
-5. 先运行 node .\message-platform\tests\run_tests.js；测试不会发送飞书消息。
+1. 双击 快捷启动\快捷启动脚本\启动控制台.cmd，打开本地控制台。
+2. 点击或运行 快捷启动\快捷启动脚本\首次配置检查.cmd。
+3. 首次换电脑使用，先运行 快捷启动\快捷启动脚本\准备运行环境.cmd，准备随包 Node.js、pnpm 和消息平台依赖。
+4. 如果不能联网，手动安装 Node.js 20+ 后，进入 message-platform\vendor 执行 pnpm install --frozen-lockfile。
+5. 复制两个项目中的 .env.example 为 .env，只填自己的凭据。
+6. 用自己的简历生成或填写 recruitment-agent\config\candidate_profiles\sample_candidate.md，并更新 current.json。
+7. 在 message-platform 的 channels.config.json 和 routes.config.json 替换 oc_test_* 示例群 ID；确认后才将 enabled 设为 true。
+8. 先运行 node .\message-platform\tests\run_tests.js；测试不会发送飞书消息。
 
 一次可见登录（不会后台最小化）
-在 recruitment-agent 目录执行：
-powershell -ExecutionPolicy Bypass -File .\tools\open_chrome_cdp_for_login.ps1
+推荐从 HTML 控制台复制实际路径命令。静态模板如下：
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\open_boss_login.ps1'"
 
 猎聘单独登录：
-powershell -ExecutionPolicy Bypass -File .\tools\open_liepin_cdp_for_login.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\open_liepin_login.ps1'"
+
+也可以在 recruitment-agent 目录执行原项目脚本：
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\tools\open_chrome_cdp_for_login.ps1'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\tools\open_liepin_cdp_for_login.ps1'"
 
 完成登录后，正常定时运行会复用项目专用 Chrome Profile，并在非登录模式下后台运行。
 
-常用命令（均先 cd 到 recruitment-agent）
-- 仅生成草稿：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -DraftOnly（不会真实发送日报，也不会真实发送采集/预检告警）
-- 按调度窗口执行：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1 -Scheduled
-- 手工运行：powershell -ExecutionPolicy Bypass -File .\run_daily_job_agent.ps1
+常用命令
+小白入口优先使用快捷脚本。HTML 控制台会生成可直接复制的实际路径命令；静态模板如下：
+- 首次配置检查：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\first_config_check.ps1'"
+- 仅生成草稿：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\run_draft.ps1'"
+- 按调度窗口执行：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\快捷启动\快捷启动脚本\run_scheduled.ps1'"
+
+高级用户也可以直接调用 recruitment-agent；静态模板如下：
+- 仅生成草稿：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1' -DraftOnly"（不会真实发送日报，也不会真实发送采集/预检告警）
+- 按调度窗口执行：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1' -Scheduled"
+- 手工运行：powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>\AI消息群聊转发agent\recruitment-agent'; & '.\run_daily_job_agent.ps1'"
+
+自动化测试（无需登录、无需飞书、无需 AI）
+静态模板如下：
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPath '<分享包实际安装目录>'; & '.\自动化测试\run_offline_smoke.ps1'"
+
+该测试会临时复制一份项目，套用“上海软件开发方向”的虚构候选人画像和虚构岗位数据，验证 preflight、消息平台回归、关键词策略、评分、入库、岗位编号和日报草稿。默认跑完会删除临时副本；需要排查时可加 -KeepTemp。
 
 安全边界
 - 真实发送、重新登录、启动飞书长连接前，需要得到当前操作者的明确授权。
@@ -39,8 +82,10 @@ powershell -ExecutionPolicy Bypass -File .\tools\open_liepin_cdp_for_login.ps1
 本包是脱敏空项目：不含真实简历、岗位库、登录态、飞书群或密钥；采集、发送和浏览器自动启动默认关闭。首次执行前若缺配置，招聘 Agent 会给出中文检查清单、记录本地日志并停止，不会启动浏览器或采集。
 
 1. 安装运行环境
-   - 安装 Node.js 20+。
-   - 进入 定时执行agent程序\message-platform\vendor，执行：pnpm install --frozen-lockfile。
+   - 推荐双击 快捷启动\快捷启动脚本\准备运行环境.cmd。
+   - 该脚本会显示菜单：可选择随包 Node/pnpm、本机已有 Node/pnpm、只检查状态，或显式注册随包 Node 到当前用户 PATH。
+   - 随包模式会把便携版 Node.js 放到 快捷启动\随项目必须的安装包\node\，用 corepack 准备 pnpm，并把飞书 SDK 依赖安装到 快捷启动\随项目必须的安装包\message-platform-vendor\。
+   - 如果不能联网，也可以手动安装 Node.js 20+，再进入 定时执行agent程序\message-platform\vendor 执行 pnpm install --frozen-lockfile。
 
 2. 配置候选人资料和招聘策略
    - 在 AI消息群聊转发agent\recruitment-agent 中复制 .env.example 为 .env。

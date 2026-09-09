@@ -1,0 +1,43 @@
+{
+  "city": "上海",
+  "defaultPerKeyword": 3,
+  "defaultMaxTotal": 12,
+  "levels": [
+    {
+      "type": "岗位信息",
+      "description": "直接搜索软件开发目标岗位名，适合验证岗位名召回。",
+      "keywords": [
+        "Java后端开发",
+        "后端开发工程师",
+        "全栈开发工程师",
+        "软件开发工程师",
+        "AI应用开发工程师",
+        "云原生后端开发"
+      ]
+    },
+    {
+      "type": "经历关键词",
+      "description": "使用候选人技术栈和业务经历组合，发现标题不标准但职责匹配的岗位。",
+      "keywords": [
+        "Spring Boot 微服务",
+        "Java SaaS",
+        "AI应用 工程化",
+        "大模型应用 开发",
+        "RAG 知识库 开发",
+        "Docker CI/CD"
+      ]
+    },
+    {
+      "type": "宽泛词",
+      "description": "扩大软件研发相关召回，后续靠评分和人工确认过滤。",
+      "keywords": [
+        "Java",
+        "后端",
+        "全栈",
+        "软件开发",
+        "云原生",
+        "AI应用"
+      ]
+    }
+  ]
+}
