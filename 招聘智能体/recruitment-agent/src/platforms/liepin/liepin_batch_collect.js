@@ -119,7 +119,7 @@ async function findLiepinTab() {
   return tab;
 }
 
-async function searchKeyword(ws, keyword) {
+async function searchKeywordByUi(ws, keyword) {
   const result = await evaluate(ws, `(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     if (location.href === 'about:blank') return { ok: false, reason: "current tab is about:blank", href: location.href, sample: "" };
@@ -138,6 +138,31 @@ async function searchKeyword(ws, keyword) {
   })()`, 15000);
   await sleep(5500);
   return result;
+}
+
+// 2026-09-14 修复：原实现只在「当前页面」的搜索框里输入关键词。
+// 采集时当前页是个人中心 c.liepin.com，那里并没有关键词搜索结果，
+// 于是每个关键词都只解析到页面上同一批「与您求职期望相似的职位」推荐卡片
+// （实测每个关键词都只有 4 条、且与关键词无关，全部标记 page_text_fallback）。
+// 改为直接导航到猎聘的关键词搜索页：/zhaopin/?dqs=<城市码>&key=<关键词>
+// （020=上海；实测同一关键词能拿到 16 条与关键词强相关的真实职位卡片）。
+// 导航失败或没落到搜索页时，保留原来的 UI 输入方式作为兜底。
+async function searchKeyword(ws, keyword) {
+  const cityCode = process.env.LIEPIN_CITY_CODE || "020";
+  const url = `https://www.liepin.com/zhaopin/?dqs=${encodeURIComponent(cityCode)}&key=${encodeURIComponent(keyword)}`;
+  try {
+    await navigate(ws, url, 10000);
+    await sleep(4000);
+    const current = (await evaluate(ws, "location.href", 5000)) || "";
+    if (/liepin\.com\/zhaopin/i.test(current)) {
+      return { ok: true, via: "url_navigation", keyword, href: current };
+    }
+    const fallback = await searchKeywordByUi(ws, keyword);
+    return { ...fallback, via: "ui_input_fallback", navigatedTo: current };
+  } catch (error) {
+    const fallback = await searchKeywordByUi(ws, keyword).catch(() => ({ ok: false, reason: error.message, href: "" }));
+    return { ...fallback, via: "ui_input_after_nav_error", navError: error.message };
+  }
 }
 
 async function extractCards(ws, keyword, limit) {
@@ -361,6 +386,22 @@ async function main() {
       ws.close();
     }
   }
+  // 2026-09-14：采集结束后把猎聘标签页还原到个人中心。
+  // 否则标签页停在 /zhaopin/?key=... 搜索页，下一轮的猎聘登录态检查会判成 unknown，
+  // 整轮猎聘被当成"登录态校验失败"跳过（已实测发生过一次）。
+  try {
+    const restoreTab = await findLiepinTab();
+    const restoreWs = await openWsForTab(restoreTab);
+    try {
+      await navigate(restoreWs, "https://c.liepin.com/", 8000);
+      await sleep(1000);
+    } finally {
+      restoreWs.close();
+    }
+  } catch {
+    // 还原失败不影响本轮已采集的数据。
+  }
+
   writeOutputs({ stageName, keywordSpecs, perKeyword, maxTotal, keywordStats, records, rawItems, complete: true, partial });
   console.log(JSON.stringify({ csvPath, jsonPath, total: records.length, keywordStats }, null, 2));
   if (partial) process.exitCode = 2;

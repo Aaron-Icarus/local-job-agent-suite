@@ -2,6 +2,7 @@
 
 ## 构建包版本更新说明
 
+- **2026-09-14 v0.4.3（分享包修补）**：修复 BOSS 采集长期 0 条——BOSS 页面反调试会在开启 CDP `Runtime` 域后挂住带 `awaitPromise` 的 `Runtime.evaluate`（同一条列表请求：不开域 348ms 成功 / 只开 Runtime 域 20s 超时），已从 `boss_batch_collect.js` 与 `core/cdp_common.js` 的 `openWsForTab()` 移除 `Runtime.enable`；BOSS 详情 JD 改为「详情页 URL 校验 + 按 `encryptJobId` 直连详情页 + 快照提取」，采集状态保持既有的 `ok`（写自定义新状态会被 stage2/评分当成"待补采"，导致日报"记录 30 条，可关注 0 条"）；猎聘改为直接导航 `/zhaopin/?dqs=<城市码>&key=<关键词>` 并修复登录态误判；`ai_router` 提取答案时跳过 `reasoning` 项，新增 `AI_OPENAI_REASONING_EFFORT`；`.env.example` 采集总超时默认改 1800000、新增 `LIEPIN_CITY_CODE=020`。自测：`自动化测试/run_offline_smoke.ps1` 7/7 通过；2026-09-14 现场整轮自测 BOSS 采集 50 条、50/50 状态为 `ok`，日报草稿「记录 50 条，可关注 45 条，展示 8 条」（修复前「可关注 0 条」）。
 - **2026-09-10 v0.4.2**：顶层目录改名为 `招聘智能体`、`消息平台`；同步代码、配置、快捷入口、测试、PRD 和 Skill 的注册路径。`schedule_policy.json` 继续作为唯一时间配置源，项目移动或改名后必须重建 Windows 任务。
 - **2026-09-07 v0.3.2**：补齐草稿验证模式与 CDP 并发边界。`-DraftOnly` 会设置告警抑制，预检失败、平台采集失败/partial 都只写本地日志，不真实发送飞书告警；BOSS 与猎聘按顺序完成登录校验和采集，避免共享 Chrome CDP profile 时互相抢占页面导致登录态误判。
 - **2026-09-07 v0.3.1**：根据新用户完整模拟流程复核并同步修复。重点包括：`AI_GREETING_MODE=rules/disabled` 被话术模块正确识别，单步禁用 AI 不再回退全局 AI；BOSS 登录检查改为 DOM 状态 + 业务接口双校验；BOSS 37/38、安全验证、登录失败导致的 partial 数据会被阻断，不进入后续筛选/日报；可见登录脚本读取 `.env` 中的 CDP 端口/Profile 配置；PowerShell 脚本保持 UTF-8 BOM，兼容中文路径。

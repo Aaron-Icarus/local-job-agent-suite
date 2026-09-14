@@ -92,7 +92,12 @@ async function openWsForTab(tab) {
     ws.onopen = resolve;
     ws.onerror = reject;
   });
-  await ws.cmd("Runtime.enable");
+  // 注意：这里**不能**调用 Runtime.enable。
+  // BOSS 招聘页存在反调试逻辑：一旦开启 Runtime 域，之后带 awaitPromise 的
+  // Runtime.evaluate 会被页面挂住永不返回（实测同一条请求：不开域 348ms 成功，
+  // 只开 Runtime 域 20s 超时），BOSS 登录检查就会拿到 Failed to fetch。
+  // 本模块只用到 Runtime.evaluate / Page.navigate，均不需要开启任何域。
+  // await ws.cmd("Runtime.enable");
   await ws.cmd("Page.enable");
   await ws.cmd("Network.enable");
   return ws;
