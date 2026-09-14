@@ -12,6 +12,10 @@ function classify(value) {
   if (/登录\/注册|扫码登录|密码登录|验证码登录|请登录|登录后/.test(text) && !/我的投递|我的收藏|简历完整度|谁看过我|编辑简历/.test(text)) {
     return "login_required";
   }
+  // 2026-09-14：优先用「整页判定」的结果。sample 只有前 500 字，
+  // 而关键词搜索页开头全是筛选条件，命中不了下面的关键词，
+  // 会把明明已登录的搜索页误判成 unknown → 整轮误报"登录态校验失败"并跳过猎聘。
+  if (value.hasUserArea === true) return "logged_in";
   if (/我的投递|我的收藏|简历完整度|谁看过我|编辑简历|猎头顾问|招聘专员/.test(text)) return "logged_in";
   return "unknown";
 }

@@ -204,6 +204,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 ## 版本迭代
 
+- **2026-09-14 v0.4.3（分享包修补）**：修复 BOSS 采集长期 0 条——BOSS 招聘页存在反调试，一旦开启 CDP 的 `Runtime` 域，带 `awaitPromise` 的 `Runtime.evaluate` 会被页面挂住永不返回（同一条职位列表请求：不开域 348ms 成功 / 只开 Runtime 域 20s 超时），已从 BOSS 采集器与 `cdp_common.openWsForTab()` 移除 `Runtime.enable`。BOSS 详情 JD 改为「详情页 URL 校验 + 按 `encryptJobId` 直连详情页 + 从本岗位快照提取」，并把采集状态保持为既有的 `ok`（自定义新状态会被下游筛选/评分判成"待补采"，导致日报出现"记录 30 条，可关注 0 条"）。猎聘改为直接导航 `/zhaopin/?dqs=<城市码>&key=<关键词>`，并修正"停在搜索页被误判未登录而整轮跳过猎聘"。AI 调用提取答案时跳过 `reasoning` 项（DeepSeek/OpenAI 的思维链会混进答案），新增 `AI_OPENAI_REASONING_EFFORT`。`.env.example` 默认采集总超时 900000→1800000，新增 `LIEPIN_CITY_CODE=020`。自测：`自动化测试/run_offline_smoke.ps1` 7/7 通过；2026-09-14 现场整轮自测 BOSS 采集 50 条且 50/50 判定为 `ok`，日报草稿正文为「记录 50 条，可关注 45 条，展示 8 条」（修复前为「记录 30 条，可关注 0 条，展示 0 条」）。
 - **2026-09-10 v0.4.2**：两个顶层目录按真实职责统一改名为 `招聘智能体`、`消息平台`；同步更新所有代码相对引用、快捷启动、UI、自动化测试、PRD 与 AI Skill。Skill 新增必填/按需配置清单和首次登录告知规则；项目移动或改名后必须重建 Windows 任务注册地址。当前可配置调度保持上午 09:00–12:00、下午 13:00–18:00 独立整点触发，日报 19:00–20:30 每半小时触发，21:05 watchdog，不唤醒、错过不补。
 - **2026-09-10 v0.4.1**：新增独立可配置调度策略、14 个互不依附的主任务触发时间、21:05 日报缺失 watchdog、BOSS/猎聘整条任务流开关和控制台复选框；BOSS 详情采集默认开启；平台历史状态刷新隔离；Node.js 最低版本统一为 22.4.0；飞书 HTTP 回调增加鉴权、签名和重放防护。09:00 错过不会再使当天其他独立时间全部失效。
 - **2026-09-09 v0.3.13**：`快捷启动/随项目必须的安装包/` 改为“目录结构 + 安装说明”交付：`node/`、`corepack/`、`pnpm-store/`、`message-platform-vendor/`、`_downloads/` 每个子目录都新增 `INSTALL.md`，写明下载来源、复制命令、预期文件和安装/清理方式。已清理本地实际 Node、pnpm、SDK vendor 和下载缓存，只保留说明文档，GitHub PR 可展示依赖结构但不上传大体积二进制。

@@ -113,7 +113,13 @@ function extractResponseText(payload) {
   if (typeof payload.output_text === "string") return payload.output_text.trim();
   const parts = [];
   for (const item of payload.output || []) {
-    for (const content of item.content || []) if (typeof content.text === "string") parts.push(content.text);
+    // DeepSeek/OpenAI Responses API 会把思考过程作为独立的 reasoning 项返回，
+    // 其 content 也带 text 字段；只取 message 项，避免思维链混进最终答案。
+    if (item && item.type && item.type !== "message") continue;
+    for (const content of item.content || []) {
+      if (content && content.type && content.type !== "output_text") continue;
+      if (typeof content.text === "string") parts.push(content.text);
+    }
   }
   return parts.join("\n").trim();
 }
@@ -309,12 +315,24 @@ async function callOpenAiApi(task, config) {
   const streamFile = streamLogPath(config.purpose);
   try {
     const model = config.model || process.env.AI_OPENAI_MODEL || "gpt-5.6";
-    appendStreamFile(streamFile, `[ai] openai request started model=${model}\n`);
+    // 可选：控制 Responses API 的思考强度（DeepSeek V4 支持 none/low/high/max）。
+    // 不设置时保持服务端默认行为，兼容 OpenAI 等不支持该参数的提供方。
+    const reasoningEffort = String(process.env.AI_OPENAI_REASONING_EFFORT || "").trim();
+    appendStreamFile(streamFile, `[ai] openai request started model=${model}${reasoningEffort ? ` reasoning=${reasoningEffort}` : ""}\n`);
+    const requestBody = {
+      model,
+      store: false,
+      instructions: task.instructions,
+      input: JSON.stringify(task.input),
+      text: { format: { type: "text" } },
+      max_output_tokens: config.maxOutputTokens,
+    };
+    if (reasoningEffort) requestBody.reasoning = { effort: reasoningEffort };
     const response = await fetch(`${baseUrl}/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       signal: controller.signal,
-      body: JSON.stringify({ model, store: false, instructions: task.instructions, input: JSON.stringify(task.input), text: { format: { type: "text" } }, max_output_tokens: config.maxOutputTokens }),
+      body: JSON.stringify(requestBody),
     });
     appendStreamFile(streamFile, `[ai] openai response headers received status=${response.status} (handshake ok)\n`);
     const payload = await response.json().catch(() => ({}));

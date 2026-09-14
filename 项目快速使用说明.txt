@@ -1,6 +1,7 @@
 找工作双项目：快速使用说明（脱敏构建包）
 
 版本更新摘要
+- 2026-09-14 v0.4.3（分享包修补）：修复 BOSS 采集长期 0 条（BOSS 页面反调试 + CDP Runtime.enable 导致 Runtime.evaluate 被挂住），BOSS 采集器与 cdp_common.openWsForTab() 均已移除 Runtime.enable；BOSS 详情 JD 改为「详情页 URL 校验 + 按 encryptJobId 直连详情页 + 快照提取」，采集状态仍写既有的 ok（自定义新状态会被下游当成"待补采"，导致日报显示"记录 30 条，可关注 0 条"）；猎聘改为直接导航关键词搜索页 /zhaopin/?dqs=<城市码>&key=<关键词>，并修复"停在搜索页被误判未登录而整轮跳过猎聘"；AI 调用提取答案时跳过 reasoning 项并新增 AI_OPENAI_REASONING_EFFORT；.env.example 默认采集总超时 900000 改为 1800000，新增 LIEPIN_CITY_CODE=020。自测：自动化测试\run_offline_smoke.ps1 全 7 步通过；2026-09-14 现场整轮自测 BOSS 采集 50 条且 50/50 判定为 ok，BOSS 日报草稿正文变为"记录 50 条，可关注 45 条，展示 8 条"（修复前是"记录 30 条，可关注 0 条，展示 0 条"）。
 - 2026-09-10 v0.4.2：顶层目录已按真实职责改名为 招聘智能体、消息平台，并同步代码、快捷启动、UI、测试、PRD 和 SKILL 路径。项目移动或改名后必须重新注册 Windows 任务。SKILL 已增加必填/按需配置清单和首次登录必须说明的当前定时规则。
 - 2026-09-09 v0.3.13：快捷启动\随项目必须的安装包\ 改为“目录结构 + 安装说明”交付。node、corepack、pnpm-store、message-platform-vendor、_downloads 每个子目录都新增 INSTALL.md，说明下载来源、命令、预期文件和安装/清理方式；本地实际 Node、pnpm、飞书 SDK vendor 和 zip 下载缓存已清理，只保留说明文档，GitHub PR 可保留结构但不上传大体积二进制。
 - 2026-09-10 v0.4.1：定时策略独立到 config\schedule_policy.json；主任务使用 14 个互不依附的时间点，另有 21:05 watchdog，均不唤醒、不补跑。BOSS/猎聘整条任务流开关放到 config\platform_channels.json 并接入控制台；BOSS 详情采集默认开启；最低 Node.js 统一为 22.4.0。

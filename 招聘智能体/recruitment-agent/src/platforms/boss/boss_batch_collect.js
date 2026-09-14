@@ -148,7 +148,16 @@ async function openWs() {
     ws.onopen = resolve;
     ws.onerror = reject;
   });
-  await ws.cmd("Runtime.enable");
+  // 注意：这里**不能**调用 Runtime.enable。
+  // 2026-09-14 实测（见工作区观测记录）：BOSS 页面存在反调试逻辑，
+  // 一旦开启 Runtime 域，后续带 awaitPromise 的 Runtime.evaluate（也就是本项目取职位列表的方式）
+  // 会被页面挂住永不返回，表现为 `CDP command timeout: Runtime.evaluate`（30s），
+  // 页面被挂住后连 Runtime.enable/Page.enable 本身也会超时，部分关键词还会退化成 invalid_json。
+  // 对照实验：不做任何 enable → 348ms 成功；只 Runtime.enable → 20s 超时；
+  // 只 Network.enable / 只 Page.enable → 均 344~363ms 成功。
+  // 本文件只通过 Network 事件做详情抓取（ws.onEvent 里只监听 Network.*），
+  // 因此 Runtime 域并非必需，去掉后列表采集与详情抓取都不受影响。
+  // await ws.cmd("Runtime.enable");
   await ws.cmd("Network.enable");
   await ws.cmd("Page.enable");
   try {
@@ -625,9 +634,42 @@ async function clickAndCapture(job, keyword, strategyType) {
     return { keyword, searchStrategyType: strategyType, listJob: job, error: "not_found_in_ui", locateError: err.message, captures: [], tab };
   }
   const loc = located.result?.value || {};
+
+  // 2026-09-14：UI 点卡片的方式实测经常失败（定位不到/点完没跳详情页），
+  // 导致详情页快照停留在列表页、JD 全丢。这里补一条确定性兜底：
+  // 直接用列表里拿到的 encryptJobId 拼出本岗位详情页 URL 导航过去再快照。
+  const directDetailUrl = job?.encryptJobId ? `https://www.zhipin.com/job_detail/${job.encryptJobId}.html` : "";
+  const jobDetailSuffix = job?.encryptJobId ? `/job_detail/${job.encryptJobId}.html` : "";
+  async function snapshotAfterDirectNavigation() {
+    if (!directDetailUrl) return null;
+    try {
+      await ws.cmd("Page.navigate", { url: directDetailUrl }, 15000);
+      await sleep(4500);
+      return await captureDetailPageSnapshot(ws);
+    } catch (err) {
+      return { page: null, error: err.message };
+    }
+  }
+
   if (!loc.found) {
+    const directSnapshot = await snapshotAfterDirectNavigation();
     ws.close();
-    return { keyword, searchStrategyType: strategyType, listJob: job, error: "not_found_in_ui", captures: [], tab };
+    const page = directSnapshot?.page || null;
+    const matched = Boolean(jobDetailSuffix) && (page?.href || "").includes(jobDetailSuffix);
+    return {
+      keyword,
+      searchStrategyType: strategyType,
+      listJob: job,
+      error: matched ? undefined : "not_found_in_ui",
+      located: loc,
+      searchState,
+      captures,
+      page,
+      pageSnapshotAttempts: directSnapshot?.attempts,
+      pageSnapshotError: directSnapshot?.error,
+      detailViaDirectNavigation: true,
+      tab,
+    };
   }
 
   await sleep(500);
@@ -648,7 +690,12 @@ async function clickAndCapture(job, keyword, strategyType) {
   }
   await sleep(4500);
 
-  const snapshot = await captureDetailPageSnapshot(ws);
+  let snapshot = await captureDetailPageSnapshot(ws);
+  // 快照没落在本岗位详情页时，用直连 URL 再试一次，保证 JD 与岗位一一对应。
+  if (jobDetailSuffix && !((snapshot.page?.href) || "").includes(jobDetailSuffix)) {
+    const direct = await snapshotAfterDirectNavigation();
+    if (direct?.page) snapshot = direct;
+  }
   await sleep(800);
   ws.close();
   return {
@@ -665,6 +712,24 @@ async function clickAndCapture(job, keyword, strategyType) {
   };
 }
 
+// 2026-09-14 新增：当详情接口 XHR 没抓到（或抓到的响应属于别的岗位）时，
+// 用「详情页快照」补 JD。安全性由调用方保证：只有当快照 URL 里就是本岗位的
+// /job_detail/<encryptJobId>.html 时才使用，避免把别的岗位文字串进本岗位。
+function extractJdFromSnapshot(text) {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  const start = flat.indexOf("职位描述");
+  const body = start >= 0 ? flat.slice(start + 4) : flat;
+  const stopMarkers = ["竞争力分析", "BOSS 安全提示", "公司介绍", "工商信息", "工作地址", "查看全部职位", "举报", "相似职位"];
+  let end = body.length;
+  for (const marker of stopMarkers) {
+    const idx = body.indexOf(marker);
+    if (idx > 40 && idx < end) end = idx;
+  }
+  const jd = body.slice(0, Math.min(end, 3000)).trim();
+  return jd.length >= 40 ? jd : "";
+}
+
 function extractRecord(item) {
   const expectedId = item.listJob?.encryptJobId;
   const successCapture = item.captures?.find((cap) => {
@@ -673,6 +738,12 @@ function extractRecord(item) {
     return cap.json?.code === 0 && Boolean(expectedId) && capturedId === expectedId;
   });
 
+  // 详情页快照只有在 URL 明确是本岗位时才可信（实测详情 XHR 会滞后一个岗位，
+  // 30/32 的 captures 属于别的岗位，原来的严格匹配因此全部落空、JD 全丢）。
+  const snapshotHref = item.page?.href || "";
+  const snapshotMatchesJob = Boolean(expectedId) && snapshotHref.includes(`/job_detail/${expectedId}.html`);
+  const snapshotJd = snapshotMatchesJob ? extractJdFromSnapshot(item.page?.text || "") : "";
+
   if (!successCapture) {
     const district = item.listJob?.areaDistrict || inferShanghaiDistrict("", item.listJob?.cityName);
     const salary = parseSalary(item.listJob?.salaryDesc || "");
@@ -680,7 +751,8 @@ function extractRecord(item) {
     const locPri = locationPriority(district);
     // A list page can contain many job names and descriptions. Never treat its
     // whole body text as this job's JD merely because the title is present.
-    const fit = roleFit(item.listJob?.jobName, "", item.listJob?.skills || []);
+    // （快照 JD 仅在 URL 命中本岗位 job_detail 时使用，见上方 snapshotMatchesJob。）
+    const fit = roleFit(item.listJob?.jobName, snapshotJd, item.listJob?.skills || []);
     const bossOnline = item.listJob?.bossOnline ?? "";
     const activeText = bossOnline === true ? "在线" : "";
     const latestActiveDate = activeDateFromText(activeText, bossOnline);
@@ -707,7 +779,7 @@ function extractRecord(item) {
       degree: item.listJob?.jobDegree || "",
       skills: item.listJob?.skills || [],
       welfare: item.listJob?.welfareList || [],
-      job_description: "",
+      job_description: snapshotJd,
       boss_name: item.listJob?.bossName || "",
       boss_title: item.listJob?.bossTitle || "",
       boss_active_text: activeText,
@@ -723,10 +795,16 @@ function extractRecord(item) {
       overall_priority: priority,
       boss_list_rank: item.listJob?._bossListRank || "",
       selection_score: item.listJob?._selectionScore || "",
-      collection_status: item.detailSkipped ? "list_api_only" : (item.error || "detail_not_captured"),
+      // 注意：拿到可用 JD 时状态必须写成既有的 "ok"。
+      // 下游 postprocess_boss_stage2 / evaluate_job_fit 只把 ok / page_text_fallback
+      // 当可用，自定义新状态会被判成"待补采"并从日报里被过滤掉
+      // （2026-09-14 实测：30 条全被打成待补采 → 日报显示"记录 30 条，可关注 0 条"）。
+      // JD 来自详情接口还是详情页快照，记录在 notes 里。
+      collection_status: item.detailSkipped ? "list_api_only" : (item.error || (snapshotJd ? "ok" : "detail_not_captured")),
       notes: [
         item.detailSkipped ? "未启用 UI 详情捕获，使用列表接口字段；不会操作或刷新 BOSS 页面" : "",
-        !item.detailSkipped ? "详情接口未捕获；为避免岗位串档，未把整页文字当作该岗位详情" : "",
+        (!item.detailSkipped && snapshotJd) ? "详情接口未匹配到本岗位；已用本岗位详情页快照补 JD（URL 已校验为同一岗位）" : "",
+        (!item.detailSkipped && !snapshotJd) ? "详情接口未捕获；为避免岗位串档，未把整页文字当作该岗位详情" : "",
         locPri.location_note,
         salPri.salary_note,
         fit.role_note,

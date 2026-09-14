@@ -4,6 +4,16 @@
 
 ## 版本更新说明
 
+- **2026-09-14 v0.4.3（分享包修补）**：
+  1. **修复 BOSS 采集长期 0 条**：BOSS 页面存在反调试逻辑，一旦开启 CDP 的 `Runtime` 域，之后带 `awaitPromise` 的 `Runtime.evaluate` 会被页面挂住永不返回（同一条列表请求：不开域 348ms 成功 / 只开 Runtime 域 20s 超时），表现为 `CDP command timeout: Runtime.evaluate` 与 `invalid_json`。已从 `boss_batch_collect.js` 与 `core/cdp_common.js` 的 `openWsForTab()` 中移除 `Runtime.enable`（本项目只用 `Runtime.evaluate` 与 `Page.navigate`，不需要开启任何域）。
+  2. **修复 BOSS 详情 JD 大量丢失**：原详情接口 XHR 与岗位错位（实测 29/32 抓到的是上一个岗位的响应），导致 32 条里只有 1 条有 JD。现在改为「详情页 URL 校验 + 用 `encryptJobId` 直连详情页 + 从本岗位快照提取 JD」，避免串档。
+  3. **修复猎聘采集内容与关键词无关**：原实现在当前页面（个人中心）的搜索框里输入关键词，每个关键词都只解析到同一批推荐卡片。改为直接导航 `/zhaopin/?dqs=<LIEPIN_CITY_CODE>&key=<关键词>`，并保留 UI 输入作为兜底；采集收尾会把标签页还原到个人中心。
+  4. **修复猎聘登录态误判**：`check_liepin_login_status` 原先只看正文前 500 字，停在搜索结果页时会把已登录判成 `unknown`，导致整轮跳过猎聘；现改为优先采用整页判定结果。
+  5. **AI 调用修复**：`ai_router` 提取答案时跳过 `reasoning` 项（DeepSeek/OpenAI 的思维链也带 `text` 字段，原逻辑会把思考过程混进答案）；新增可选 `AI_OPENAI_REASONING_EFFORT`，便于直接切到 DeepSeek（`https://api.deepseek.com` + `deepseek-v4-pro` + `none`）。
+  6. **默认采集超时上调**：`PLATFORM_COLLECT_TOTAL_TIMEOUT_MS` 由 900000 调整为 1800000（开启详情抓取后单条约 30 秒，30 条 ≈ 15 分钟以上，原上限会硬截断整轮）；新增 `LIEPIN_CITY_CODE=020`。
+  7. 自测：`自动化测试/run_offline_smoke.ps1` 全 7 步通过（离线、不联网、不发送）。
+  8. **修复"日报显示 0 岗位"**：补 JD 后如果把采集状态写成自定义新值（如 `page_snapshot_matched`），下游 `postprocess_boss_stage2` / `evaluate_job_fit` 只认 `ok` / `page_text_fallback`，会把整批记录判成「待补采」并从日报里过滤掉（实测 30 条 → "记录 30 条，可关注 0 条"）。现在取得可用 JD 时一律写既有的 `ok`，JD 来源（详情接口 / 详情页快照）记在 `notes` 里。
+  9. **现场整轮自测结果（2026-09-14 23:19–23:47，`-DraftOnly` 不发送）**：BOSS 采集 50 条、状态 50/50 为 `ok`，stage2 `usable_records=50`，日报草稿正文「记录 50 条，可关注 45 条，展示 8 条」；猎聘 20 条、草稿「记录 20 条，可关注 14 条，展示 8 条」；工作流 `success`（退出码 0），`feishu: skipped / draft mode`。同日 19:18 定时轮的 BOSS 日报为「记录 30 条，可关注 0 条，展示 0 条」，即本条第 8 项所修问题。
 - **2026-09-10 v0.4.2**：顶层项目目录改为 `招聘智能体` 与 `消息平台`，招聘 Agent 到消息网关的相对路径、测试和计划任务文档同步更新。定时策略继续以 `config/schedule_policy.json` 为唯一配置源；移动或改名后必须重新运行任务注册脚本，刷新 Windows action 的绝对路径。
 - **2026-09-09 v0.3.11**：分享包 HTML 控制台的复制命令改为按当前安装位置动态生成完整一行 PowerShell 命令，可直接粘贴到 CMD 或 PowerShell；CDP 连接失败提示也会输出完整快捷启动命令，不再只提示相对脚本路径。
 - **2026-09-09 v0.3.8**：分享包沿用 `docs/prd/` 作为唯一离线 PRD 目录，并新增 `快捷启动/`。小白用户优先双击 `快捷启动/快捷启动脚本/启动控制台.cmd`；页面 UI 位于 `快捷启动/页面UI/index.html`；AI 接手项目优先读取 `快捷启动/SKILL.md`。
