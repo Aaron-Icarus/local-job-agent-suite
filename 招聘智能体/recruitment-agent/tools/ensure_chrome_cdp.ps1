@@ -46,12 +46,18 @@ function Test-CdpPort {
 }
 
 if ($Restart) {
+  # 进程枚举在受限/精简 PowerShell 环境可能被拒绝（Access denied）。
+  # 绝不能让清理步骤阻断 Chrome 启动。
   $escapedProfile = $ProfileDir.Replace("\", "\\")
-  Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" | Where-Object {
-    $_.CommandLine -like "*--remote-debugging-port=$Port*" -and
-    ($_.CommandLine -like "*$ProfileDir*" -or $_.CommandLine -like "*$escapedProfile*")
-  } | ForEach-Object {
-    Stop-Process -Id $_.ProcessId -Force
+  try {
+    Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction Stop | Where-Object {
+      $_.CommandLine -like "*--remote-debugging-port=$Port*" -and
+      ($_.CommandLine -like "*$ProfileDir*" -or $_.CommandLine -like "*$escapedProfile*")
+    } | ForEach-Object {
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+  } catch {
+    Write-Warning "Skip old CDP Chrome cleanup: cannot enumerate chrome.exe processes ($($_.Exception.Message)). Continuing to start Chrome."
   }
   Start-Sleep -Seconds 2
 }

@@ -3,6 +3,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 const { loadEnv, envBool } = require("../core/load_env");
 const { loadSchedulePolicy, slotForParts } = require("../core/schedule_policy");
+const { loadChannelConfig } = require("../core/channel_config");
 
 loadEnv();
 
@@ -70,6 +71,37 @@ function isUsableCollectionRun(run, policy = loadSchedulePolicy().policy) {
   return (policy.collection_completion_statuses || ["success"]).includes(run?.status);
 }
 
+function enabledPlatforms() {
+  try {
+    const result = loadChannelConfig();
+    const platforms = result.config && result.config.platforms ? result.config.platforms : {};
+    return Object.keys(platforms).filter((name) => platforms[name] && platforms[name].enabled);
+  } catch {
+    return ["boss", "liepin"];
+  }
+}
+
+function platformSucceeded(run, platform, policy = loadSchedulePolicy().policy) {
+  const completionStatuses = new Set(policy.collection_completion_statuses || ["success"]);
+  const platforms = run && run.platforms && typeof run.platforms === "object" ? run.platforms : null;
+  if (platforms && platforms[platform]) return completionStatuses.has(platforms[platform]);
+  // 兼容旧记录（无 platforms 字段）：整轮成功视为所有平台成功
+  return completionStatuses.has(run && run.status);
+}
+
+function parseWorkflowResult(stdout) {
+  const lines = String(stdout || "").split(/\r?\n/).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    try {
+      const obj = JSON.parse(lines[i]);
+      if (obj && obj.type === "workflow_result") return obj;
+    } catch {
+      // 跳过非 JSON 行
+    }
+  }
+  return null;
+}
+
 function hasSuccessfulEveningReport(state, dateKey) {
   return (state.reportRuns || []).some((run) => run.dateKey === dateKey && run.status === "success");
 }
@@ -98,20 +130,29 @@ function decide(state, now = new Date(), policy = loadSchedulePolicy().policy) {
   const todaysRuns = (state.collectRuns || []).filter((run) => run.dateKey === parts.dateKey && isUsableCollectionRun(run, policy));
   const minGapHours = Number(policy.minimum_collection_gap_hours || 2);
   const lastToday = [...todaysRuns].sort((a, b) => new Date(b.at) - new Date(a.at))[0] || null;
-  const gapSatisfied = elapsedHoursSince(lastToday, now) >= minGapHours;
   const collectionWindow = policy.collection_windows.find((window) => window.id === slot);
   if (collectionWindow) {
-    const completedCount = todaysRuns.filter((run) => run.slot === slot).length;
-    const quotaReached = completedCount >= Number(collectionWindow.max_successful_runs || 1);
-    const shouldRun = !quotaReached && gapSatisfied;
+    // 按渠道独立判断：每个启用的平台各自记录是否已在当前时段成功采集过
+    const platforms = enabledPlatforms();
+    const pending = [];
+    let gapBlocked = false;
+    for (const platform of platforms) {
+      const successful = (state.collectRuns || []).filter((run) => run.dateKey === parts.dateKey && platformSucceeded(run, platform, policy));
+      if (successful.some((run) => run.slot === slot)) continue;
+      const lastSuccess = [...successful].sort((a, b) => new Date(b.at) - new Date(a.at))[0] || null;
+      if (elapsedHoursSince(lastSuccess, now) < minGapHours) { gapBlocked = true; continue; }
+      pending.push(platform);
+    }
+    const shouldRun = pending.length > 0;
     return {
       shouldRun,
       action: shouldRun ? "collect_only" : "skip",
       slot,
       dateKey: parts.dateKey,
-      reason: quotaReached
-        ? `${slot} successful collection quota reached`
-        : (!gapSatisfied ? `minimum ${minGapHours}h collection gap not reached` : `${slot} collection due`)
+      pendingPlatforms: pending,
+      reason: shouldRun
+        ? `${slot} collection due for: ${pending.join(", ")}`
+        : (gapBlocked ? `minimum ${minGapHours}h collection gap not reached` : `${slot} successful collection quota reached for all enabled platforms`),
     };
   }
   if (slot === "delivery") {
@@ -242,6 +283,7 @@ function main() {
   const startedAt = new Date().toISOString();
   const result = runWorkflow(decision);
   const finishedAt = new Date().toISOString();
+  const workflowResult = parseWorkflowResult(result.stdout);
   const runRecord = {
     at: finishedAt,
     startedAt,
@@ -249,7 +291,8 @@ function main() {
     slot: decision.slot,
     action: decision.action,
     status: statusForWorkflowResult(result),
-    exitCode: result.status
+    exitCode: result.status,
+    platforms: (workflowResult && workflowResult.platformStatuses) || undefined
   };
   if (runRecord.status !== "skipped_locked") {
     state.collectRuns = state.collectRuns || [];
@@ -270,4 +313,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { decide, slotFor, shanghaiParts, hasFinalizedReportAttempt, isUsableCollectionRun, lastSuccessfulRun, scheduledSendMode };
+module.exports = { decide, slotFor, shanghaiParts, hasFinalizedReportAttempt, isUsableCollectionRun, lastSuccessfulRun, scheduledSendMode, enabledPlatforms, platformSucceeded, parseWorkflowResult };

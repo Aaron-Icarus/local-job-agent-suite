@@ -1,6 +1,6 @@
-﻿param(
-  [int]$Port = 17321
-)
+﻿# 端口固定为 17321，与 页面UI/index.html 中的 helperBase 保持一致；
+# 修改端口必须同步修改页面里的 helperBase，否则平台开关/文件管理器按钮会静默失效。
+$Port = 17321
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest

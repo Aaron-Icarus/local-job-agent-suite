@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { loadEnv } = require("../../core/load_env");
-const { cdpBaseUrl, findOrCreateTab, getJson, openWsForTab, navigate, evaluate, sleep } = require("../../core/cdp_common");
+const { cdpBaseUrl, findOrCreateTab, findOrCreateCollectTab, getJson, openWsForTab, navigate, evaluate, sleep } = require("../../core/cdp_common");
 const { shanghaiDateKey } = require("../../core/time_utils");
 const { fieldZh, fieldDescriptions } = require("../../core/field_dictionary");
 
@@ -93,29 +93,17 @@ function extractJobId(url) {
 
 async function findLiepinTab() {
   const base = cdpBaseUrl();
-  let tabs = await getJson(`${base}/json/list`);
-  let tab = tabs.find((item) => item.type === "page" && item.webSocketDebuggerUrl && /^https?:\/\/c\.liepin\.com\/?/.test(item.url || ""))
-    || tabs.find((item) => item.type === "page" && item.webSocketDebuggerUrl && /liepin\.com/.test(item.url || "") && (item.url || "") !== "about:blank");
-  if (!tab) {
-    await getJson(`${base}/json/new?https://c.liepin.com/`, { method: "PUT" });
-    const deadline = Date.now() + 15000;
-    while (Date.now() < deadline && !tab) {
-      await sleep(1000);
-      tabs = await getJson(`${base}/json/list`);
-      tab = tabs.find((item) => item.type === "page" && item.webSocketDebuggerUrl && /^https?:\/\/c\.liepin\.com\/?/.test(item.url || ""))
-        || tabs.find((item) => item.type === "page" && item.webSocketDebuggerUrl && /liepin\.com/.test(item.url || "") && (item.url || "") !== "about:blank");
-    }
-  }
-  if (!tab) {
-    tab = await findOrCreateTab((url) => /liepin\.com/.test(url), "https://c.liepin.com/");
+  // 标签隔离：只复用采集自己创建的标签，不复用用户手动打开的标签。
+  let tab = await findOrCreateCollectTab("liepin", "https://c.liepin.com/", { isUsable: (t) => Boolean(t.webSocketDebuggerUrl) });
+  if ((tab.url || "") === "about:blank") {
+    await sleep(2000);
+    const current = await getJson(`${base}/json/list`);
+    tab = current.find((item) => item.id === tab.id) || tab;
   }
   const freshTabs = await getJson(`${base}/json/list`);
-  for (const blank of freshTabs.filter((item) => item.type === "page" && (item.url || "") === "about:blank")) {
+  for (const blank of freshTabs.filter((item) => item.type === "page" && (item.url || "") === "about:blank" && item.id !== tab.id)) {
     await fetch(`${base}/json/close/${blank.id}`).catch(() => {});
   }
-  await fetch(`${base}/json/activate/${tab.id}`).catch(() => {});
-  const afterActivate = await getJson(`${base}/json/list`);
-  tab = afterActivate.find((item) => item.id === tab.id) || tab;
   return tab;
 }
 
@@ -358,6 +346,9 @@ async function main() {
       keywordStats.push({ strategyType: spec.strategy_type, keyword: spec.keyword, ui, href: extracted.href, candidates: extracted.count, sample: extracted.sample });
       for (const card of extracted.rows || []) {
         if (records.length >= maxTotal) break;
+        // 只接受带真实职位链接(/a/<id>.shtml 或 /job/<id>)的卡片；
+        // “订阅/你好吴先生/快人一步拒绝信息差”等无职位链接的推广块与头部文本会被宽泛匹配误抓成职位，这里直接过滤。
+        if (!extractJobId(card.href)) continue;
         const dedupe = card.href || normalizeKey(card.companyLine, card.title, card.salary, card.location);
         if (seen.has(dedupe)) {
           const existing = records[seen.get(dedupe)];

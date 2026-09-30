@@ -20,7 +20,7 @@
     }
   ],
   "minimum_collection_gap_hours": 2,
-  "collection_completion_statuses": ["success"],
+  "collection_completion_statuses": ["success", "partial_success"],
   "report_window": {
     "start": "19:00",
     "end": "21:00",

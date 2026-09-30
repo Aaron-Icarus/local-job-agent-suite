@@ -8,6 +8,7 @@ function extractSessionId(text) {
 function resolveSession(cleaned, conversation, agentId, store) {
   const policy = conversation.session_policy || {};
   const ttl = Number(policy.ttl_minutes || 60);
+  const maxTurns = Number(policy.max_turns || 0);
   const explicitId = extractSessionId(cleaned.clean_text);
   if (explicitId) {
     const existing = store.findById(explicitId);
@@ -19,7 +20,7 @@ function resolveSession(cleaned, conversation, agentId, store) {
   }
   if (includesAny(cleaned.clean_text, policy.new_task_keywords || [])) {
     return {
-      session: store.createSession({ chatId: cleaned.chat_id, agentId, rootMessageId: cleaned.message_id, ttlMinutes: ttl }),
+      session: store.createSession({ chatId: cleaned.chat_id, agentId, rootMessageId: cleaned.message_id, ttlMinutes: ttl, maxTurns }),
       action: "new",
       reason: "new_task_keyword"
     };
@@ -29,7 +30,7 @@ function resolveSession(cleaned, conversation, agentId, store) {
     if (open.length === 1) return { session: open[0], action: "continue", reason: "single_recent_open_session" };
   }
   return {
-    session: store.createSession({ chatId: cleaned.chat_id, agentId, rootMessageId: cleaned.message_id, ttlMinutes: ttl }),
+    session: store.createSession({ chatId: cleaned.chat_id, agentId, rootMessageId: cleaned.message_id, ttlMinutes: ttl, maxTurns }),
     action: "new",
     reason: "default_new_session"
   };

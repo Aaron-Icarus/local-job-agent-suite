@@ -1,5 +1,5 @@
 const { loadEnv } = require("../../core/load_env");
-const { cdpBaseUrl, getJson, sleep, openWsForTab, evaluate } = require("../../core/cdp_common");
+const { cdpBaseUrl, getJson, sleep, openWsForTab, evaluate, findOrCreateCollectTab } = require("../../core/cdp_common");
 
 loadEnv();
 
@@ -42,12 +42,9 @@ async function findCurrentBossTab(base, preferredId = "") {
 }
 
 async function activateTab(base, tab) {
-  if (!tab?.id) return;
-  try {
-    await getJson(`${base}/json/activate/${tab.id}`);
-  } catch {
-    // Activation is best-effort; CDP Runtime evaluation can still work without it.
-  }
+  // 后台采集模式：不再激活标签页/窗口（避免窗口弹出到前台）。
+  // CDP Runtime.evaluate 无需激活也能工作。
+  return;
 }
 
 async function createStableTab(base) {
@@ -56,20 +53,8 @@ async function createStableTab(base) {
 }
 
 async function findOrCreateTab(base) {
-  if (!useNewTab) {
-    const existing = await findCurrentBossTab(base);
-    if (existing && stableJobsRe.test(existing.url || "") && !isUnstableBossTab(existing) && bossTabScore(existing) >= 100) {
-      await activateTab(base, existing);
-      return existing;
-    }
-    if (existing && !isUnstableBossTab(existing) && bossTabScore(existing) >= 60) {
-      await activateTab(base, existing);
-      return existing;
-    }
-  }
-  const created = await createStableTab(base);
-  await activateTab(base, created);
-  return created;
+  // 标签隔离：只复用采集自己创建的标签，不复用用户手动打开的标签。
+  return findOrCreateCollectTab("boss", targetUrl, { force: useNewTab, isUsable: (t) => !isUnstableBossTab(t) });
 }
 
 function classify({ href, text }) {

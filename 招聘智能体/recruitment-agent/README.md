@@ -4,6 +4,8 @@
 
 ## 版本更新说明
 
+- **2026-09-29 v0.4.5（后台采集 + 标签隔离 + 按渠道记录）**：移除采集流程 6 处 `/json/activate`，采集全程最小化后台运行、不再弹前台；新增 `data/collect_tabs.json` 做标签隔离（采集只用自己创建的标签，绝不复用用户手动标签）；采集结束自动关闭采集专属标签；`daily_workflow`/`scheduled_entry` 改为按渠道独立记录与调度采集成功。端到端自测通过（BOSS 50 条全 ok、猎聘 20 条、`success`；专属标签创建→复用→自动关闭均验证）。
+- **2026-09-28 v0.4.4（Bug 修复）**：猎聘采集加 `extractJobId(card.href)` 过滤无职位链接的噪声行；`ensure_chrome_cdp.ps1` 清理段加 try/catch（受限环境不再阻断启动）；`schedule_policy.json` 补 `partial_success`；提示词链路打通（`agent_prompt` 真正传给下游 AI）。完整修复清单见分享包根目录 `README.md` 的 v0.4.4。
 - **2026-09-14 v0.4.3（分享包修补）**：
   1. **修复 BOSS 采集长期 0 条**：BOSS 页面存在反调试逻辑，一旦开启 CDP 的 `Runtime` 域，之后带 `awaitPromise` 的 `Runtime.evaluate` 会被页面挂住永不返回（同一条列表请求：不开域 348ms 成功 / 只开 Runtime 域 20s 超时），表现为 `CDP command timeout: Runtime.evaluate` 与 `invalid_json`。已从 `boss_batch_collect.js` 与 `core/cdp_common.js` 的 `openWsForTab()` 中移除 `Runtime.enable`（本项目只用 `Runtime.evaluate` 与 `Page.navigate`，不需要开启任何域）。
   2. **修复 BOSS 详情 JD 大量丢失**：原详情接口 XHR 与岗位错位（实测 29/32 抓到的是上一个岗位的响应），导致 32 条里只有 1 条有 JD。现在改为「详情页 URL 校验 + 用 `encryptJobId` 直连详情页 + 从本岗位快照提取 JD」，避免串档。

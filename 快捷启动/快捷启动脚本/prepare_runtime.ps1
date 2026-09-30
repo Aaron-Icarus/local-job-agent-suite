@@ -1,5 +1,6 @@
 ﻿param(
   [int]$NodeMajor = 22,
+  [string]$NodeVersion = "22.14.0",
   [string]$PnpmVersion = "9.15.9",
   [switch]$SkipDownload,
   [switch]$SkipVendorInstall,
@@ -10,6 +11,8 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+# 旧版 Windows(PS5.1) 默认 Ssl3/Tls1.0，而 nodejs.org 要求 TLS1.2+，先强制启用避免下载失败
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 
 $scriptDir = $PSScriptRoot
 $packageRoot = (Resolve-Path -LiteralPath (Join-Path $scriptDir "..\..")).Path
@@ -94,7 +97,8 @@ function Download-PortableNode {
   Ensure-Directory $pnpmStoreDir | Out-Null
 
   $platform = Get-ArchitectureName
-  $baseUrl = "https://nodejs.org/dist/latest-v$NodeMajor.x"
+  # 锁定具体 Node 版本以保证可复现性（latest 会漂移，且新版 corepack 语法已变）
+  $baseUrl = "https://nodejs.org/dist/v$NodeVersion"
   $shaUrl = "$baseUrl/SHASUMS256.txt"
 
   Write-Host ("正在读取 Node.js 官方校验清单：{0}" -f $shaUrl) -ForegroundColor Cyan
@@ -174,7 +178,12 @@ function Prepare-Pnpm {
   }
   if ($enableOutput) { $enableOutput | ForEach-Object { Write-Host $_ } }
   $prepareOutput = & $corepack prepare "pnpm@$PnpmVersion" --activate 2>&1
-  if ($LASTEXITCODE -ne 0) { throw "corepack prepare pnpm 失败。" }
+  if ($LASTEXITCODE -ne 0) {
+    # 新版 corepack 弃用了 prepare --activate，改用 install -g
+    Write-Host "corepack prepare 失败，改用 corepack install -g ..." -ForegroundColor Yellow
+    $prepareOutput = & $corepack install -g "pnpm@$PnpmVersion" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "corepack 准备 pnpm 失败（prepare 与 install -g 均失败）。" }
+  }
   if ($prepareOutput) { $prepareOutput | ForEach-Object { Write-Host $_ } }
 
   $pnpm = Join-Path $nodeHome "pnpm.cmd"
