@@ -46,7 +46,7 @@ class SessionStore {
     ));
   }
 
-  createSession({ chatId, agentId, rootMessageId, ttlMinutes, contextSummary = "" }) {
+  createSession({ chatId, agentId, rootMessageId, ttlMinutes, maxTurns = 0, contextSummary = "" }) {
     const session = {
       session_id: makeSessionId(agentId.replace(/_agent$/, "")),
       chat_id: chatId,
@@ -56,6 +56,7 @@ class SessionStore {
       last_bot_message_id: "",
       status: "open",
       ttl_minutes: ttlMinutes,
+      max_turns: maxTurns,
       turn_count: 0,
       context_summary: contextSummary,
       context_refs: {},
@@ -70,6 +71,9 @@ class SessionStore {
 
   recordTurn(session, { userMessageId, botMessageId = "", summary = "" }) {
     session.turn_count += 1;
+    if (session.max_turns && session.turn_count >= session.max_turns) {
+      session.status = "closed";
+    }
     session.last_user_message_id = userMessageId || session.last_user_message_id;
     if (botMessageId) session.last_bot_message_id = botMessageId;
     if (summary) {

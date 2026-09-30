@@ -91,6 +91,7 @@ async function createGreetingResponse(request, options = {}) {
   const greeting = await recommendGreetingResult(row, {
     mode: normalized.greeting_mode || normalized.greetingMode || options.mode,
     maxLength: normalized.max_length || normalized.maxLength || options.maxLength,
+    prompt: normalized.prompt || options.prompt,
   });
   return {
     input_type: inputType,

@@ -30,7 +30,12 @@ function dispatchStatePath(rootDir) {
 function missingSendConfiguration(notification) {
   const mode = String(notification.mode || process.env.FEISHU_SEND_MODE || "none").toLowerCase();
   if (mode === "app") {
-    const missing = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_CHAT_ID"].filter((key) => !process.env[key] && !(key === "FEISHU_CHAT_ID" && process.env.FEISHU_TEST_CHAT_ID));
+    // 通知对象自带 chat_id 时，不应因环境变量缺 FEISHU_CHAT_ID 而误判为缺配置。
+    const hasChatId = Boolean(notification.chat_id || process.env.FEISHU_CHAT_ID || process.env.FEISHU_TEST_CHAT_ID);
+    const missing = [];
+    if (!process.env.FEISHU_APP_ID) missing.push("FEISHU_APP_ID");
+    if (!process.env.FEISHU_APP_SECRET) missing.push("FEISHU_APP_SECRET");
+    if (!hasChatId) missing.push("FEISHU_CHAT_ID");
     return missing.length ? `发送配置不完整：缺少 ${missing.join("、")}` : "";
   }
   if (mode === "webhook") return process.env.FEISHU_WEBHOOK_URL ? "" : "发送配置不完整：缺少 FEISHU_WEBHOOK_URL";

@@ -1,3 +1,6 @@
+const fs = require("fs");
+const path = require("path");
+
 function buildSharePackageCommand(relativeScript) {
   const path = require("path");
   const recruitmentRoot = path.resolve(__dirname, "..", "..");
@@ -86,6 +89,70 @@ async function findOrCreateTab(matchUrl, targetUrl) {
   return getJson(`${base}/json/new?${targetUrl}`, { method: "PUT" });
 }
 
+// 采集标签隔离：只复用"采集自己创建的标签"，绝不复用用户手动打开的标签。
+// 采集创建的 tabId 记录在 data/collect_tabs.json（按平台分开），跨轮次复用。
+function collectTabsPath() {
+  return path.resolve(__dirname, "..", "..", "data", "collect_tabs.json");
+}
+
+function readCollectTabs() {
+  try {
+    return JSON.parse(fs.readFileSync(collectTabsPath(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeCollectTabs(tabs) {
+  try {
+    const filePath = collectTabsPath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(tabs, null, 2), "utf8");
+  } catch {
+    // 记录失败不影响本轮采集
+  }
+}
+
+async function findOrCreateCollectTab(purpose, targetUrl, options = {}) {
+  const base = cdpBaseUrl();
+  const tracked = readCollectTabs();
+  const trackedId = tracked[purpose];
+  if (trackedId && !options.force) {
+    const tabs = await getJson(`${base}/json/list`);
+    const existing = tabs.find((tab) => tab.id === trackedId && tab.type === "page" && tab.webSocketDebuggerUrl);
+    if (existing && (!options.isUsable || options.isUsable(existing))) return existing;
+  }
+  const created = await getJson(`${base}/json/new?${encodeURIComponent(targetUrl)}`, { method: "PUT" });
+  const updated = readCollectTabs();
+  updated[purpose] = created.id;
+  writeCollectTabs(updated);
+  return created;
+}
+
+// 采集结束后关闭"采集自己创建的标签"，保持浏览器整洁；绝不动用户手动打开的标签。
+async function closeCollectTabs(purposes = ["boss", "liepin"]) {
+  const base = cdpBaseUrl();
+  const tracked = readCollectTabs();
+  let tabs = [];
+  try {
+    tabs = await getJson(`${base}/json/list`);
+  } catch {
+    tabs = [];
+  }
+  const closed = [];
+  for (const purpose of purposes) {
+    const id = tracked[purpose];
+    if (!id) continue;
+    if (tabs.some((tab) => tab.id === id)) {
+      await fetch(`${base}/json/close/${id}`).catch(() => {});
+      closed.push(purpose);
+    }
+    delete tracked[purpose];
+  }
+  writeCollectTabs(tracked);
+  return closed;
+}
+
 async function openWsForTab(tab) {
   const ws = connect(tab.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
@@ -125,4 +192,4 @@ async function evaluate(ws, expression, timeoutMs = 15000) {
   return result.result.value;
 }
 
-module.exports = { sleep, getJson, cdpBaseUrl, findOrCreateTab, openWsForTab, navigate, evaluate };
+module.exports = { sleep, getJson, cdpBaseUrl, findOrCreateTab, findOrCreateCollectTab, closeCollectTabs, readCollectTabs, writeCollectTabs, openWsForTab, navigate, evaluate };

@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { loadEnv, envBool, envNumber } = require("../../core/load_env");
+const { findOrCreateCollectTab } = require("../../core/cdp_common");
 
 loadEnv();
 
@@ -73,12 +74,9 @@ function isUnstableBossTab(item) {
 }
 
 async function activateTab(tab) {
-  if (!tab?.id) return;
-  try {
-    await getJson(`${cdpBaseUrl}/json/activate/${tab.id}`);
-  } catch {
-    // Best-effort only.
-  }
+  // 后台采集模式：不再调用 /json/activate（它会激活标签页并把窗口拉到前台）。
+  // 采集直接通过 WebSocket 的 Page.navigate / Runtime.evaluate 即可，无需激活窗口。
+  return;
 }
 
 async function createStableTab() {
@@ -87,14 +85,10 @@ async function createStableTab() {
 }
 
 async function findTab() {
-  const tabs = await getJson(`${cdpBaseUrl}/json`);
-  const candidates = tabs.filter(bossTab).sort((a, b) => bossTabScore(b) - bossTabScore(a));
-  let tab = candidates[0];
-  if (!tab || isUnstableBossTab(tab) || bossTabScore(tab) < 60) {
-    tab = await createStableTab();
-    await sleep(3000);
-  }
-  await activateTab(tab);
+  // 标签隔离：只复用采集自己创建的标签（记录在 data/collect_tabs.json），
+  // 绝不复用用户手动打开的标签，避免采集导航走用户正在看的页面。
+  const tab = await findOrCreateCollectTab("boss", bossStableUrl, { isUsable: (t) => !isUnstableBossTab(t) });
+  await sleep(1500);
   return tab;
 }
 

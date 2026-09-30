@@ -6,6 +6,7 @@ const { shanghaiDateKey } = require("../core/time_utils");
 const { sendRecruitmentNotification } = require("../push/outbound_sender");
 const { resolveSearchStrategy } = require("../strategy/search_keyword_generator");
 const { loadChannelConfig, platformEnabled, platformRuntimeEnv } = require("../core/channel_config");
+const { closeCollectTabs } = require("../core/cdp_common");
 
 loadEnv();
 
@@ -453,6 +454,7 @@ async function main() {
   const evaluatedPaths = [];
   const partialPlatforms = [];
   const failedPlatforms = [];
+  const platformStatuses = {};
   if (enableBoss && process.env.INPUT_RAW_JSON) rawPaths.push({ platform: "boss", path: assertFreshInput(process.env.INPUT_RAW_JSON, today, "BOSS raw") });
   if (enableLiepin && process.env.INPUT_LIEPIN_RAW_JSON) rawPaths.push({ platform: "liepin", path: assertFreshInput(process.env.INPUT_LIEPIN_RAW_JSON, today, "猎聘 raw") });
   if (enableBoss && process.env.INPUT_SCREENED_JSON) screenedPaths.push({ platform: "boss", path: assertFreshInput(process.env.INPUT_SCREENED_JSON, today, "BOSS screened") });
@@ -528,6 +530,9 @@ async function main() {
     for (const result of results) {
       appendLog("platform collect result", result);
       if (result.ok && result.rawPath) rawPaths.push({ platform: result.platform, path: result.rawPath });
+      if (!result.ok) platformStatuses[result.platform] = "failed";
+      else if (result.partial) platformStatuses[result.platform] = "partial_success";
+      else platformStatuses[result.platform] = "success";
       if (!result.ok || result.partial) {
         if (!result.ok) failedPlatforms.push(result.platform);
         if (result.partial) partialPlatforms.push(result.platform);
@@ -541,6 +546,13 @@ async function main() {
       }
     }
     if (!rawPaths.length) throw new Error("No platform collection succeeded");
+    // 采集阶段结束：关闭采集自己创建的标签（不动用户手动打开的标签）
+    try {
+      const closedTabs = await closeCollectTabs();
+      appendLog("collect tabs closed", { closed: closedTabs });
+    } catch (closeError) {
+      appendLog("collect tabs close skipped", { error: closeError.message });
+    }
   }
   if (screenEnabled) {
     if (enableBoss) {
@@ -607,7 +619,7 @@ async function main() {
   }
   const workflowStatus = partialPlatforms.length || failedPlatforms.length ? "partial_success" : "success";
   appendLog("workflow finished", { workflowStatus, partialPlatforms, failedPlatforms, rawPaths, screenedPaths, evaluatedPaths });
-  console.log(JSON.stringify({ type: "workflow_result", status: workflowStatus, partialPlatforms, failedPlatforms, rawPaths, screenedPaths, evaluatedPaths }));
+  console.log(JSON.stringify({ type: "workflow_result", status: workflowStatus, partialPlatforms, failedPlatforms, platformStatuses, rawPaths, screenedPaths, evaluatedPaths }));
   if (partialPlatforms.length || failedPlatforms.length) process.exitCode = 2;
   releaseWorkflowLock(activeWorkflowLock);
   activeWorkflowLock = null;

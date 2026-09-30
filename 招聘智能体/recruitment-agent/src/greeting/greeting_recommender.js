@@ -171,10 +171,11 @@ async function recommendGreetingResult(row, options = {}) {
   }
   const aiOptions = { max_output_tokens: envNumber("GREETING_AI_MAX_OUTPUT_TOKENS", 220) };
   if (configuredMode) aiOptions.mode = configuredMode;
+  const instructions = options.prompt || "你负责为应聘者向招聘方发出的第一句中文打招呼生成文案。仅输出一段可直接发送的中文，不要标题、编号、解释或换行。只使用候选人画像中可验证事实，优先最近三年与岗位直接相关经历；不要虚构或堆砌能力。语气自然、专业、主动，控制在指定长度内。";
   const ai = await runAiTask({
     purpose: "greeting",
     options: aiOptions,
-    instructions: "你负责为应聘者向招聘方发出的第一句中文打招呼生成文案。仅输出一段可直接发送的中文，不要标题、编号、解释或换行。只使用候选人画像中可验证事实，优先最近三年与岗位直接相关经历；不要虚构或堆砌能力。语气自然、专业、主动，控制在指定长度内。",
+    instructions,
     input: { max_length: maxLength, candidate: currentCandidatePayload(), job: compactJobPayload(row) },
   });
   if (ai.ok) {

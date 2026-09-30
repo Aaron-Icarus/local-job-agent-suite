@@ -23,6 +23,8 @@ async function runJobGreetingAgent(input, agentConfig) {
     : displayId
       ? { display_id: displayId, max_length: maxLength }
       : { job_text: input.clean_text, max_length: maxLength };
+  // 把 process_event 构建好的 agent_prompt 真正传给下游，避免提示词链路成为死代码
+  if (input.agent_prompt) request.prompt = input.agent_prompt;
   const result = await recruitmentAgent.createGreetingResponse(request);
   const title = `${result.display_id ? `${result.display_id} ` : ""}【${result.platform || "岗位信息"}】${result.company || "未知公司"} - ${result.job_title || "未知岗位"}`;
   return {

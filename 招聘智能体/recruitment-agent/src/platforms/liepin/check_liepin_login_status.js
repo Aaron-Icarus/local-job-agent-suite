@@ -1,5 +1,5 @@
 const { loadEnv } = require("../../core/load_env");
-const { cdpBaseUrl, findOrCreateTab, getJson, openWsForTab, navigate, sleep, evaluate } = require("../../core/cdp_common");
+const { cdpBaseUrl, findOrCreateTab, findOrCreateCollectTab, getJson, openWsForTab, navigate, sleep, evaluate } = require("../../core/cdp_common");
 
 loadEnv();
 
@@ -22,22 +22,18 @@ function classify(value) {
 
 async function main() {
   const base = cdpBaseUrl();
-  let tab = await findOrCreateTab((url) => /liepin\.com/.test(url), targetUrl);
-  if ((tab.url || "") === "about:blank" || (args.has("--new") && !/liepin\.com/.test(tab.url || ""))) {
-    await getJson(`${base}/json/new?${targetUrl}`, { method: "PUT" });
-  }
+  // 标签隔离：只复用采集自己创建的标签，不复用用户手动打开的标签。
+  let tab = await findOrCreateCollectTab("liepin", targetUrl, { force: args.has("--new"), isUsable: (t) => Boolean(t.webSocketDebuggerUrl) });
 
   const deadline = Date.now() + 25000;
   let value = null;
   while (Date.now() < deadline) {
     await sleep(1500);
     const tabs = await getJson(`${base}/json/list`);
-    const liepinTabs = tabs
-      .filter((item) => item.type === "page" && item.webSocketDebuggerUrl && /liepin\.com/.test(item.url || ""))
-      .sort((a, b) => (a.id === tab.id ? -1 : 0) - (b.id === tab.id ? -1 : 0));
-    if (!liepinTabs.length) continue;
-    tab = liepinTabs[0];
-    await fetch(`${base}/json/activate/${tab.id}`).catch(() => {});
+    const current = tabs.find((item) => item.id === tab.id && item.type === "page" && item.webSocketDebuggerUrl);
+    if (!current) continue;
+    tab = current;
+    // 后台采集模式：不再 /json/activate（避免把窗口拉到前台）
     for (const blank of tabs.filter((item) => item.type === "page" && (item.url || "") === "about:blank" && item.id !== tab.id)) {
       await fetch(`${base}/json/close/${blank.id}`).catch(() => {});
     }
