@@ -360,6 +360,9 @@ function extractDiagnosticHints(result) {
     }
     hints.push(`平台返回业务错误：${Array.from(grouped.entries()).map(([key, count]) => `${key}（${count}次）`).join("；")}`);
   }
+  if (/风控降级|整轮缺失/.test(text)) {
+    hints.push("平台疑似对本机环境做了风控降级：仍能返回职位列表，但薪资等结构化字段被抹掉，本轮数据的薪资维度不可信。");
+  }
   if (/账户存在异常|环境存在异常|security|verify|captcha|安全|验证/i.test(text)) {
     hints.push("可能需要先在浏览器里完成安全校验、账号验证或重新登录。");
   }
@@ -390,6 +393,53 @@ function collectionBlockingReason(platform, filePath, stderr) {
     return "登录态或安全校验未通过，已阻断本平台 partial 数据进入后续流程";
   }
   return "";
+}
+
+// 采集平台白名单解析：调度器按渠道独立判断后会通过 COLLECT_PLATFORMS 传入本轮待采平台。
+// 为空表示保持旧行为——采集全部启用平台；否则只采集清单内的平台，避免把"已经成功采集过"
+// 的平台在每个整点重复采集（2026-09-30 BOSS 因此被采 9 轮，触发平台风控降级）。
+function resolveCollectPlatforms(env, enabled) {
+  const requested = String((env && env.COLLECT_PLATFORMS) || "")
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean);
+  const wanted = (name) => requested.length === 0 || requested.includes(name);
+  return {
+    requested,
+    boss: Boolean(enabled && enabled.boss) && wanted("boss"),
+    liepin: Boolean(enabled && enabled.liepin) && wanted("liepin"),
+  };
+}
+
+// 采集质量闸门：平台风控降级时仍会返回 code:0 + 职位列表，但会把薪资等结构化字段整轮抹掉。
+// 这种"能跑完但字段全空"的数据必须显式降级并告警，否则会静默产出"可关注 0 条"的空日报
+// （2026-09-30 / 2026-10-01 BOSS 就是这么连续空了两次）。
+const SALARY_WIPE_MIN_RECORDS = 5;
+const SALARY_WIPE_RATIO = 0.2;
+
+function assessCollectionQuality(platform, filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const records = Array.isArray(payload.records) ? payload.records : [];
+    if (records.length < SALARY_WIPE_MIN_RECORDS) return null;
+    const withSalary = records.filter((row) => {
+      const text = `${row.salary ?? ""}${row.salary_min_k ?? ""}${row.salary_max_k ?? ""}`.trim();
+      return text !== "";
+    }).length;
+    const ratio = withSalary / records.length;
+    if (ratio >= SALARY_WIPE_RATIO) return null;
+    return {
+      platform,
+      degraded: true,
+      records: records.length,
+      salaryCoverage: Number(ratio.toFixed(3)),
+      reason: `本轮薪资字段几乎整轮缺失（${withSalary}/${records.length} 条有薪资），疑似平台风控降级：接口仍返回职位列表但抹掉了结构化字段`
+    };
+  } catch {
+    // 质量判定失败绝不阻断主流程，完整诊断仍留在本地日志。
+    return null;
+  }
 }
 
 function buildCollectionAlert(result) {
@@ -477,6 +527,13 @@ async function main() {
   }
 
   if (collectEnabled) {
+    const { requested: collectOnly, boss: collectBoss, liepin: collectLiepin } =
+      resolveCollectPlatforms(process.env, { boss: enableBoss, liepin: enableLiepin });
+    appendLog("collection platform filter resolved", {
+      requested: collectOnly,
+      boss: collectBoss,
+      liepin: collectLiepin,
+    });
     const strategy = await keywordSpecText();
     appendLog("search keyword strategy resolved", strategy.ai);
     const stageName = `daily_${today.replace(/-/g, "")}`;
@@ -486,7 +543,7 @@ async function main() {
     const liepinCollectIdleTimeoutMs = platformIdleTimeoutMs("LIEPIN", "COLLECT", 300000);
     const bossCollectTotalTimeoutMs = platformTimeoutMs("BOSS", "COLLECT_TOTAL", 900000);
     const liepinCollectTotalTimeoutMs = platformTimeoutMs("LIEPIN", "COLLECT_TOTAL", 900000);
-    if (enableBoss) {
+    if (collectBoss) {
       tasks.push(async () => {
         const bossEnv = platformRuntimeEnv(channelConfig, "boss");
         if (envBool("ENABLE_LOGIN_CHECK", true)) {
@@ -504,7 +561,7 @@ async function main() {
         return { platform: "boss", ok: true, rawPath: latestFile(new RegExp(`^boss_${stageName}_jobs_.*\\.json$`)) };
       });
     }
-    if (enableLiepin) {
+    if (collectLiepin) {
       tasks.push(async () => {
         const liepinEnv = platformRuntimeEnv(channelConfig, "liepin");
         if (envBool("ENABLE_LOGIN_CHECK", true)) {
@@ -528,6 +585,17 @@ async function main() {
       results.push(await task());
     }
     for (const result of results) {
+      // 质量闸门：采集进程报了 ok，但结构化字段整轮缺失（典型是平台风控降级）时降级为 partial，
+      // 让 platformStatuses 变成 partial_success 并触发告警，而不是静默当成一次成功采集。
+      if (result.ok && result.rawPath && !result.partial) {
+        const quality = assessCollectionQuality(result.platform, result.rawPath);
+        if (quality && quality.degraded) {
+          result.partial = true;
+          result.quality = quality;
+          result.error = quality.reason;
+          appendLog("collection quality degraded", quality);
+        }
+      }
       appendLog("platform collect result", result);
       if (result.ok && result.rawPath) rawPaths.push({ platform: result.platform, path: result.rawPath });
       if (!result.ok) platformStatuses[result.platform] = "failed";
@@ -625,16 +693,22 @@ async function main() {
   activeWorkflowLock = null;
 }
 
-main().catch(async (error) => {
-  appendLog("workflow failed", { error: error.stack || error.message });
-  try {
-    const alert = await sendWorkflowAlert(`【招聘信息智能体告警】${today} 流程运行失败：${error.message}`, { topic: "recruitment_alert" });
-    appendLog("failure alert attempted", { delivered: Boolean(alert?.status >= 200 && alert?.status < 300), result: alert });
-  } catch (alertError) {
-    appendLog("failure alert failed", { error: alertError.message });
-  }
-  process.exitCode = 1;
-}).finally(() => {
-  releaseWorkflowLock(activeWorkflowLock);
-  activeWorkflowLock = null;
-});
+// 直接执行（定时任务 / spawnSync）时才跑主流程；被 require 时只导出纯函数，
+// 便于离线回归测试质量闸门等判定逻辑而不触发真实采集。
+if (require.main === module) {
+  main().catch(async (error) => {
+    appendLog("workflow failed", { error: error.stack || error.message });
+    try {
+      const alert = await sendWorkflowAlert(`【招聘信息智能体告警】${today} 流程运行失败：${error.message}`, { topic: "recruitment_alert" });
+      appendLog("failure alert attempted", { delivered: Boolean(alert?.status >= 200 && alert?.status < 300), result: alert });
+    } catch (alertError) {
+      appendLog("failure alert failed", { error: alertError.message });
+    }
+    process.exitCode = 1;
+  }).finally(() => {
+    releaseWorkflowLock(activeWorkflowLock);
+    activeWorkflowLock = null;
+  });
+}
+
+module.exports = { assessCollectionQuality, resolveCollectPlatforms, buildCollectionAlert, collectionBlockingReason };

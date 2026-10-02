@@ -84,7 +84,15 @@ function classifyApiProbe(probe) {
   return "";
 }
 
-function combineStatus(domStatus, apiStatus) {
+// 组合判定。历史上只要 API 侧判为 logged_in 就无条件覆盖 DOM 侧的 login_required，
+// 而 BOSS 的搜索接口对"匿名/被风控降级"的请求同样返回 code:0 + 有效 jobList，
+// 于是页面明明显示"登录/注册"也能通过校验，采集照跑，最终产出整批无薪资的废数据
+// （2026-09-30 空推送的直接上游原因）。
+// 修正：DOM 明确给出否定信号（login_required / security_check）时，API 必须同时给出
+// "只有登录态才会有"的证据（返回岗位且带薪资）才可判为已登录。
+function combineStatus(domStatus, apiStatus, apiHasSalary = true) {
+  if (apiStatus === "security_check") return apiStatus;
+  if (["security_check", "login_required"].includes(domStatus) && !apiHasSalary) return domStatus;
   if (apiStatus === "logged_in" || domStatus === "logged_in") return "logged_in";
   if (["security_check", "login_required"].includes(apiStatus)) return apiStatus;
   if (["security_check", "login_required"].includes(domStatus)) return domStatus;
@@ -117,7 +125,7 @@ async function inspectDom(tab) {
 async function inspectApi(tab) {
   const expr = `(async () => {
     try {
-      const params = new URLSearchParams({ scene: '1', query: 'AI项目经理', city: '101020100', page: '1', pageSize: '1' });
+      const params = new URLSearchParams({ scene: '1', query: 'AI项目经理', city: '101020100', page: '1', pageSize: '3' });
       const resp = await fetch('/wapi/zpgeek/search/joblist.json', {
         method: 'POST',
         credentials: 'include',
@@ -133,6 +141,10 @@ async function inspectApi(tab) {
         apiCode: json && json.code,
         apiMessage: (json && json.message) || "",
         hasJobList: Array.isArray(json && json.zpData && json.zpData.jobList),
+        // 登录态强证据：BOSS 对匿名/被风控降级的请求同样返回 code:0 + jobList，
+        // 但会把 salaryDesc 抹空。有薪资才说明这次请求确实带着有效登录态。
+        hasSalary: Array.isArray(json && json.zpData && json.zpData.jobList)
+          && json.zpData.jobList.some((item) => item && String(item.salaryDesc || "").trim() !== ""),
         resCount: json && json.zpData && json.zpData.resCount,
         rawSample: raw.slice(0, 180)
       };
@@ -193,8 +205,9 @@ async function main() {
   const apiValue = apiProbe.value || { ok: false, error: apiProbe.error || "api probe returned no value" };
   const domStatus = classifyValue(value);
   const apiStatus = classifyApiProbe(apiValue);
-  const loginStatus = combineStatus(domStatus, apiStatus);
-  console.log(JSON.stringify({ loginStatus, domStatus, apiStatus, tabScore: bossTabScore(tab), tabId: tab.id, ...value, apiProbe: apiValue }, null, 2));
+  const apiHasSalary = apiValue && apiValue.hasSalary === true;
+  const loginStatus = combineStatus(domStatus, apiStatus, apiHasSalary);
+  console.log(JSON.stringify({ loginStatus, domStatus, apiStatus, apiHasSalary, tabScore: bossTabScore(tab), tabId: tab.id, ...value, apiProbe: apiValue }, null, 2));
   if (loginStatus !== "logged_in") process.exitCode = 2;
 }
 

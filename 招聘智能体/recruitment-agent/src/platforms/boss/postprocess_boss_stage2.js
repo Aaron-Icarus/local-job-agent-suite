@@ -34,7 +34,13 @@ function csvCell(v) {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
+// 可选数值：空串/纯空白/null/undefined/非数字一律返回 null，表示"未知"，绝不返回 0。
+// 历史缺陷（2026-09-30）：Number("") === 0 且 Number.isFinite(0) 为真，于是"薪资没采到"
+// 被当成"薪资 0K"，判为"最高低于20K"→理由"薪资整体偏低"→整批岗位被强制降为"低"，
+// 最终日报出现"记录 30 条、可关注 0 条"。网站字段缺失时必须按"未知"处理，不能当作 0。
 function n(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string" && v.trim() === "") return null;
   const x = Number(v);
   return Number.isFinite(x) ? x : null;
 }

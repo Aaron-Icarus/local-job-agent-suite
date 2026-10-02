@@ -488,7 +488,13 @@ console.log(JSON.stringify({
 }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
+// 直接执行时才跑主流程；被 require 时只导出确定性评分函数，便于离线回归测试
+// （薪资/活跃度缺失的判定不需要也不应该真的调用 AI）。
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { scoreSalary, scoreActivity, optionalNumber, numberOr };
