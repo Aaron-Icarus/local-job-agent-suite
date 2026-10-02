@@ -34,7 +34,11 @@ function csvCell(v) {
   return `"${val(v).replace(/"/g, '""')}"`;
 }
 
+// 可选数值：空串/纯空白/null/undefined/非数字一律返回 null，表示"未知"，绝不返回 0。
+// 与 BOSS 侧同一处历史缺陷：Number("") === 0 会被当成"薪资 0K"，把整批岗位错误降级。
 function n(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string" && v.trim() === "") return null;
   const x = Number(v);
   return Number.isFinite(x) ? x : null;
 }

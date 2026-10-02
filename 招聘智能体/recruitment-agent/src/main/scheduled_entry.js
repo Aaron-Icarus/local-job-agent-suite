@@ -235,6 +235,13 @@ function runWorkflow(decision) {
     ENABLE_SCREEN: report ? "true" : "false",
     ENABLE_EVALUATE: report ? "true" : "false",
     ENABLE_PUSH: report ? "true" : "false",
+    // 采集平台白名单：调度器已按渠道独立判断出"本轮真正待采"的平台，必须下传给工作流。
+    // 历史缺陷（2026-09-30）：该清单没有下传，工作流是"只要平台启用就采集"，于是
+    // pendingPlatforms 只有 liepin 时 BOSS 仍被每轮重采，一天被采集 9 轮，触发平台风控。
+    // 为空/未定义时保持旧行为：采集全部启用平台（日报轮的 collect_and_report 走这条）。
+    COLLECT_PLATFORMS: Array.isArray(decision.pendingPlatforms) && decision.pendingPlatforms.length
+      ? decision.pendingPlatforms.join(",")
+      : "",
     // A missing setting must never turn a scheduled run into a real send.
     // The operator has to opt in explicitly with SCHEDULE_SEND_MODE=send.
     SEND_MODE: report ? scheduledSendMode() : "draft",

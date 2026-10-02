@@ -204,6 +204,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 ## 版本迭代
 
+- **2026-10-02 v0.4.6（修复"字段缺失被当成 0"导致的整批误杀 + 采集频率失控）**：
+  1. **字段缺失不再当作 0**：`postprocess_boss_stage2.js` / `postprocess_liepin_stage2.js` 的 `n()` 与 `evaluate_job_fit.js` 的 `scoreSalary` / `scoreActivity` 都用 `Number(v)` 直接转换，而 `Number("") === 0` 且 `Number.isFinite(0)` 为真，于是"薪资没采到"被当成"薪资 0K"：筛选侧给出"最高低于20K → 薪资整体偏低"并把整批降为"低"，评估侧 `salaryScore=10` 触发 `salaryScore <= 20` 把整批判成"暂不考虑"，日报最终变成"记录 30 条、可关注 0 条"。现统一改为"空串/纯空白/null/undefined/非数字 → 未知(null)"：薪资未知按中性 55 分并提示"薪资结构未解析，需人工确认"；活跃时间未知不再被误判成"一周内活跃"。真正偏低的薪资（如 8-15K）仍照旧判 10 分。
+  2. **按渠道调度真正生效**：`scheduled_entry.runWorkflow()` 之前只把 `decision.action` 翻译成 `ENABLE_*`，没有把 `decision.pendingPlatforms` 下传，而工作流是"平台启用就采集"，导致已成功采集的平台被每个整点重复采集（2026-09-30 BOSS 被采 9 轮、约 2.5 小时连续抓取，触发平台风控降级）。现通过 `COLLECT_PLATFORMS` 把待采平台白名单传给 `daily_workflow`，只采真正待采的平台。
+  3. **登录检查加"登录态强证据"**：BOSS 搜索接口对匿名/被风控降级的请求同样返回 `code:0 + jobList`，而 `combineStatus()` 让 API 侧 `logged_in` 无条件覆盖 DOM 侧 `login_required`，导致页面明明显示"登录/注册"也能通过校验、采集照跑。现要求 API 侧同时给出"只有登录态才会有"的证据（返回岗位且带 `salaryDesc`）才可推翻 DOM 的否定信号。
+  4. **采集质量闸门**：新增 `assessCollectionQuality()`。某平台整轮记录里薪资有效覆盖低于 20% 时判定为"疑似风控降级"，把该平台降级为 `partial_success` 并发出带原因判断的告警，不再静默当成一次成功采集、静默产出"可关注 0 条"的空日报。
+  自测（全程离线，不触发真实采集、不调用 AI）：单元测试 40/40、端到端 8/8 全通过。用 2026-09-30 被风控降级的真实数据复现：修复前"筛选 低29/重复1、评估 暂不考虑 30/30"；修复后"筛选 中29/重复1、评估 重点关注26 + 可关注3 + 暂不考虑1"（剩 1 条由 `roleScore <= 30` 的标题口径否决，与薪资无关）。正式版与分享包 6 个文件哈希一致。
 - **2026-09-29 v0.4.5（后台采集 + 标签隔离 + 按渠道记录）**：
   1. **后台采集**：移除采集流程里 6 处 `/json/activate`，采集全程在最小化窗口后台运行，不再把浏览器弹到前台；
   2. **标签隔离**：新增 `data/collect_tabs.json` 记录"采集自己创建的标签 ID"（按平台分开），采集只复用自己创建的标签，绝不复用用户手动打开的标签；
