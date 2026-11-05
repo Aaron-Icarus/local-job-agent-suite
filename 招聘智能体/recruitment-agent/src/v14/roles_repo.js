@@ -117,16 +117,17 @@ function createRole(db, input = {}) {
     const roleNumber = nextRoleNumber(db);
     db.prepare(
       `INSERT INTO roles(
-        role_uuid, role_number, nickname, status, profile_md, resume_source, target_roles,
+        role_uuid, role_number, nickname, status, profile_md, resume_id, resume_source, target_roles,
         target_city, target_salary, special_requirements, role_keywords_json, role_channels_json,
         collection_weight, ai_provider_id, report_channel_id, has_started, created_at, updated_at,
         confirmed_at, modified_at, first_started_at, deleted_at
-      ) VALUES (?, ?, ?, 'pending_confirm', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, NULL)`
+      ) VALUES (?, ?, ?, 'pending_confirm', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, NULL)`
     ).run(
       roleUuid,
       roleNumber,
       nickname,
       String(input.profile_md || ""),
+      String(input.resume_id || ""),
       String(input.resume_source || ""),
       String(input.target_roles || ""),
       String(input.target_city || ""),
@@ -154,6 +155,7 @@ function updateRole(db, roleUuid, patch = {}) {
     const allowed = {
       nickname: patch.nickname,
       profile_md: patch.profile_md,
+      resume_id: patch.resume_id,
       resume_source: patch.resume_source,
       target_roles: patch.target_roles,
       target_city: patch.target_city,
@@ -252,6 +254,7 @@ function copyRole(db, roleUuid, overrides = {}) {
   return createRole(db, {
     nickname: overrides.nickname || `${source.nickname} 副本`,
     profile_md: source.profile_md,
+    resume_id: source.resume_id,
     resume_source: source.resume_source,
     target_roles: source.target_roles,
     target_city: source.target_city,

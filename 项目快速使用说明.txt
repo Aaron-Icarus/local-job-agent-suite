@@ -1,6 +1,7 @@
 找工作双项目：快速使用说明（脱敏构建包）
 
 版本更新摘要
+- 2026-11-06 v1.4.2（客户端修复）：新增根目录“启动招聘智能体.cmd”双击启动器（自动装依赖/写演示数据，Electron 失败退回浏览器）；角色支持 Markdown 简历导入与 `resumes` schema；创建角色不选渠道，确认时勾选 BOSS/猎聘，未选渠道不执行；首页改为 BOSS/猎聘两个独立渠道状态卡；演示数据 1 角色 + 6 岗位。运行：双击“启动招聘智能体.cmd”。
 - 2026-11-06 v1.4.1（客户端 MVP）：新增 SQLite 数据层、跨天入库队列、岗位/角色评分分离、任务状态机与调度、Electron 28 托盘壳、本地 Web 页面、Chrome/登录监控、AI 供应商降级、飞书日报、Excel 导出。运行：`cd 招聘智能体\recruitment-agent`，`npm install`，`npm run electron`（已带 `--no-sandbox`）；仅看页面用 `npm run v14:serve`。旧 v1.3 CLI 保留，不自动迁移。
 - 2026-10-28 v1.3.0（采集 → 入库/编号 → 评分）：先存岗位事实再评分；入库必须有平台唯一 ID + 完整 JD，拿不到进待补、不占编号；编号在写库时按渠道分配；同渠道精确重复不新增，跨渠道同岗照常入库/占号但标记“重复于更早编号”；关键词按历史新增/久未使用/重复/失败滚动排序并分配目标与页数，BOSS/猎聘支持分页；新增每日“关键词 × 渠道”采集账本；评分改为候选人事实卡 + 硬条件 + 软评分，AI 只做 ±8 分内微调且不能推翻硬条件；`score_jobs --from-store` 可只重算不重采。详见 CHANGELOG.md 与 docs/v1.3_改造说明.md。
 - 2026-09-14 v0.4.3（分享包修补）：修复 BOSS 采集长期 0 条（BOSS 页面反调试 + CDP Runtime.enable 导致 Runtime.evaluate 被挂住），BOSS 采集器与 cdp_common.openWsForTab() 均已移除 Runtime.enable；BOSS 详情 JD 改为「详情页 URL 校验 + 按 encryptJobId 直连详情页 + 快照提取」，采集状态仍写既有的 ok（自定义新状态会被下游当成"待补采"，导致日报显示"记录 30 条，可关注 0 条"）；猎聘改为直接导航关键词搜索页 /zhaopin/?dqs=<城市码>&key=<关键词>，并修复"停在搜索页被误判未登录而整轮跳过猎聘"；AI 调用提取答案时跳过 reasoning 项并新增 AI_OPENAI_REASONING_EFFORT；.env.example 默认采集总超时 900000 改为 1800000，新增 LIEPIN_CITY_CODE=020。自测：自动化测试\run_offline_smoke.ps1 全 7 步通过；2026-09-14 现场整轮自测 BOSS 采集 50 条且 50/50 判定为 ok，BOSS 日报草稿正文变为"记录 50 条，可关注 45 条，展示 8 条"（修复前是"记录 30 条，可关注 0 条，展示 0 条"）。

@@ -15,6 +15,14 @@ function ensureParent(filePath) {
 function applySchema(db) {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
   db.exec(schema);
+  ensureColumn(db, "roles", "resume_id", "TEXT NOT NULL DEFAULT ''");
+}
+
+function ensureColumn(db, table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((item) => item.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 function openDatabase(filePath = "") {

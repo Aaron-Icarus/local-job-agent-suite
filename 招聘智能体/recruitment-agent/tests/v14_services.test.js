@@ -12,6 +12,8 @@ const ai = require("../src/v14/ai_providers");
 const { encryptSecret, decryptSecret } = require("../src/v14/secret_store");
 const reports = require("../src/v14/report_service");
 const { exportRoleToExcel, buildExcelHtml } = require("../src/v14/export_service");
+const { parseResumeMarkdown } = require("../src/v14/resume_parser");
+const resumes = require("../src/v14/resumes_repo");
 
 function setup(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "v14-service-"));
@@ -126,4 +128,34 @@ test("Excel 导出包含岗位、评分和可点击链接", (t) => {
   assert.ok(fs.existsSync(result.filePath));
   assert.equal(result.count, 1);
   assert.match(fs.readFileSync(result.filePath, "utf8"), /测试公司/);
+});
+
+test("MD 简历解析、导入并生成角色画像", (t) => {
+  const { db } = setup(t);
+  const markdown = `# 张三简历
+## 目标岗位
+实施顾问、交付专员
+## 技能
+项目管理、客户沟通、SQL
+## 工作经历
+5 年企业软件实施与项目交付经验。
+## 教育
+本科
+`;
+  const parsed = parseResumeMarkdown(markdown);
+  assert.equal(parsed.name, "张三");
+  assert.ok(parsed.target_roles.includes("实施顾问"));
+  assert.ok(parsed.skills.includes("项目管理"));
+
+  const resume = resumes.importResume(db, { name: "张三", content: markdown, fileName: "zhangsan.md" });
+  assert.ok(resume.id);
+  assert.match(resume.parsed.raw_md, /张三/);
+  const created = roles.createRole(db, {
+    nickname: "张三角色",
+    resume_id: resume.id,
+    target_roles: "实施顾问",
+  });
+  assert.equal(created.role.resume_id, resume.id);
+  assert.match(created.role.profile_md, /实施顾问/);
+  assert.deepEqual(created.role.role_channels, []);
 });

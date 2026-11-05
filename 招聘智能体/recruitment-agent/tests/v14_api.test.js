@@ -61,7 +61,7 @@ test("API 健康检查、静态页面、设置校验和角色生命周期", asyn
   const confirmed = await jsonFetch(`${base}/api/roles/${roleUuid}/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: "{}",
+    body: JSON.stringify({ channels: ["BOSS"] }),
   });
   assert.equal(confirmed.body.role.status, "pending_start");
 

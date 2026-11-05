@@ -7,7 +7,10 @@ const { planTick, getTaskBoard, createCollectionPlan } = require("./task_service
 const roles = require("./role_service");
 const scores = require("./scores_repo");
 const { listJobs, countJobs } = require("./jobs_repo");
-const { loginStatus } = require("./login_monitor");
+const { loginStatus, recordCheck } = require("./login_monitor");
+const { checkPlatform } = require("./login_checker");
+const { startChrome } = require("./chrome_manager");
+const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
 const { buildExcelHtml } = require("./export_service");
@@ -85,6 +88,36 @@ function createAppServer(options = {}) {
       if (pathname === "/api/roles" && req.method === "POST") {
         const result = roles.createRole(db, await readBody(req));
         return json(res, 200, { ok: true, ...result });
+      }
+
+      if (pathname === "/api/resumes" && req.method === "GET") {
+        return json(res, 200, { ok: true, resumes: resumes.listResumes(db) });
+      }
+      if (pathname === "/api/resumes" && req.method === "POST") {
+        return json(res, 200, { ok: true, resume: resumes.importResume(db, await readBody(req)) });
+      }
+      const resumeId = pathname.match(/^\/api\/resumes\/([^/]+)$/);
+      if (resumeId && req.method === "GET") {
+        const resume = resumes.getResume(db, resumeId[1]);
+        if (!resume) return json(res, 404, { ok: false, error: "简历不存在" });
+        return json(res, 200, { ok: true, resume });
+      }
+
+      if (pathname === "/api/login/check" && req.method === "POST") {
+        const body = await readBody(req);
+        const platform = String(body.platform || "");
+        const result = await checkPlatform(platform);
+        const status = result.ok ? "logged_in" : result.status === "login_required" ? "login_required" : "error";
+        const saved = recordCheck(db, platform, status, result.error || "");
+        return json(res, 200, { ok: result.ok, platform, result, saved });
+      }
+
+      if (pathname === "/api/chrome/open" && req.method === "POST") {
+        const body = await readBody(req);
+        const platform = String(body.platform || "");
+        const url = platform === "猎聘" ? "https://c.liepin.com/" : "https://www.zhipin.com/web/geek/jobs";
+        const child = startChrome({ startUrl: url, port: Number(body.port || 9222) });
+        return json(res, 200, { ok: true, platform, url, pid: child.child.pid });
       }
 
       const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update)$/);

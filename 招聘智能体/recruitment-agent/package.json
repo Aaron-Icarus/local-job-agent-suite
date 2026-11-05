@@ -1,12 +1,13 @@
 {
   "name": "boss-job-agent",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "main": "electron/main.js",
   "description": "BOSS job collection, fit evaluation, draft-first daily push workflow, desktop client.",
   "scripts": {
     "electron": "electron --no-sandbox .",
     "v14:serve": "node src/v14/cli/serve.js",
+    "v14:seed-demo": "node src/v14/cli/seed_demo.js",
     "daily": "node src/main/daily_workflow.js",
     "scheduled": "node src/main/scheduled_entry.js",
     "watchdog": "node src/main/report_watchdog.js",

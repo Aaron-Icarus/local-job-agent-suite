@@ -1,0 +1,9 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0启动招聘智能体.ps1"
+if errorlevel 1 (
+  echo.
+  echo 启动失败，请查看上方错误。
+  pause
+)

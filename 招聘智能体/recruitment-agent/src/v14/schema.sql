@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS roles (
   nickname TEXT NOT NULL,
   status TEXT NOT NULL,
   profile_md TEXT NOT NULL DEFAULT '',
+  resume_id TEXT NOT NULL DEFAULT '',
   resume_source TEXT NOT NULL DEFAULT '',
   target_roles TEXT NOT NULL DEFAULT '',
   target_city TEXT NOT NULL DEFAULT '',
@@ -129,6 +130,19 @@ CREATE TABLE IF NOT EXISTS roles (
   deleted_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_roles_status ON roles(status, deleted_at);
+
+CREATE TABLE IF NOT EXISTS resumes (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  source_type TEXT NOT NULL DEFAULT 'md',
+  file_name TEXT NOT NULL DEFAULT '',
+  raw_md TEXT NOT NULL,
+  parsed_json TEXT NOT NULL DEFAULT '{}',
+  content_hash TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_resumes_created ON resumes(created_at);
 
 CREATE TABLE IF NOT EXISTS role_numbering (
   scope TEXT PRIMARY KEY,

@@ -7,6 +7,9 @@ const state = {
   providers: [],
   reports: [],
   activeRole: "",
+  confirmRoleId: "",
+  resumeContent: "",
+  resumeFileName: "",
 };
 
 async function api(path, options = {}) {
@@ -65,9 +68,9 @@ async function refreshHealth() {
         <div class="card"><div class="num">${data.jobs}</div><div class="label">岗位总数</div></div>
         <div class="card"><div class="num">${data.roles}</div><div class="label">角色</div></div>
         <div class="card"><div class="num">${data.tasks ?? 0}</div><div class="label">最近任务</div></div>
-        <div class="card"><div class="num">${data.login?.filter((item) => item.last?.status === "logged_in").length ?? 0}/2</div><div class="label">渠道已登录</div></div>
       `;
     }
+    renderChannels(data.login || []);
     return data;
   } catch (error) {
     const el = document.getElementById("healthBadge");
@@ -77,6 +80,30 @@ async function refreshHealth() {
   }
 }
 
+function renderChannels(login) {
+  const container = document.getElementById("channelCards");
+  if (!container) return;
+  const items = ["BOSS", "猎聘"].map((platform) => {
+    const item = login.find((entry) => entry.platform === platform) || {};
+    const last = item.last;
+    const status = last?.status || "未检查";
+    const ok = status === "logged_in";
+    const bad = ["login_required", "error"].includes(status);
+    return `
+      <div class="channel">
+        <div>
+          <div class="name"><span class="dot ${ok ? "ok" : bad ? "bad" : "warn"}"></span>${platform}</div>
+          <div class="meta">${ok ? "已登录" : bad ? "需要登录" : "未检查/未知"} · ${last?.checked_at ? "上次 " + fmt(last.checked_at) : "尚未检查"}</div>
+        </div>
+        <div class="actions">
+          <button class="small ghost" data-channel-check="${platform}">检查登录</button>
+          <button class="small" data-channel-open="${platform}">打开登录页</button>
+        </div>
+      </div>`;
+  });
+  container.innerHTML = items.join("");
+}
+
 async function refreshRoles() {
   const data = await api("/api/roles");
   state.roles = data.roles || [];
@@ -84,21 +111,24 @@ async function refreshRoles() {
   if (!state.roles.length) {
     list.innerHTML = '<div class="empty">还没有角色，先创建一个。</div>';
   } else {
-    list.innerHTML = state.roles.map((role) => `
+    list.innerHTML = state.roles.map((role) => {
+      const channels = (role.role_channels || []).join(" / ") || "未选渠道";
+      return `
       <div class="row">
         <div>
           <strong>${esc(role.role_number)} · ${esc(role.nickname)}</strong>
           ${tag(role.status, role.status === "running" ? "ok" : role.status === "pending_confirm" ? "warn" : "")}
-          <div class="meta">${esc(role.target_roles || "未设置目标岗位")} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}</div>
+          <div class="meta">${esc(role.target_roles || "未设置目标岗位")} · 渠道：${esc(channels)} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}</div>
         </div>
         <div class="actions">
-          ${role.status === "pending_confirm" ? `<button class="small" data-action="confirm" data-id="${role.role_uuid}">确认</button>` : ""}
+          ${role.status === "pending_confirm" ? `<button class="small" data-action="confirm" data-id="${role.role_uuid}">确认渠道</button>` : ""}
           ${["pending_start", "paused"].includes(role.status) ? `<button class="small" data-action="start" data-id="${role.role_uuid}">启动</button>` : ""}
           ${role.status === "running" ? `<button class="small ghost" data-action="pause" data-id="${role.role_uuid}">暂停</button>` : ""}
           <button class="small ghost" data-action="copy" data-id="${role.role_uuid}">复制</button>
           <button class="small danger" data-action="delete" data-id="${role.role_uuid}">删除</button>
         </div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
   }
   const options = state.roles.map((role) => `<option value="${role.role_uuid}">${esc(role.role_number)} ${esc(role.nickname)}</option>`).join("");
   for (const id of ["jobRoleSelect", "reportRoleSelect"]) {
@@ -232,13 +262,31 @@ async function refreshAll() {
   }
 }
 
+function openConfirmDialog(roleUuid) {
+  const role = state.roles.find((item) => item.role_uuid === roleUuid);
+  if (!role) return;
+  state.confirmRoleId = roleUuid;
+  const channels = role.role_channels || [];
+  document.getElementById("confirmBoss").checked = channels.length ? channels.includes("BOSS") : true;
+  document.getElementById("confirmLiepin").checked = channels.length ? channels.includes("猎聘") : true;
+  document.getElementById("confirmDialog").showModal();
+}
+
+function activateTab(tab) {
+  const name = tab || "dashboard";
+  document.querySelectorAll(".tabs button").forEach((item) => item.classList.toggle("active", item.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${name}`));
+}
+
 function bind() {
   document.getElementById("tabs").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-tab]");
     if (!button) return;
-    document.querySelectorAll(".tabs button").forEach((item) => item.classList.toggle("active", item === button));
-    document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${button.dataset.tab}`));
+    location.hash = button.dataset.tab;
+    activateTab(button.dataset.tab);
   });
+  window.addEventListener("hashchange", () => activateTab(location.hash.slice(1)));
+  activateTab(location.hash.slice(1));
 
   document.getElementById("btnRefresh").onclick = refreshAll;
   document.getElementById("btnTick").onclick = doTick;
@@ -251,34 +299,97 @@ function bind() {
     } catch (error) { showLog("dashboardLog", error.message); }
   };
   document.getElementById("btnLoginStatus").onclick = async () => {
-    try { showLog("dashboardLog", await api("/api/login/status")); } catch (error) { showLog("dashboardLog", error.message); }
+    try {
+      showLog("dashboardLog", await api("/api/login/status"));
+      await refreshHealth();
+    } catch (error) { showLog("dashboardLog", error.message); }
   };
 
+  document.getElementById("channelCards").addEventListener("click", async (event) => {
+    const check = event.target.closest("button[data-channel-check]");
+    const open = event.target.closest("button[data-channel-open]");
+    try {
+      if (check) {
+        const platform = check.dataset.channelCheck;
+        const result = await api("/api/login/check", { method: "POST", body: { platform } });
+        showLog("dashboardLog", result);
+        await refreshHealth();
+      }
+      if (open) {
+        const platform = open.dataset.channelOpen;
+        const result = await api("/api/chrome/open", { method: "POST", body: { platform } });
+        showLog("dashboardLog", `已打开 ${platform} 登录页`);
+        void result;
+      }
+    } catch (error) { showLog("dashboardLog", error.message); }
+  });
+
+  document.getElementById("resumeFile").addEventListener("change", async (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      state.resumeContent = content;
+      state.resumeFileName = file.name;
+      document.getElementById("roleProfile").value = content;
+      document.getElementById("resumeStatus").textContent = `已导入：${file.name}（${content.length} 字）`;
+    } catch (error) {
+      alert(`读取简历失败：${error.message}`);
+    }
+  });
+
   document.getElementById("btnCreateRole").onclick = async () => {
-    const channels = [...document.querySelectorAll('.checks input[type="checkbox"]:checked')].map((item) => item.value);
     try {
       const result = await api("/api/roles", {
         method: "POST",
         body: {
           nickname: document.getElementById("roleNickname").value.trim(),
           profile_md: document.getElementById("roleProfile").value.trim(),
+          resume_md: state.resumeContent,
+          resume_file_name: state.resumeFileName,
           target_roles: document.getElementById("roleTargets").value.trim(),
           role_keywords: document.getElementById("roleKeywords").value.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
-          role_channels: channels,
         },
       });
       if (result.similar?.length) {
         alert(`与已有角色相似：${result.similar.map((item) => `${item.role_number} ${item.nickname}（${Math.round(item.score * 100)}%）`).join("，")}`);
       }
+      state.resumeContent = "";
+      state.resumeFileName = "";
+      document.getElementById("resumeStatus").textContent = "未选择简历；也可以直接粘贴到下方";
       await refreshRoles();
       toast("角色已创建");
     } catch (error) { alert(error.message); }
   };
 
+  document.getElementById("btnConfirmRole").onclick = async () => {
+    const channels = [];
+    if (document.getElementById("confirmBoss").checked) channels.push("BOSS");
+    if (document.getElementById("confirmLiepin").checked) channels.push("猎聘");
+    if (!channels.length) {
+      alert("至少选择一个渠道");
+      return;
+    }
+    try {
+      await api(`/api/roles/${state.confirmRoleId}/confirm`, {
+        method: "POST",
+        body: { channels },
+      });
+      document.getElementById("confirmDialog").close();
+      await refreshRoles();
+      await refreshJobs();
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnCancelConfirm").onclick = () => document.getElementById("confirmDialog").close();
+
   document.getElementById("roleList").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const { action, id } = button.dataset;
+    if (action === "confirm") {
+      openConfirmDialog(id);
+      return;
+    }
     try {
       await api(`/api/roles/${id}/${action}`, { method: "POST", body: {} });
       await refreshRoles();

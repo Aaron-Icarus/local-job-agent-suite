@@ -1,6 +1,6 @@
 # 本地招聘信息智能体与飞书消息转发平台
 
-> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.4.1（2026-11-06）。
+> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.4.2（2026-11-06）。
 >
 > v1.4 客户端方案：
 > [需求说明](docs/requirements/v1.4_客户端化与多角色_需求说明.md) ·
@@ -12,9 +12,13 @@
 
 ## v1.4 客户端（开发完成，MVP）
 
+**最简单：双击根目录 `启动招聘智能体.cmd`。**  
+启动器会检查依赖/演示数据，优先打开 Electron；失败时自动打开浏览器页面。
+
 ```powershell
 cd 招聘智能体\recruitment-agent
 npm install                 # 首次安装 Electron 依赖
+npm run v14:seed-demo       # 可选：写入演示角色/岗位
 npm run v14:serve           # 只启动本地 API + 页面
 npm run electron            # 启动桌面客户端（托盘）
 ```

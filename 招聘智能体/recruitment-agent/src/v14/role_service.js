@@ -1,10 +1,39 @@
 const roles = require("./roles_repo");
 const scores = require("./scores_repo");
+const { importResume, getResume, profileForResume } = require("./resumes_repo");
+
+const VALID_CHANNELS = new Set(["BOSS", "猎聘"]);
+
+function normalizeChannels(channels) {
+  const result = [...new Set((channels || []).map((item) => String(item).trim()).filter((item) => VALID_CHANNELS.has(item)))];
+  if (!result.length) throw new Error("确认角色时至少选择一个渠道（BOSS/猎聘）");
+  return result;
+}
 
 function createRole(db, input = {}) {
-  const role = roles.createRole(db, input);
+  let resumeId = String(input.resume_id || "");
+  let profile = String(input.profile_md || "");
+  if (!resumeId && input.resume_md) {
+    const resume = importResume(db, {
+      name: input.nickname,
+      content: input.resume_md,
+      fileName: input.resume_file_name || "",
+    });
+    resumeId = resume.id;
+  }
+  if (resumeId) {
+    const resume = getResume(db, resumeId);
+    if (!resume) throw new Error("简历不存在");
+    if (!profile) profile = profileForResume(resume);
+  }
+  const role = roles.createRole(db, {
+    ...input,
+    resume_id: resumeId,
+    profile_md: profile,
+    role_channels: input.role_channels || [],
+  });
   scores.ensureRoleJobsForRole(db, role.role_uuid);
-  const similar = roles.findSimilarRoles(db, input, { excludeRoleUuid: role.role_uuid });
+  const similar = roles.findSimilarRoles(db, { ...input, profile_md: profile }, { excludeRoleUuid: role.role_uuid });
   return { role: roles.getRole(db, role.role_uuid), similar };
 }
 
@@ -16,9 +45,14 @@ function updateRole(db, roleUuid, patch = {}) {
 }
 
 function confirmRole(db, roleUuid, options = {}) {
-  const role = roles.getRole(db, roleUuid);
+  let role = roles.getRole(db, roleUuid);
   if (!role) throw new Error("角色不存在");
   if (role.has_started) throw new Error("角色已启动，不能重新确认");
+  if (options.channels !== undefined) {
+    const channels = normalizeChannels(options.channels);
+    const updated = roles.updateRole(db, roleUuid, { role_channels: channels });
+    role = updated;
+  }
   const similar = roles.findSimilarRoles(db, role, {
     excludeRoleUuid: roleUuid,
     threshold: options.threshold,
@@ -29,6 +63,11 @@ function confirmRole(db, roleUuid, options = {}) {
 }
 
 function startRole(db, roleUuid) {
+  const current = roles.getRole(db, roleUuid);
+  if (!current) throw new Error("角色不存在");
+  if (!Array.isArray(current.role_channels) || !current.role_channels.length) {
+    throw new Error("角色未选择渠道，请先确认 BOSS/猎聘");
+  }
   const role = roles.startRole(db, roleUuid);
   scores.ensureRoleJobsForRole(db, roleUuid);
   return role;
