@@ -294,6 +294,7 @@ raw_files: pending → processing → done/failed/archived
         OR ingested_at > role.modified_at
         OR needs_score
 排序 = job_updated_at 新→旧，新入库优先
+job_updated_at = max(facts_updated_at, status_updated_at)，不含单纯 last_seen
 额度 = 单次最多 100，时间够再处理旧岗位
 ```
 
@@ -304,8 +305,8 @@ raw_files: pending → processing → done/failed/archived
 
 ### 4.7 AI 能力
 
-- 供应商列表：名称、Base URL、模型、Key、排序、启用、测试、删除；
-- 逐级降级：1→2→3；全部失败报错；手动重启检测逐级重试；
+- 供应商列表：名称、类型（OpenAI 兼容 / Codex 本地命令）、Base URL/命令、模型、Key、排序、启用、测试、删除；
+- 逐级降级：按排序 1→2→3 尝试；前一个失败自动用下一个；全部失败报错；手动重启检测并逐级重试；
 - 连接成功绿色；无 AI 走规则兜底；
 - Key 加密（DPAPI/凭据管理器），不存明文；
 - 角色可覆盖；
@@ -419,9 +420,7 @@ Renderer (React/Vite)
 
 ## 10. 待确认
 
-- 角色相似度阈值；
-- `job_updated_at` 是否含 `last_seen_at`；
+- 角色相似度阈值/算法（高重合允许仍然确认）；
+- 子任务重试“5/1/1”的具体含义；
 - 软删除角色是否占 3 个名额；
-- Excel 默认当前角色/每角色 sheet；
-- 通知是否同时飞书；
-- 短时间重试窗口精确定义。
+- Excel 是否默认当前角色（当前产品选择：按所选角色导出）。
