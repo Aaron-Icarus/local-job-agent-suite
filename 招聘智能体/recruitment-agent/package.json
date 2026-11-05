@@ -1,11 +1,11 @@
 {
   "name": "boss-job-agent",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "main": "electron/main.js",
   "description": "BOSS job collection, fit evaluation, draft-first daily push workflow, desktop client.",
   "scripts": {
-    "electron": "electron .",
+    "electron": "electron --no-sandbox .",
     "v14:serve": "node src/v14/cli/serve.js",
     "daily": "node src/main/daily_workflow.js",
     "scheduled": "node src/main/scheduled_entry.js",
@@ -36,7 +36,7 @@
     "build:win": "electron-builder --win nsis"
   },
   "devDependencies": {
-    "electron": "^35.0.0",
+    "electron": "^28.3.3",
     "electron-builder": "^25.1.8"
   },
   "build": {
@@ -62,6 +62,6 @@
     "node": ">=22.5.0"
   },
   "allowScripts": {
-    "electron": true
+    "electron@28.3.3": true
   }
 }

@@ -1,6 +1,6 @@
 # 本地招聘信息智能体与飞书消息转发平台
 
-> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.4.0（2026-11-06）。
+> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.4.1（2026-11-06）。
 >
 > v1.4 客户端方案：
 > [需求说明](docs/requirements/v1.4_客户端化与多角色_需求说明.md) ·
@@ -8,6 +8,7 @@
 > [执行计划](docs/plans/v1.4_客户端化_执行计划.md)
 >
 > v1.4 新数据层使用 `node:sqlite`，要求 Node.js >= 22.5.0；v1.3 旧 CLI 仍兼容原环境。
+> Electron 使用 28.3.3，`npm run electron` 已带 `--no-sandbox`（本机 Windows 兼容）。
 
 ## v1.4 客户端（开发完成，MVP）
 

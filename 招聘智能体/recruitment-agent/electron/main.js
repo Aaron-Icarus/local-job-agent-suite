@@ -1,12 +1,43 @@
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
-const { app, BrowserWindow, Tray, Menu, nativeImage } = require("electron");
-const { openDatabase } = require("../src/v14/db");
-const { startServer } = require("../src/v14/app_server");
+const net = require("net");
+const http = require("http");
+const { spawn } = require("child_process");
+
+const logDir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "boss-job-agent");
+const logFile = path.join(logDir, "startup.log");
+try {
+  fs.mkdirSync(logDir, { recursive: true });
+  fs.appendFileSync(logFile, `[${new Date().toISOString()}] main.js loaded\n`);
+} catch {
+  // 日志失败不影响启动
+}
+
+function startupLog(message) {
+  try {
+    fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${message}\n`);
+  } catch {
+    // ignore
+  }
+}
+
+process.on("uncaughtException", (error) => {
+  startupLog(`uncaughtException: ${error.stack || error.message}`);
+});
+process.on("unhandledRejection", (error) => {
+  startupLog(`unhandledRejection: ${error && (error.stack || error.message) || error}`);
+});
+process.on("exit", (code) => {
+  startupLog(`process exit: ${code}`);
+});
+
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog } = require("electron");
 
 let mainWindow = null;
 let tray = null;
-let server = null;
-let db = null;
+let serverProcess = null;
+let serverUrl = "";
 
 function createWindow(url) {
   mainWindow = new BrowserWindow({
@@ -64,34 +95,109 @@ function createTray() {
   });
 }
 
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+function waitForServer(url, timeoutMs = 20000) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      http
+        .get(`${url}/api/health`, (response) => {
+          response.resume();
+          if (response.statusCode === 200) return resolve(true);
+          retry();
+        })
+        .on("error", retry);
+    };
+    const retry = () => {
+      if (Date.now() - started > timeoutMs) return reject(new Error("后台服务启动超时"));
+      setTimeout(attempt, 350);
+    };
+    attempt();
+  });
+}
+
+function startBackend(port) {
+  const nodeExe = process.env.V14_NODE || "node";
+  const script = path.join(__dirname, "..", "src", "v14", "cli", "serve.js");
+  const child = spawn(nodeExe, [script, `--port=${port}`], {
+    cwd: path.join(__dirname, ".."),
+    env: {
+      ...process.env,
+      V14_PORT: String(port),
+    },
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", (chunk) => startupLog(`server stdout: ${chunk.toString().trim()}`));
+  child.stderr.on("data", (chunk) => startupLog(`server stderr: ${chunk.toString().trim()}`));
+  child.on("error", (error) => startupLog(`server spawn error: ${error.message}`));
+  child.on("exit", (code, signal) => startupLog(`server exited: code=${code} signal=${signal}`));
+  return child;
+}
+
 async function bootstrap() {
-  const dbInfo = openDatabase(process.env.V14_DB_PATH || "");
-  db = dbInfo.db;
-  server = await startServer(db, { port: Number(process.env.V14_PORT || 0) });
-  createWindow(server.url);
+  startupLog("bootstrap start");
+  const port = Number(process.env.V14_PORT || 0) || (await freePort());
+  serverUrl = `http://127.0.0.1:${port}`;
+  serverProcess = startBackend(port);
+  startupLog(`backend starting: ${serverUrl}`);
+  await waitForServer(serverUrl);
+  startupLog(`backend ready: ${serverUrl}`);
+  createWindow(serverUrl);
+  startupLog("window created");
   createTray();
+  startupLog("tray created");
+}
+
+function stopBackend() {
+  if (!serverProcess || serverProcess.killed) return;
+  try {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/pid", String(serverProcess.pid), "/T", "/F"], { windowsHide: true });
+    } else {
+      serverProcess.kill();
+    }
+  } catch (error) {
+    startupLog(`stop backend error: ${error.message}`);
+  }
 }
 
 const gotLock = app.requestSingleInstanceLock();
+startupLog(`single instance lock: ${gotLock}`);
 if (!gotLock) {
-  app.quit();
-} else {
-  app.on("second-instance", () => {
-    if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
-  app.whenReady().then(bootstrap).catch((error) => {
-    console.error(error);
-    app.quit();
-  });
-  app.on("window-all-closed", () => {
-    // 保持托盘常驻，不退出。
-  });
-  app.on("before-quit", async () => {
-    app.isQuitting = true;
-    if (server) await server.close();
-    if (db) db.close();
-  });
+  // 某些 Windows 沙箱环境无法创建 Electron 的 SingletonLock（Error 5）。
+  // 这里继续启动，避免应用静默退出；重复实例由用户自行关闭。
+  startupLog("no single instance lock, continuing without it");
 }
+app.on("second-instance", () => {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+app.whenReady().then(bootstrap).catch((error) => {
+  startupLog(`bootstrap failed: ${error.stack || error.message}`);
+  try {
+    dialog.showErrorBox("招聘智能体启动失败", `${error.message}\n\n日志：${logFile}`);
+  } catch {
+    // ignore dialog failure
+  }
+  app.quit();
+});
+app.on("window-all-closed", () => {
+  // 保持托盘常驻，不退出。
+});
+app.on("before-quit", () => {
+  app.isQuitting = true;
+  stopBackend();
+});

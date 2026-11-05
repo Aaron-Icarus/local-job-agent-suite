@@ -3,10 +3,32 @@
 本文件只记录**设计、方案、架构层面**的变化，不逐文件罗列改动。  
 详细实现说明见 `docs/v1.3_改造说明.md`；v1.4 方案见 `docs/requirements/`、`docs/prd/`、`docs/plans/`；历史提交见 GitHub 仓库。
 
-- 当前版本：**v1.4.0**
+- 当前版本：**v1.4.1**
 - 当前版本日期：**2026-11-06**
 - 记录整理：2026-11-06
 - 版本号规则：`v主版本.次版本.修订号`；流程/架构调整升次版本，纯修复升修订号。
+
+---
+
+## v1.4.1 — 2026-11-06：修复 Electron 启动失败
+
+### 设计变化
+
+- Electron 从 35.7.5 降到 **28.3.3**：本机 Windows 10 上 Electron 35 启动即返回 `0x80000003`，未加载 `main.js`；Electron 28 可正常启动。
+- Electron 主进程改为**只做窗口/托盘**，通过子进程启动系统 Node 的 `src/v14/cli/serve.js`，避免 Electron 内置 Node 与 `node:sqlite` 的兼容问题。
+- `npm run electron` 固定加 `--no-sandbox`：本机 Windows 沙箱/AppContainer 环境没有该参数时 Electron 仍无法创建窗口。
+- 去掉“单实例锁失败就退出”的逻辑：某些 Windows 沙箱无法创建 SingletonLock（Error 5），现在记录日志后继续启动。
+- 启动日志写到 `%APPDATA%\boss-job-agent\startup.log`；后台服务启动失败会弹错误框。
+
+### 验证
+
+- `npm run electron`：窗口标题“招聘智能体 v1.4”，后台 `/api/health` 返回 2 岗位/1 角色；已实机启动成功。
+- v1.4 测试：**30/30 通过**；旧烟测：**8/8 通过**。
+
+### 注意
+
+- `--no-sandbox` 会降低 Electron 渲染进程隔离，这是本机 Windows 环境的兼容措施；后续可评估是否只在特定机器启用。
+- 仍需在目标机器验证托盘、登录、真实采集和安装包。
 
 ---
 
