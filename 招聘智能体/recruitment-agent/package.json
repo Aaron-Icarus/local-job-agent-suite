@@ -60,5 +60,8 @@
   },
   "engines": {
     "node": ">=22.5.0"
+  },
+  "allowScripts": {
+    "electron": true
   }
 }
