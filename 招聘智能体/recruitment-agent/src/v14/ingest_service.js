@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { withTransaction } = require("./db");
 const { validateRecord, upsertJob, nowIso } = require("./jobs_repo");
+const { syncJobToRoles } = require("./scores_repo");
 const {
   discoverRawFiles,
   listDueRawFiles,
@@ -47,6 +48,8 @@ function ingestRawFile(db, rawFile, options = {}) {
     pending: 0,
     reopened: 0,
     factsChanged: 0,
+    syncErrors: [],
+    outcomes: [],
   };
 
   withTransaction(db, () => {
@@ -68,6 +71,12 @@ function ingestRawFile(db, rawFile, options = {}) {
       else result.updated += 1;
       if (outcome.reopened) result.reopened += 1;
       if (outcome.factsChanged) result.factsChanged += 1;
+      result.outcomes.push({
+        jobUuid: outcome.job.job_uuid,
+        factsChanged: outcome.factsChanged,
+        reopened: outcome.reopened,
+        statusChanged: outcome.reopened,
+      });
     }
 
     db.prepare(
@@ -91,6 +100,15 @@ function ingestRawFile(db, rawFile, options = {}) {
   });
 
   result.status = "success";
+  for (const outcome of result.outcomes) {
+    try {
+      const job = db.prepare("SELECT * FROM jobs WHERE job_uuid = ?").get(outcome.jobUuid);
+      if (job) syncJobToRoles(db, job, outcome);
+    } catch (error) {
+      result.syncErrors.push({ jobUuid: outcome.jobUuid, error: error.message });
+    }
+  }
+  delete result.outcomes;
   return result;
 }
 

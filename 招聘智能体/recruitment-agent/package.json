@@ -28,7 +28,8 @@
     "legacy-screen": "node src/platforms/boss/postprocess_boss_stage2.js",
     "legacy-evaluate": "node src/evaluate/evaluate_job_fit.js",
     "v14:ingest": "node src/v14/cli/ingest_queue.js",
-    "test:v14": "node --test tests/v14_ingest_queue.test.js"
+    "v14:migrate": "node src/v14/cli/migrate_v13.js",
+    "test:v14": "node --test tests/v14_ingest_queue.test.js tests/v14_roles_scores.test.js"
   },
   "engines": {
     "node": ">=22.5.0"
