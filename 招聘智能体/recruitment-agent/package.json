@@ -1,9 +1,13 @@
 {
   "name": "boss-job-agent",
-  "version": "1.3.0",
+  "version": "1.4.2",
   "private": true,
-  "description": "BOSS job collection, fit evaluation, draft-first daily push workflow.",
+  "main": "electron/main.js",
+  "description": "BOSS job collection, fit evaluation, draft-first daily push workflow, desktop client.",
   "scripts": {
+    "electron": "electron --no-sandbox .",
+    "v14:serve": "node src/v14/cli/serve.js",
+    "v14:seed-demo": "node src/v14/cli/seed_demo.js",
     "daily": "node src/main/daily_workflow.js",
     "scheduled": "node src/main/scheduled_entry.js",
     "watchdog": "node src/main/report_watchdog.js",
@@ -26,9 +30,39 @@
     "screen": "node src/ingest/job_ingest.js",
     "evaluate": "node src/evaluate/score_jobs.js",
     "legacy-screen": "node src/platforms/boss/postprocess_boss_stage2.js",
-    "legacy-evaluate": "node src/evaluate/evaluate_job_fit.js"
+    "legacy-evaluate": "node src/evaluate/evaluate_job_fit.js",
+    "v14:ingest": "node src/v14/cli/ingest_queue.js",
+    "v14:migrate": "node src/v14/cli/migrate_v13.js",
+    "test:v14": "node --test tests/v14_ingest_queue.test.js tests/v14_roles_scores.test.js tests/v14_scheduler_tasks.test.js tests/v14_runtime.test.js tests/v14_services.test.js tests/v14_api.test.js",
+    "build:win": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.aaron.localjobagent",
+    "productName": "招聘智能体",
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "ui/**/*",
+      "config/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   },
   "engines": {
-    "node": ">=22.4.0"
+    "node": ">=22.5.0"
+  },
+  "allowScripts": {
+    "electron@28.3.3": true
   }
 }

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>招聘智能体 v1.4</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <strong>招聘智能体</strong>
+      <span class="badge">v1.4 客户端</span>
+    </div>
+    <div class="top-status">
+      <span id="healthBadge" class="pill">连接中…</span>
+      <button id="btnRefresh" class="ghost">刷新</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="dashboard" class="active">首页</button>
+    <button data-tab="roles">角色</button>
+    <button data-tab="tasks">任务</button>
+    <button data-tab="jobs">职位库</button>
+    <button data-tab="settings">设置</button>
+    <button data-tab="ai">AI 能力</button>
+    <button data-tab="reports">日报</button>
+  </nav>
+
+  <main>
+    <section id="tab-dashboard" class="tab-panel active">
+      <h1>运行状态</h1>
+      <div id="channelCards" class="channel-grid"></div>
+      <div class="cards" id="dashboardCards"></div>
+      <div class="toolbar">
+        <button id="btnTick" title="按当前时间、空闲和间隔判断是否执行采集/入库/评分/日报">立即执行一次调度</button>
+        <button id="btnPlan" class="ghost" title="跳过定时判断，直接为运行中角色创建一次采集任务；仍会校验 1 小时间隔">手动生成采集任务</button>
+        <button id="btnLoginStatus" class="ghost" title="读取最近一次登录检查记录">刷新登录状态</button>
+      </div>
+      <p class="hint">“立即执行一次调度”= 让程序按当前时间/空闲策略判断该做什么；“手动生成采集任务”= 不等待定时，直接创建一次采集任务。</p>
+      <pre id="dashboardLog" class="log"></pre>
+    </section>
+
+    <section id="tab-roles" class="tab-panel">
+      <div class="section-head">
+        <h1>角色</h1>
+        <span class="hint">最多 3 个活跃角色；首次启动后锁定；渠道在确认时选择</span>
+      </div>
+      <div class="split">
+        <div class="panel">
+          <h2>新建角色</h2>
+          <label>昵称<input id="roleNickname" placeholder="例如：实施顾问-A"></label>
+          <label>导入简历 MD<input id="resumeFile" type="file" accept=".md,.markdown,.txt"></label>
+          <div id="resumeStatus" class="hint">未选择简历；也可以直接粘贴到下方</div>
+          <label>简历/画像<textarea id="roleProfile" rows="6" placeholder="粘贴简历或画像；导入 MD 后会自动填入"></textarea></label>
+          <label>目标岗位<input id="roleTargets" placeholder="实施顾问, 交付专员"></label>
+          <label>关键词（逗号分隔）<input id="roleKeywords" placeholder="实施顾问, 交付专员"></label>
+          <button id="btnCreateRole">创建角色</button>
+          <p class="hint">创建时不选渠道；确认角色时再勾选 BOSS/猎聘。</p>
+        </div>
+        <div class="panel">
+          <h2>角色列表</h2>
+          <div id="roleList" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-tasks" class="tab-panel">
+      <div class="section-head">
+        <h1>任务</h1>
+        <button id="btnTick2">执行一次调度</button>
+      </div>
+      <div id="taskSummary" class="cards"></div>
+      <div class="panel">
+        <h2>任务列表</h2>
+        <div id="taskList" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2>采集事件</h2>
+        <div id="eventList" class="list"></div>
+      </div>
+    </section>
+
+    <section id="tab-jobs" class="tab-panel">
+      <div class="section-head">
+        <h1>职位库</h1>
+        <div class="toolbar">
+          <select id="jobRoleSelect"></select>
+          <button id="btnExport">导出 Excel</button>
+        </div>
+      </div>
+      <div id="jobList" class="list"></div>
+    </section>
+
+    <section id="tab-settings" class="tab-panel">
+      <h1>设置</h1>
+      <form id="settingsForm" class="panel form-grid">
+        <label>采集日
+          <select id="setDays">
+            <option value="all">全天</option>
+            <option value="weekdays">工作日</option>
+          </select>
+        </label>
+        <label>采集开始<input id="setStart" type="time"></label>
+        <label>采集结束<input id="setEnd" type="time"></label>
+        <label>最低次数<input id="setMinRuns" type="number" min="1"></label>
+        <label>最小间隔（小时）<input id="setInterval" type="number" min="1" step="0.5"></label>
+        <label>日报时间<input id="setReportTime" type="time"></label>
+        <label>空闲分钟<input id="setIdle" type="number" min="1"></label>
+        <label>CPU 上限 %<input id="setCpu" type="number" min="1"></label>
+        <label>电量下限 %<input id="setBattery" type="number" min="1"></label>
+        <label>录入时再采集
+          <select id="setCollectAtIngest"><option value="false">否</option><option value="true">是</option></select>
+        </label>
+        <label>飞书 webhook<input id="setFeishu" placeholder="https://open.feishu.cn/..."></label>
+        <div class="form-actions"><button type="submit">保存设置</button></div>
+      </form>
+      <pre id="settingsLog" class="log"></pre>
+    </section>
+
+    <section id="tab-ai" class="tab-panel">
+      <h1>AI 能力</h1>
+      <div class="split">
+        <div class="panel">
+          <h2>添加供应商</h2>
+          <label>名称<input id="aiName" placeholder="主模型"></label>
+          <label>类型
+            <select id="aiType"><option value="openai">OpenAI 兼容</option><option value="codex">Codex 本地命令</option></select>
+          </label>
+          <label>Base URL<input id="aiBase" placeholder="https://api.openai.com/v1"></label>
+          <label>模型<input id="aiModel" placeholder="gpt-4o-mini"></label>
+          <label>API Key<input id="aiKey" type="password" placeholder="sk-..."></label>
+          <label>排序<input id="aiOrder" type="number" value="100"></label>
+          <button id="btnSaveAi">保存</button>
+        </div>
+        <div class="panel">
+          <h2>供应商列表</h2>
+          <div id="aiList" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-reports" class="tab-panel">
+      <h1>日报</h1>
+      <div class="toolbar">
+        <select id="reportRoleSelect"></select>
+        <button id="btnBuildReport">生成日报</button>
+      </div>
+      <div id="reportList" class="list"></div>
+    </section>
+  </main>
+
+  <dialog id="confirmDialog">
+    <form method="dialog" class="panel dialog-panel">
+      <h2>确认角色与渠道</h2>
+      <p class="hint">确认后角色进入待启动；首次启动后不可修改。未勾选的渠道不会执行。</p>
+      <div class="checks">
+        <label><input id="confirmBoss" type="checkbox" value="BOSS"> BOSS</label>
+        <label><input id="confirmLiepin" type="checkbox" value="猎聘"> 猎聘</label>
+      </div>
+      <div class="toolbar">
+        <button type="button" id="btnConfirmRole">确认</button>
+        <button type="button" class="ghost" id="btnCancelConfirm">取消</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>

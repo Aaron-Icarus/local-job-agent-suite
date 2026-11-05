@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-job-agent/schema/resume.schema.json",
+  "title": "候选人简历（Markdown 导入）",
+  "type": "object",
+  "required": ["schema_version", "raw_md", "content_hash"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "name": { "type": "string", "description": "姓名；从一级标题提取，可空" },
+    "target_roles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "目标岗位，从“目标岗位/求职意向”段落提取"
+    },
+    "skills": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "技能/专业能力"
+    },
+    "experience_summary": { "type": "string" },
+    "education": { "type": "string" },
+    "summary": { "type": "string" },
+    "sections": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "按 Markdown 标题切分的原始段落"
+    },
+    "raw_md": { "type": "string", "description": "原始 Markdown，完整保留" },
+    "content_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  },
+  "additionalProperties": true
+}
