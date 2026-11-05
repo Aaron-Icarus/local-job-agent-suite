@@ -1,13 +1,27 @@
 # 本地招聘信息智能体与飞书消息转发平台
 
-> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.3.0（2026-10-28）。
+> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.4.0（2026-11-06）。
 >
-> v1.4 客户端方案（开发中）：
+> v1.4 客户端方案：
 > [需求说明](docs/requirements/v1.4_客户端化与多角色_需求说明.md) ·
 > [PRD v3.0](docs/prd/招聘信息智能体_客户端_PRD_v3.0.md) ·
 > [执行计划](docs/plans/v1.4_客户端化_执行计划.md)
 >
 > v1.4 新数据层使用 `node:sqlite`，要求 Node.js >= 22.5.0；v1.3 旧 CLI 仍兼容原环境。
+
+## v1.4 客户端（开发完成，MVP）
+
+```powershell
+cd 招聘智能体\recruitment-agent
+npm install                 # 首次安装 Electron 依赖
+npm run v14:serve           # 只启动本地 API + 页面
+npm run electron            # 启动桌面客户端（托盘）
+```
+
+- 数据默认在 `data/v1.4/jobs.db`，可用 `V14_DB_PATH` 覆盖；
+- 页面：首页、角色、任务、职位库、设置、AI 能力、日报；
+- 采集/入库队列、多角色评分、调度、登录检查、飞书日报、Excel 导出已接入新链路；
+- 旧 v1.3 CLI 保留，不自动迁移；需要时运行 `npm run v14:migrate`。
 
 这是一个本地运行的求职信息自动化项目，用来把“人工反复刷招聘渠道、筛岗位、整理日报、生成打招呼话术”这条链路尽量自动化。
 

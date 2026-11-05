@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS role_jobs (
   job_updated_at TEXT,
   score_id INTEGER,
   score REAL,
+  tier TEXT NOT NULL DEFAULT '',
   score_time TEXT,
   score_explanation TEXT NOT NULL DEFAULT '',
   score_reasons_json TEXT NOT NULL DEFAULT '[]',
@@ -176,3 +177,143 @@ CREATE TABLE IF NOT EXISTS role_events (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_role_events_role ON role_events(role_uuid, created_at);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 50,
+  status TEXT NOT NULL DEFAULT 'queued',
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  progress_json TEXT NOT NULL DEFAULT '{}',
+  checkpoint_json TEXT NOT NULL DEFAULT '{}',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_heartbeat_at TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  next_retry_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, priority, created_at);
+
+CREATE TABLE IF NOT EXISTS task_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  detail_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(task_id) REFERENCES tasks(id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, created_at);
+
+CREATE TABLE IF NOT EXISTS collection_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  executed INTEGER NOT NULL DEFAULT 0,
+  success_subtasks INTEGER NOT NULL DEFAULT 0,
+  failed_subtasks INTEGER NOT NULL DEFAULT 0,
+  force_reason TEXT NOT NULL DEFAULT '',
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_collection_events_date ON collection_events(event_date, created_at);
+
+CREATE TABLE IF NOT EXISTS collection_subtasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  role_uuid TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  keyword_stats_json TEXT NOT NULL DEFAULT '[]',
+  stop_reason TEXT NOT NULL DEFAULT '',
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(event_id) REFERENCES collection_events(id)
+);
+CREATE INDEX IF NOT EXISTS idx_collection_subtasks_event ON collection_subtasks(event_id, status);
+
+CREATE TABLE IF NOT EXISTS keyword_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subtask_id INTEGER NOT NULL,
+  keyword TEXT NOT NULL,
+  channel TEXT NOT NULL DEFAULT '',
+  priority INTEGER NOT NULL DEFAULT 50,
+  status TEXT NOT NULL DEFAULT 'queued',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  seen INTEGER NOT NULL DEFAULT 0,
+  duplicates INTEGER NOT NULL DEFAULT 0,
+  new_count INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  stop_reason TEXT NOT NULL DEFAULT '',
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(subtask_id) REFERENCES collection_subtasks(id)
+);
+CREATE INDEX IF NOT EXISTS idx_keyword_tasks_subtask ON keyword_tasks(subtask_id, status);
+
+CREATE TABLE IF NOT EXISTS ai_providers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'openai',
+  base_url TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  command TEXT NOT NULL DEFAULT '',
+  key_cipher TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 100,
+  last_test_at TEXT,
+  last_status TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_date TEXT NOT NULL,
+  role_uuid TEXT NOT NULL,
+  channel TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft',
+  content TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(report_date, role_uuid);
+
+CREATE TABLE IF NOT EXISTS login_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL,
+  status TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_login_checks_platform ON login_checks(platform, checked_at);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  role_uuid TEXT NOT NULL DEFAULT '',
+  channels_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  sent_at TEXT,
+  error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status, created_at);
+
+

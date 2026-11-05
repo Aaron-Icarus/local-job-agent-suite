@@ -33,10 +33,10 @@ function insertRoleJob(db, roleUuid, job, options = {}) {
   db.prepare(
     `INSERT INTO role_jobs(
       role_uuid, job_uuid, job_display_id, job_status, duplicate_status, status_updated_at,
-      job_updated_at, score_id, score, score_time, score_explanation, score_reasons_json,
+      job_updated_at, score_id, score, tier, score_time, score_explanation, score_reasons_json,
       score_risks_json, note, greeting_status, score_version, candidate_version,
       needs_score, skip_reason, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, '', '[]', '[]', '', '', '', '', ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, '', NULL, '', '[]', '[]', '', '', '', '', ?, ?, ?, ?)
     ON CONFLICT(role_uuid, job_uuid) DO NOTHING`
   ).run(
     roleUuid,
@@ -210,7 +210,7 @@ function saveScore(db, roleUuid, jobUuid, score = {}) {
     const scoreId = existing && existing.score_id ? existing.score_id : allocateScoreId(db, roleUuid);
     db.prepare(
       `UPDATE role_jobs SET
-        score_id = ?, score = ?, score_time = ?, score_explanation = ?,
+        score_id = ?, score = ?, tier = ?, score_time = ?, score_explanation = ?,
         score_reasons_json = ?, score_risks_json = ?, note = ?, greeting_status = ?,
         score_version = ?, candidate_version = ?, needs_score = 0, skip_reason = '',
         job_status = ?, duplicate_status = ?, status_updated_at = ?, job_updated_at = ?, updated_at = ?
@@ -218,6 +218,7 @@ function saveScore(db, roleUuid, jobUuid, score = {}) {
     ).run(
       scoreId,
       score.score == null ? null : Number(score.score),
+      String(score.tier || ""),
       now,
       String(score.explanation || ""),
       JSON.stringify(score.reasons || []),
