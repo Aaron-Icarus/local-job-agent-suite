@@ -5,7 +5,8 @@
 > v1.4 客户端方案：
 > [需求说明](docs/requirements/v1.4_客户端化与多角色_需求说明.md) ·
 > [PRD v3.0](docs/prd/招聘信息智能体_客户端_PRD_v3.0.md) ·
-> [执行计划](docs/plans/v1.4_客户端化_执行计划.md)
+> [执行计划](docs/plans/v1.4_客户端化_执行计划.md) ·
+> [v1.4.2 验证记录](docs/v1.4.2_验证记录.md)
 >
 > v1.4 新数据层使用 `node:sqlite`，要求 Node.js >= 22.5.0；v1.3 旧 CLI 仍兼容原环境。
 > Electron 使用 28.3.3，`npm run electron` 已带 `--no-sandbox`（本机 Windows 兼容）。
