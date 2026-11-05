@@ -6,9 +6,15 @@ const { runAiTask } = require("../core/ai_router");
 const rootDir = path.resolve(__dirname, "..", "..");
 const strategyPath = path.join(rootDir, "config", "search_strategy.json");
 const outputsDir = path.join(rootDir, "outputs");
+const LEVEL_MATCH_SCORE = { 岗位信息: 90, 经历关键词: 72, 宽泛词: 50 };
 
 function loadStaticStrategy() {
-  return JSON.parse(fs.readFileSync(strategyPath, "utf8"));
+  const strategy = JSON.parse(fs.readFileSync(strategyPath, "utf8"));
+  strategy.levels = (strategy.levels || []).map((level) => ({
+    ...level,
+    match_score: Number(level.match_score || LEVEL_MATCH_SCORE[level.type] || 55),
+  }));
+  return strategy;
 }
 
 function parseKeywordStrategy(text, fallback) {
@@ -17,6 +23,7 @@ function parseKeywordStrategy(text, fallback) {
     const levels = (parsed.levels || []).map((level) => ({
       type: String(level.type || "AI生成关键词").slice(0, 30),
       description: String(level.description || "根据候选人画像和目标岗位生成").slice(0, 120),
+      match_score: Math.max(0, Math.min(100, Number(level.match_score || LEVEL_MATCH_SCORE[level.type] || 55))),
       keywords: [...new Set((level.keywords || []).map((item) => String(item).trim()).filter((item) => item && item.length <= 40))].slice(0, 20),
     })).filter((level) => level.keywords.length);
     return levels.length ? { ...fallback, levels } : fallback;
@@ -93,7 +100,7 @@ function loadHistoricalSearchInsights() {
     }
   }
 
-  const evaluatedFiles = listRecentOutputFiles(/^(boss|liepin)_.*fit_evaluated_.*\.json$/, 40);
+  const evaluatedFiles = listRecentOutputFiles(/^(boss|liepin)_.*(?:fit_evaluated|stage3_scored)_.*\.json$/, 40);
   for (const file of evaluatedFiles) {
     try {
       const platform = file.name.startsWith("boss_") ? "boss" : "liepin";
@@ -156,7 +163,7 @@ async function resolveSearchStrategy() {
   const ai = await runAiTask({
     purpose: "search_keywords",
     options: { max_output_tokens: 1400 },
-    instructions: "根据候选人画像、目标城市、现有搜索策略和历史关键词效果，优化招聘网站搜索关键词。只返回 JSON：{\"levels\":[{\"type\":\"岗位信息|经历关键词|宽泛词\",\"description\":\"...\",\"keywords\":[\"...\"]}]}。保留历史上能产出高匹配岗位的有效关键词；减少重复首页、空结果、频繁触发平台异常或低转化关键词；补充 AI+项目、AI+交付、AI+产品、智能体/Agent/大模型+项目管理 等职责组合词；避免无关、过长、招聘网站难以检索的词；不要虚构候选人经历。",
+    instructions: "根据候选人画像、目标城市、现有搜索策略和历史关键词效果，优化招聘网站搜索关键词。只返回 JSON：{\"levels\":[{\"type\":\"岗位信息|经历关键词|宽泛词\",\"description\":\"...\",\"match_score\":0-100,\"keywords\":[\"...\"]}]}。match_score 表示该组关键词与候选人目标的匹配程度（0-100），只用于后续排序，不要夸大。保留历史上能产出高匹配岗位的有效关键词；减少重复首页、空结果、频繁触发平台异常或低转化关键词；补充 AI+项目、AI+交付、AI+产品、智能体/Agent/大模型+项目管理 等职责组合词；避免无关、过长、招聘网站难以检索的词；不要虚构候选人经历。",
     input: { candidate, current_strategy: fallback, historical_search_insights: loadHistoricalSearchInsights() },
   });
   if (!ai.ok) return { strategy: fallback, ai: { used: false, fallback: "static", reason: ai.reason || "AI 未返回结果" } };

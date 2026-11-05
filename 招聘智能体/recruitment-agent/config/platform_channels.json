@@ -9,7 +9,7 @@
     "liepin": {
       "label": "猎聘",
       "enabled": false,
-      "detail_capture": false
+      "detail_capture": true
     }
   }
 }

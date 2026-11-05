@@ -232,9 +232,14 @@ function runWorkflow(decision) {
     ...process.env,
     ENABLE_COLLECT: collect ? "true" : "false",
     ENABLE_LOGIN_CHECK: process.env.ENABLE_LOGIN_CHECK || "true",
+    // v1.3 阶段名：采集 → 入库（ENABLE_INGEST）→ 评分（ENABLE_SCORE）→ 推送。
+    // 旧名 ENABLE_SCREEN / ENABLE_EVALUATE 继续下传，兼容已有 .env 与旧脚本。
+    ENABLE_INGEST: report ? "true" : "false",
+    ENABLE_SCORE: report ? "true" : "false",
     ENABLE_SCREEN: report ? "true" : "false",
     ENABLE_EVALUATE: report ? "true" : "false",
     ENABLE_PUSH: report ? "true" : "false",
+    COLLECT_TARGET_NEW: process.env.COLLECT_TARGET_NEW || process.env.SCHEDULE_MAX_TOTAL || process.env.MAX_TOTAL || "30",
     // 采集平台白名单：调度器已按渠道独立判断出"本轮真正待采"的平台，必须下传给工作流。
     // 历史缺陷（2026-09-30）：该清单没有下传，工作流是"只要平台启用就采集"，于是
     // pendingPlatforms 只有 liepin 时 BOSS 仍被每轮重采，一天被采集 9 轮，触发平台风控。

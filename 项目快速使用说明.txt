@@ -1,6 +1,7 @@
 找工作双项目：快速使用说明（脱敏构建包）
 
 版本更新摘要
+- 2026-10-28 v1.3.0（采集 → 入库/编号 → 评分）：先存岗位事实再评分；入库必须有平台唯一 ID + 完整 JD，拿不到进待补、不占编号；编号在写库时按渠道分配；同渠道精确重复不新增，跨渠道同岗照常入库/占号但标记“重复于更早编号”；关键词按历史新增/久未使用/重复/失败滚动排序并分配目标与页数，BOSS/猎聘支持分页；新增每日“关键词 × 渠道”采集账本；评分改为候选人事实卡 + 硬条件 + 软评分，AI 只做 ±8 分内微调且不能推翻硬条件；`score_jobs --from-store` 可只重算不重采。详见 CHANGELOG.md 与 docs/v1.3_改造说明.md。
 - 2026-09-14 v0.4.3（分享包修补）：修复 BOSS 采集长期 0 条（BOSS 页面反调试 + CDP Runtime.enable 导致 Runtime.evaluate 被挂住），BOSS 采集器与 cdp_common.openWsForTab() 均已移除 Runtime.enable；BOSS 详情 JD 改为「详情页 URL 校验 + 按 encryptJobId 直连详情页 + 快照提取」，采集状态仍写既有的 ok（自定义新状态会被下游当成"待补采"，导致日报显示"记录 30 条，可关注 0 条"）；猎聘改为直接导航关键词搜索页 /zhaopin/?dqs=<城市码>&key=<关键词>，并修复"停在搜索页被误判未登录而整轮跳过猎聘"；AI 调用提取答案时跳过 reasoning 项并新增 AI_OPENAI_REASONING_EFFORT；.env.example 默认采集总超时 900000 改为 1800000，新增 LIEPIN_CITY_CODE=020。自测：自动化测试\run_offline_smoke.ps1 全 7 步通过；2026-09-14 现场整轮自测 BOSS 采集 50 条且 50/50 判定为 ok，BOSS 日报草稿正文变为"记录 50 条，可关注 45 条，展示 8 条"（修复前是"记录 30 条，可关注 0 条，展示 0 条"）。
 - 2026-09-10 v0.4.2：顶层目录已按真实职责改名为 招聘智能体、消息平台，并同步代码、快捷启动、UI、测试、PRD 和 SKILL 路径。项目移动或改名后必须重新注册 Windows 任务。SKILL 已增加必填/按需配置清单和首次登录必须说明的当前定时规则。
 - 2026-09-09 v0.3.13：快捷启动\随项目必须的安装包\ 改为“目录结构 + 安装说明”交付。node、corepack、pnpm-store、message-platform-vendor、_downloads 每个子目录都新增 INSTALL.md，说明下载来源、命令、预期文件和安装/清理方式；本地实际 Node、pnpm、飞书 SDK vendor 和 zip 下载缓存已清理，只保留说明文档，GitHub PR 可保留结构但不上传大体积二进制。
@@ -95,10 +96,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 2. 配置候选人资料和招聘策略
    - 在 招聘智能体\recruitment-agent 中复制 .env.example 为 .env。
    - 把 config\candidate_profiles\sample_candidate.md 替换为自己的真实、可验证经历和求职目标；确认 config\candidate_profiles\current.json 指向该文件。
-   - 按需求调整 config\search_strategy.json 与 config\profile_rules.json。
-   - 先在 config\platform_channels.json 或本地控制台开启 BOSS/猎聘所需平台。平台 enabled=false 会关闭登录、采集、筛选、评分、状态刷新和日报整条链路；旧 ENABLE_BOSS/ENABLE_LIEPIN 默认不覆盖这个文件。
-   - BOSS 的 detail_capture 默认 true，会打开岗位详情补齐 JD；这不是平台开关，也不代表是否已登录。
-   - 首次建议只开启草稿流程：ENABLE_COLLECT=true，ENABLE_PUSH=true，SEND_MODE=draft。不要先设为 send。
+   - 按需求调整 config\search_strategy.json、config\profile_rules.json、config\candidate_facts.json 和 config\scoring_rules.json。v1.3 的评分由“候选人事实卡 + 评分规则”驱动。
+   - 先在 config\platform_channels.json 或本地控制台开启 BOSS/猎聘所需平台。平台 enabled=false 会关闭登录、采集、入库、评分、状态刷新和日报整条链路；旧 ENABLE_BOSS/ENABLE_LIEPIN 默认不覆盖这个文件。
+   - v1.3 要求入库必须有完整详情：BOSS 的 detail_capture 默认 true，猎聘在 v1.3 也默认 true；关闭后岗位只会进待补，不会入库/编号。
+   - 首次建议只开启草稿流程：ENABLE_COLLECT=true、ENABLE_INGEST=true、ENABLE_SCORE=true、ENABLE_PUSH=true、SEND_MODE=draft。不要先设为 send。
 
 3. 登录招聘网站
    - 在 recruitment-agent 目录运行一次可见登录命令，完成 BOSS 或猎聘的扫码、验证码和安全验证。

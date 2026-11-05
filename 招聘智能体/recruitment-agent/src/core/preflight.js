@@ -81,6 +81,45 @@ function sendConfigurationIssues() {
   return issues;
 }
 
+function scoringConfigIssues() {
+  const issues = [];
+  const scoringPath = path.join(rootDir, "config", "scoring_rules.json");
+  const factsPath = path.join(rootDir, "config", "candidate_facts.json");
+  if (!fs.existsSync(scoringPath)) {
+    issues.push("未找到评分规则 config/scoring_rules.json；v1.3 的硬条件/软评分需要它。");
+  } else {
+    try {
+      const rules = JSON.parse(fs.readFileSync(scoringPath, "utf8"));
+      const weights = rules.weights || {};
+      const sum = Object.values(weights).reduce((value, item) => value + (Number(item) || 0), 0);
+      if (Math.abs(sum - 1) > 0.001) issues.push(`scoring_rules.json 的权重合计应为 1，当前为 ${sum.toFixed(3)}。`);
+      for (const [name, profile] of Object.entries(rules.weight_profiles || {})) {
+        const profileSum = Object.values(profile || {}).reduce((value, item) => value + (Number(item) || 0), 0);
+        if (Math.abs(profileSum - 1) > 0.001) issues.push(`scoring_rules.json 的 weight_profiles.${name} 权重合计应为 1，当前为 ${profileSum.toFixed(3)}。`);
+      }
+      if (!rules.keywords || !Array.isArray(rules.keywords.role)) issues.push("scoring_rules.json 缺少 keywords.role。");
+    } catch (error) {
+      issues.push(`评分规则无法读取：${error.message}`);
+    }
+  }
+  if (fs.existsSync(factsPath)) {
+    try {
+      JSON.parse(fs.readFileSync(factsPath, "utf8"));
+    } catch (error) {
+      issues.push(`候选人事实卡无法读取：${error.message}`);
+    }
+  }
+  try {
+    const profileRules = JSON.parse(fs.readFileSync(path.join(rootDir, "config", "profile_rules.json"), "utf8"));
+    if (!Array.isArray(profileRules.targetRoles) || !profileRules.targetRoles.length) {
+      issues.push("profile_rules.json 缺少 targetRoles。");
+    }
+  } catch (error) {
+    issues.push(`岗位筛选规则无法读取：${error.message}`);
+  }
+  return issues;
+}
+
 function validatePreflight() {
   const issues = [];
   const warnings = [];
@@ -88,8 +127,8 @@ function validatePreflight() {
   const envPath = configuredEnvPath();
   if (!fs.existsSync(envPath)) issues.push(`未找到配置文件：${envPath}。请从 .env.example 复制为 .env 后填写配置。`);
   const collectEnabled = envBool("ENABLE_COLLECT", false);
-  const screenEnabled = envBool("ENABLE_SCREEN", false);
-  const evaluateEnabled = envBool("ENABLE_EVALUATE", false);
+  const ingestEnabled = envBool("ENABLE_INGEST", envBool("ENABLE_SCREEN", false));
+  const scoreEnabled = envBool("ENABLE_SCORE", envBool("ENABLE_EVALUATE", false));
   const pushEnabled = envBool("ENABLE_PUSH", false);
   let channelResult = null;
   let scheduleResult = null;
@@ -105,17 +144,21 @@ function validatePreflight() {
   }
   const bossEnabled = channelResult ? platformEnabled(channelResult.config, "boss") : false;
   const liepinEnabled = channelResult ? platformEnabled(channelResult.config, "liepin") : false;
-  if (!collectEnabled && !screenEnabled && !evaluateEnabled && !pushEnabled) {
-    issues.push("采集、筛选、评价和报告均处于关闭状态；请按使用目的至少启用一个阶段。首次使用建议先启用草稿流程，不要直接开启真实发送。");
+  if (!collectEnabled && !ingestEnabled && !scoreEnabled && !pushEnabled) {
+    issues.push("采集、入库、评分和报告均处于关闭状态；请按使用目的至少启用一个阶段。首次使用建议先启用草稿流程，不要直接开启真实发送。");
   }
-  if ((collectEnabled || screenEnabled || evaluateEnabled || pushEnabled) && !bossEnabled && !liepinEnabled) {
+  if ((collectEnabled || ingestEnabled || scoreEnabled || pushEnabled) && !bossEnabled && !liepinEnabled) {
     issues.push("BOSS 和猎聘整条任务流都已关闭。请至少开启一个平台，或关闭本次所有处理阶段。 ");
   }
   const profileIssue = candidateProfileIssue();
   if (profileIssue) issues.push(profileIssue);
   issues.push(...profileRulesIssues());
+  issues.push(...scoringConfigIssues());
   if (collectEnabled && bossEnabled && channelResult?.config.platforms.boss.detail_capture === false) {
-    warnings.push("BOSS 当前使用非侵入式列表模式，不会自动点击岗位详情。列表岗位仍可进入候选，但会标记为“投递前需人工确认完整职责”。这与是否已经登录无关。");
+    warnings.push("BOSS 当前 detail_capture=false：v1.3 要求入库必须有完整详情，关闭后列表岗位会进入待补，不会入库/编号。");
+  }
+  if (collectEnabled && liepinEnabled && channelResult?.config.platforms.liepin.detail_capture === false) {
+    warnings.push("猎聘当前 detail_capture=false：v1.3 要求入库必须有完整详情，关闭后猎聘岗位会进入待补，不会入库/编号。");
   }
   const sendMode = String(process.env.PREFLIGHT_SEND_MODE || process.env.SEND_MODE || "draft").toLowerCase();
   if (!["draft", "send"].includes(sendMode)) issues.push(`发送模式 ${sendMode || "(空)"} 无效；只能填写 draft 或 send。`);
@@ -126,6 +169,8 @@ function validatePreflight() {
     warnings,
     envPath,
     collectEnabled,
+    ingestEnabled,
+    scoreEnabled,
     bossEnabled,
     liepinEnabled,
     channelConfigPath: channelResult?.filePath || "",

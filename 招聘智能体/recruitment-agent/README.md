@@ -4,6 +4,7 @@
 
 ## 版本更新说明
 
+- **2026-10-28 v1.3（采集 → 入库/编号 → 评分）**：流程改为“采集 → 去重入库/编号 → 评分 → 日报”。新增 `src/ingest/job_ingest.js`（唯一 ID + 完整 JD 才入库，写库时分配编号，跨渠道重复保留编号并标记）、`src/evaluate/score_job_facts.js`（候选人事实卡 + 硬条件 + 软评分）、`src/evaluate/ai_score_review.js`（AI 只对高分且硬条件通过的岗位做 ±8 分微调，缓存，不能推翻硬条件）、`src/strategy/keyword_planner.js`（历史新增/久未使用滚动排序与每词目标/页数）、`src/store/collection_ledger.js`（关键词×渠道账本）。BOSS 支持 `page` 翻页、详情直连 `encryptJobId`；猎聘支持页码参数并检测翻页无效。`daily_workflow` 改为 collect → ingest → score → push；`score_jobs.js --from-store` 可只重算不重采。完整说明见 `docs/v1.3_改造说明.md`。
 - **2026-10-02 v0.4.6（修复"字段缺失被当成 0"导致的整批误杀 + 采集频率失控）**：`Number("") === 0` 且 `Number.isFinite(0)` 为真，导致"薪资没采到"被当成"薪资 0K"，筛选判"最高低于20K/薪资整体偏低"、评估 `salaryScore=10` 直接触发"暂不考虑"，整批岗位被砍成"可关注 0 条"。已统一改为"空串/纯空白/null/非数字 → 未知"，薪资未知按中性 55 分并提示人工确认；同时把 `pendingPlatforms` 通过 `COLLECT_PLATFORMS` 下传给采集工作流（修掉"已成功的平台被每整点重采"）、登录检查要求 API 给出登录态强证据（带 `salaryDesc`）才可推翻 DOM 的未登录信号、新增采集质量闸门（薪资覆盖率 < 20% 判疑似风控降级并告警）。完整清单与自测结论见分享包根目录 `README.md` 的 v0.4.6。
 - **2026-09-29 v0.4.5（后台采集 + 标签隔离 + 按渠道记录）**：移除采集流程 6 处 `/json/activate`，采集全程最小化后台运行、不再弹前台；新增 `data/collect_tabs.json` 做标签隔离（采集只用自己创建的标签，绝不复用用户手动标签）；采集结束自动关闭采集专属标签；`daily_workflow`/`scheduled_entry` 改为按渠道独立记录与调度采集成功。端到端自测通过（BOSS 50 条全 ok、猎聘 20 条、`success`；专属标签创建→复用→自动关闭均验证）。
 - **2026-09-28 v0.4.4（Bug 修复）**：猎聘采集加 `extractJobId(card.href)` 过滤无职位链接的噪声行；`ensure_chrome_cdp.ps1` 清理段加 try/catch（受限环境不再阻断启动）；`schedule_policy.json` 补 `partial_success`；提示词链路打通（`agent_prompt` 真正传给下游 AI）。完整修复清单见分享包根目录 `README.md` 的 v0.4.4。
@@ -64,19 +65,20 @@ recruitment-agent/
   chrome-cdp-profile/                  # 项目专用 Chrome 登录态
 ```
 
-## 已内置流程
+## 已内置流程（v1.3）
 
-1. `src/platforms/boss/boss_batch_collect.js`：通过已登录 Chrome CDP 读取 BOSS 搜索列表，并尽量监听详情接口。
-2. `src/platforms/liepin/liepin_batch_collect.js`：通过同一个项目专用 Chrome CDP profile 读取猎聘搜索页列表卡片，写入猎聘自己的原始表；详情补采默认关闭。
-3. `src/platforms/boss/postprocess_boss_stage2.js` / `src/platforms/liepin/postprocess_liepin_stage2.js`：分别补充中文表头、去重键、活跃日期、薪资和初筛字段。
-4. `src/evaluate/evaluate_job_fit.js`：基于你的简历画像和目标岗位规则追加适配度评价字段；BOSS 和猎聘分别输出评价文件。
-5. `src/push/job_push_draft_and_send.js`：合并多个平台的评价结果，并默认按平台拆分成多条每日推送草稿；只有 `SEND_MODE=send` 或 `--send` 时才发送。
-6. `src/store/job_store_update.js`：维护长期岗位库，记录岗位开放状态、关闭时间、推送历史、在聊状态和数据变动时间。
-7. `src/greeting/greeting_recommender.js`：根据单个岗位 JD 和当前推荐人画像生成招聘平台打招呼话术；AI 模式优先使用最近 3 年、其次最近 5 年的可验证经历。
-8. `src/greeting/candidate_profile.js` / `build_candidate_profile.js`：维护当前推荐人，并可从简历文字和求职目标生成候选人画像 Markdown。
-9. `src/greeting/job_greeting_agent.js`：供飞书消息转发或其他组件调用；支持岗位编号、本次岗位 JSON、截图 OCR 文字三种输入，统一返回岗位摘要和打招呼话术。
-10. `src/main/daily_workflow.js`：串起完整日常流程。
-11. `src/main/scheduled_entry.js`：判断当前时间段是否需要执行搜索、评价和推送。
+1. `src/strategy/keyword_planner.js`：按历史新增/重复/失败/久未使用给关键词滚动排序，分配每词目标新增与最大页数。
+2. `src/platforms/boss/boss_batch_collect.js`：通过已登录 Chrome CDP 按 `page` 翻页读取 BOSS 列表；详情用 `encryptJobId` 直连，拿不到详情/唯一 ID 的岗位进入待补。
+3. `src/platforms/liepin/liepin_batch_collect.js`：读取猎聘搜索页并按页码参数翻页；详情默认开启，翻页参数无效时自动停止并记录原因。
+4. `src/ingest/job_ingest.js`：只做数据完整性 + 去重入库；写库时分配编号；跨渠道重复照常占编号并标记“重复于更早编号”。
+5. `src/evaluate/score_job_facts.js` + `candidate_facts.js`：读取候选人事实卡与 `scoring_rules.json`，先硬条件、再软评分，输出解释/风险/建议。
+6. `src/evaluate/ai_score_review.js`：可选的 AI 复核；只处理规则高分且硬条件通过的岗位，最多 ±8 分，缓存结果，不推翻硬条件。
+7. `src/evaluate/score_jobs.js`：写入独立评分；`--from-store` 可只重算已入库岗位。
+8. `src/store/collection_ledger.js`：按“关键词 × 渠道”记录看到/重复/新增/失败/页数/停止原因，输出 JSONL + Markdown + JSON。
+9. `src/push/job_push_draft_and_send.js`：只消费已评分记录；重复记录不推荐；内容变化才重推，评分变化不重推。
+10. `src/store/job_store_update.js`：维护长期岗位库、开放状态和快照。
+11. `src/greeting/greeting_recommender.js` / `job_greeting_agent.js`：生成打招呼话术；支持岗位编号、岗位 JSON、OCR 文字。
+12. `src/main/daily_workflow.js`：串起“采集 → 入库 → 评分 → 日报”；`scheduled_entry.js` 决定何时跑。
 
 ## 配置
 
@@ -248,11 +250,20 @@ Windows 计划任务或后台进程可能拿不到交互终端里的 `PATH`。�
 
 AI 调用采用“握手 + 流式 + 长总时限”：`AI_DEFAULT_HANDSHAKE_TIMEOUT_MS`（默认 90000，兼容旧 `AI_DEFAULT_TIMEOUT_MS`）等待模型进程开始产出输出，窗口内无输出才 Kill；收到首个 stdout/stderr 即视为启动成功，改用 `AI_DEFAULT_TOTAL_TIMEOUT_MS`（默认 1800000，即 30 分钟）作为总预算并持续等待。Codex 以 `codex exec --ephemeral --skip-git-repo-check --sandbox read-only --json` 调用，JSONL 事件流实时写入 `logs/ai_runtime/<purpose>_<时间>.log`（含握手、进度与最终结果，空闲每 30 秒记录心跳），最终答案优先取事件流的 result 事件；OpenAI 兼容 API 兜底同样按长总时限（响应头到达即握手成功）。单步可用 `AI_<用途>_HANDSHAKE_TIMEOUT_MS` / `AI_<用途>_TOTAL_TIMEOUT_MS` 覆盖默认值。
 
-全局配置使用 `AI_DEFAULT_*`；也可用 `AI_GREETING_*`、`AI_PROFILE_*`、`AI_FIT_EVALUATION_*`、`AI_SEARCH_KEYWORDS_*` 覆盖单个步骤。当单步 `MODE=rules/disabled` 时，直接使用规则/静态兜底，不再回退全局 AI；当单步为 `auto/codex_runtime/openai_api` 且模型调用失败时，才会完整回退至默认配置。调用日志不含简历、JD 或提示词；评分、关键词和话术输出都会标记 AI 成功或规则/静态降级。
+全局配置使用 `AI_DEFAULT_*`；也可用 `AI_GREETING_*`、`AI_PROFILE_*`、`AI_SCORE_REVIEW_*`、`AI_SEARCH_KEYWORDS_*` 覆盖单个步骤。当单步 `MODE=rules/disabled` 时，直接使用规则/静态兜底，不再回退全局 AI；当单步为 `auto/codex_runtime/openai_api` 且模型调用失败时，才会完整回退至默认配置。调用日志不含简历、JD 或提示词；评分、关键词和话术输出都会标记 AI 成功或规则/静态降级。
 
-提示词目前是源码内联，不是独立配置文件：画像生成在 `src/greeting/build_candidate_profile.js`，关键词优化在 `src/strategy/search_keyword_generator.js`，评分复核在 `src/evaluate/ai_fit_refiner.js`，打招呼话术在 `src/greeting/greeting_recommender.js`。部署者可以改源码 prompt，但暂未提供面向非开发者的 prompt JSON 或管理界面。
+评分复核（`AI_SCORE_REVIEW_*`）的额外约束：
 
-确定性评分分两层：`config/profile_rules.json` 当前直接驱动城市、低优先区域、薪资和活跃度参数；`src/evaluate/evaluate_job_fit.js` 管理分项权重、岗位/职责识别词和关注等级阈值。`targetRoles`、`preferredTopics`、`avoidTopics` 目前尚未自动驱动评价器，修改它们本身不会改变分数；需要同步改评价器，或后续将这些规则完全外置。建议先在草稿模式验证再调整代码权重。
+- 只选择规则分 >= `AI_SCORE_REVIEW_MIN_SCORE`（默认 50）且硬条件 `pass` 的岗位；
+- 只取分数最高的 `AI_SCORE_REVIEW_MAX_ROWS`（默认 8）条；
+- AI 只返回 `delta`（默认 -8..+8）、理由和风险；程序再次 clamp，并重新计算关注等级；
+- 硬条件 `fail` / `need_confirm` 的岗位不会被 AI 提升；
+- 结果按“岗位 key + 规则版本 + 候选人版本 + 模型”缓存到 `data/ai_score_cache.json`；
+- `AI_SCORE_REVIEW_ENABLED`（默认 `false`）设为 `true` 才开启这一层；`AI_DEFAULT_MODE=disabled` 时不会调用。
+
+提示词目前是源码内联，不是独立配置文件：画像生成在 `src/greeting/build_candidate_profile.js`，关键词优化在 `src/strategy/search_keyword_generator.js`，评分复核在 `src/evaluate/ai_score_review.js`，打招呼话术在 `src/greeting/greeting_recommender.js`。部署者可以改源码 prompt，但暂未提供面向非开发者的 prompt JSON 或管理界面。
+
+确定性评分现在使用 `config/candidate_facts.json`（候选人事实卡，留空时从 `profile_rules.json` 派生）和 `config/scoring_rules.json`（权重、阈值、关键词、硬条件）。`targetRoles`、`preferredTopics`、`avoidTopics` 会实际参与评分；工程岗和项目/产品岗使用不同的 `weight_profiles`。旧版 `evaluate_job_fit.js` / `ai_fit_refiner.js` 仍保留为 legacy，但新流程不再调用。
 
 当前推荐人由 `config/candidate_profiles/current.json` 指向一个 Markdown 画像。构建包内仅保留不含个人信息的 `sample_candidate.md`；使用前请替换为自己的可验证经历、求职目标和约束。AI 关键词会读取画像和现有搜索策略；AI 评分复核会读取岗位文本、画像规则和确定性基线；AI 话术会读取画像和单个岗位文本。日报只会对最终进入推送的岗位生成话术，不会为未推送岗位调用话术 AI。
 

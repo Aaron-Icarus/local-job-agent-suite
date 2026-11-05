@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 function extractDisplayId(text) {
-  const match = String(text || "").toUpperCase().match(/\b([AB]\d{3})\b/);
+  const match = String(text || "").toUpperCase().match(/\b([AB]\d{3,})\b/);
   return match ? match[1] : "";
 }
 

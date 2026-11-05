@@ -5,8 +5,11 @@ const { loadEnv, envBool, envNumber } = require("../core/load_env");
 const { shanghaiDateKey } = require("../core/time_utils");
 const { sendRecruitmentNotification } = require("../push/outbound_sender");
 const { resolveSearchStrategy } = require("../strategy/search_keyword_generator");
+const { planKeywords, loadProfiles, rebuildProfilesFromLedger } = require("../strategy/keyword_planner");
 const { loadChannelConfig, platformEnabled, platformRuntimeEnv } = require("../core/channel_config");
 const { closeCollectTabs } = require("../core/cdp_common");
+const { readLedger, mergeDay, writeDailySummary, writeDailyJson, pruneLedger } = require("../store/collection_ledger");
+const { writeJsonAtomic } = require("../core/atomic_json");
 
 loadEnv();
 
@@ -252,21 +255,66 @@ function requiredOutputPath(parsed, field, label) {
   return filePath;
 }
 
-async function keywordSpecText() {
-  const resolved = await resolveSearchStrategy();
-  const config = resolved.strategy;
+function strategySpecText(strategy) {
   const specs = [];
-  for (const level of config.levels || []) {
+  for (const level of strategy.levels || []) {
     for (const keyword of level.keywords || []) {
       specs.push(`${level.type}::${keyword}`);
     }
   }
-  return {
-    perKeyword: envNumber("PER_KEYWORD", config.defaultPerKeyword || 8),
-    maxTotal: envNumber("MAX_TOTAL", config.defaultMaxTotal || 50),
-    specText: specs.join(","),
-    ai: resolved.ai,
-  };
+  return specs.join(",");
+}
+
+// v1.3：把“匹配度 + 历史新增 + 久未使用 + 重复/失败”滚动排序后，给每个词分配目标新增和最大页数。
+// 这样前几个词不会一次吃满总配额，后面的词也有机会被轮到。
+function buildKeywordPlan(strategy, channels, dateKey) {
+  const profiles = loadProfiles();
+  const channelsPlan = {};
+  for (const platform of channels) {
+    const key = platform === "liepin" ? "liepin" : "boss";
+    const prefix = key.toUpperCase();
+    const totalNew = envNumber(`${prefix}_TARGET_NEW`, envNumber("COLLECT_TARGET_NEW", 30));
+    const perKeywordMax = envNumber(`${prefix}_MAX_NEW_PER_KEYWORD`, envNumber("KEYWORD_MAX_NEW", 8));
+    const maxPages = envNumber(`${prefix}_MAX_PAGES`, envNumber("KEYWORD_MAX_PAGES", 3));
+    const maxQueue = envNumber("KEYWORD_MAX_PER_ROUND", 12);
+    channelsPlan[key] = planKeywords({
+      levels: strategy.levels || [],
+      channel: key,
+      totalNew,
+      perKeywordMax,
+      maxPages,
+      maxQueue,
+      profiles,
+      nowDate: dateKey,
+    });
+  }
+  const filePath = path.join(outputsDir, `keyword_plan_${dateKey.replace(/-/g, "")}_${Date.now()}.json`);
+  writeJsonAtomic(filePath, { date: dateKey, channels: channelsPlan });
+  return { filePath, channelsPlan };
+}
+
+function fileRecordCount(filePath) {
+  try {
+    const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return Array.isArray(payload.records) ? payload.records.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function keywordErrorCount(filePath) {
+  try {
+    const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return (payload.keywordStats || []).filter((item) => item && item.collectionError).length;
+  } catch {
+    return 0;
+  }
+}
+
+function setPlatformStatus(statuses, platform, status) {
+  const rank = { success: 0, partial_success: 1, failed: 2 };
+  const previous = statuses[platform] || "success";
+  if ((rank[status] ?? 0) >= (rank[previous] ?? 0)) statuses[platform] = status;
 }
 
 function platformTimeoutMs(platform, purpose, defaultValue) {
@@ -283,13 +331,20 @@ function platformIdleTimeoutMs(platform, purpose, defaultValue) {
 }
 
 function parseLastJson(stdout) {
-  const matches = stdout.match(/\{[\s\S]*\}/g);
-  if (!matches) return null;
-  try {
-    return JSON.parse(matches[matches.length - 1]);
-  } catch {
-    return null;
+  const text = String(stdout || "").trim();
+  const end = text.lastIndexOf("}");
+  if (end < 0) return null;
+  let start = text.lastIndexOf("{", end);
+  while (start >= 0) {
+    try {
+      const parsed = JSON.parse(text.slice(start, end + 1));
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      // 继续往前找外层的 '{'
+    }
+    start = start > 0 ? text.lastIndexOf("{", start - 1) : -1;
   }
+  return null;
 }
 
 function platformLabel(platform) {
@@ -499,33 +554,40 @@ async function main() {
     boss: channelConfig.platforms.boss,
     liepin: channelConfig.platforms.liepin,
   });
+
   const rawPaths = [];
-  const screenedPaths = [];
-  const evaluatedPaths = [];
-  const partialPlatforms = [];
-  const failedPlatforms = [];
+  const ingestedPaths = [];
+  const scoredPaths = [];
+  const collectResults = [];
   const platformStatuses = {};
-  if (enableBoss && process.env.INPUT_RAW_JSON) rawPaths.push({ platform: "boss", path: assertFreshInput(process.env.INPUT_RAW_JSON, today, "BOSS raw") });
-  if (enableLiepin && process.env.INPUT_LIEPIN_RAW_JSON) rawPaths.push({ platform: "liepin", path: assertFreshInput(process.env.INPUT_LIEPIN_RAW_JSON, today, "猎聘 raw") });
-  if (enableBoss && process.env.INPUT_SCREENED_JSON) screenedPaths.push({ platform: "boss", path: assertFreshInput(process.env.INPUT_SCREENED_JSON, today, "BOSS screened") });
-  if (enableLiepin && process.env.INPUT_LIEPIN_SCREENED_JSON) screenedPaths.push({ platform: "liepin", path: assertFreshInput(process.env.INPUT_LIEPIN_SCREENED_JSON, today, "猎聘 screened") });
-  if (enableBoss && process.env.INPUT_EVALUATED_JSON) evaluatedPaths.push({ platform: "boss", path: assertFreshInput(process.env.INPUT_EVALUATED_JSON, today, "BOSS evaluated") });
-  if (enableLiepin && process.env.INPUT_LIEPIN_EVALUATED_JSON) evaluatedPaths.push({ platform: "liepin", path: assertFreshInput(process.env.INPUT_LIEPIN_EVALUATED_JSON, today, "猎聘 evaluated") });
+  const addPathOnce = (list, platform, filePath) => {
+    if (!filePath || list.some((item) => item.platform === platform)) return;
+    list.push({ platform, path: filePath });
+  };
+
+  if (enableBoss && process.env.INPUT_RAW_JSON) addPathOnce(rawPaths, "boss", assertFreshInput(process.env.INPUT_RAW_JSON, today, "BOSS raw"));
+  if (enableLiepin && process.env.INPUT_LIEPIN_RAW_JSON) addPathOnce(rawPaths, "liepin", assertFreshInput(process.env.INPUT_LIEPIN_RAW_JSON, today, "猎聘 raw"));
+  // 兼容旧变量名：旧的“screened/evaluated”在这个版本分别对应“已入库/已评分”。
+  if (enableBoss && process.env.INPUT_INGESTED_JSON) addPathOnce(ingestedPaths, "boss", assertFreshInput(process.env.INPUT_INGESTED_JSON, today, "BOSS ingested"));
+  if (enableLiepin && process.env.INPUT_LIEPIN_INGESTED_JSON) addPathOnce(ingestedPaths, "liepin", assertFreshInput(process.env.INPUT_LIEPIN_INGESTED_JSON, today, "猎聘 ingested"));
+  if (enableBoss && process.env.INPUT_SCORED_JSON) addPathOnce(scoredPaths, "boss", assertFreshInput(process.env.INPUT_SCORED_JSON, today, "BOSS scored"));
+  if (enableLiepin && process.env.INPUT_LIEPIN_SCORED_JSON) addPathOnce(scoredPaths, "liepin", assertFreshInput(process.env.INPUT_LIEPIN_SCORED_JSON, today, "猎聘 scored"));
 
   const collectEnabled = envBool("ENABLE_COLLECT", true);
-  const screenEnabled = envBool("ENABLE_SCREEN", true);
-  const evaluateEnabled = envBool("ENABLE_EVALUATE", true);
+  const ingestEnabled = envBool("ENABLE_INGEST", envBool("ENABLE_SCREEN", true));
+  const scoreEnabled = envBool("ENABLE_SCORE", envBool("ENABLE_EVALUATE", true));
   const pushEnabled = envBool("ENABLE_PUSH", true);
-  if (!collectEnabled && !screenEnabled && !evaluateEnabled && !pushEnabled) {
-    throw new Error("No workflow stages are enabled. Enable at least one of ENABLE_COLLECT, ENABLE_SCREEN, ENABLE_EVALUATE, or ENABLE_PUSH.");
+  if (!collectEnabled && !ingestEnabled && !scoreEnabled && !pushEnabled) {
+    throw new Error("No workflow stages are enabled. Enable at least one of ENABLE_COLLECT, ENABLE_INGEST, ENABLE_SCORE, or ENABLE_PUSH.");
   }
-  if (!collectEnabled) {
+  if (!collectEnabled && !rawPaths.length && !ingestedPaths.length && !scoredPaths.length) {
     loadLatestDailyRawInputs(rawPaths, { enableBoss, enableLiepin });
-    if (!rawPaths.length && !screenedPaths.length && !evaluatedPaths.length) {
-      throw new Error("No fresh input is available for the requested workflow stages. Run collection first or provide a same-day input file.");
-    }
+  }
+  if (!collectEnabled && !rawPaths.length && !ingestedPaths.length && !scoredPaths.length) {
+    throw new Error("No fresh input is available for the requested workflow stages. Run collection first or provide a same-day input file.");
   }
 
+  let keywordPlan = null;
   if (collectEnabled) {
     const { requested: collectOnly, boss: collectBoss, liepin: collectLiepin } =
       resolveCollectPlatforms(process.env, { boss: enableBoss, liepin: enableLiepin });
@@ -534,8 +596,24 @@ async function main() {
       boss: collectBoss,
       liepin: collectLiepin,
     });
-    const strategy = await keywordSpecText();
-    appendLog("search keyword strategy resolved", strategy.ai);
+    const resolved = await resolveSearchStrategy();
+    const strategy = resolved.strategy;
+    appendLog("search keyword strategy resolved", resolved.ai);
+    const planChannels = [collectBoss ? "boss" : "", collectLiepin ? "liepin" : ""].filter(Boolean);
+    try {
+      keywordPlan = buildKeywordPlan(strategy, planChannels, today);
+      appendLog("keyword plan generated", {
+        path: keywordPlan.filePath,
+        channels: Object.fromEntries(Object.entries(keywordPlan.channelsPlan).map(([key, items]) => [key, items.length])),
+      });
+    } catch (planError) {
+      appendLog("keyword plan failed; fallback to static order", { error: planError.message });
+      keywordPlan = null;
+    }
+    const perKeyword = envNumber("PER_KEYWORD", strategy.defaultPerKeyword || 8);
+    const maxTotal = envNumber("MAX_TOTAL", strategy.defaultMaxTotal || 50);
+    const specText = strategySpecText(strategy);
+    const planPath = keywordPlan?.filePath || "";
     const stageName = `daily_${today.replace(/-/g, "")}`;
     const tasks = [];
     const loginCheckTimeoutMs = envNumber("LOGIN_CHECK_TIMEOUT_MS", envNumber("BOSS_LOGIN_CHECK_TIMEOUT_MS", 90000));
@@ -550,7 +628,12 @@ async function main() {
           const login = await runNodeAsync(["src/platforms/boss/check_boss_login_status.js"], "boss-login-check", bossEnv, { timeoutMs: loginCheckTimeoutMs });
           if (!login.ok) return { platform: "boss", ok: false, error: login.timedOut ? "登录态校验超时" : "登录态校验失败", stderr: String(login.stderr || "").slice(-4000) };
         }
-        const collect = await runNodeAsync(["src/platforms/boss/boss_batch_collect.js", stageName, String(strategy.perKeyword), String(strategy.maxTotal), strategy.specText], "boss-collect", bossEnv, { idleTimeoutMs: bossCollectIdleTimeoutMs, timeoutMs: bossCollectTotalTimeoutMs });
+        const collect = await runNodeAsync(
+          ["src/platforms/boss/boss_batch_collect.js", stageName, String(perKeyword), String(maxTotal), specText, planPath],
+          "boss-collect",
+          bossEnv,
+          { idleTimeoutMs: bossCollectIdleTimeoutMs, timeoutMs: bossCollectTotalTimeoutMs },
+        );
         if (!collect.ok) {
           const partialPath = tryLatestFile(new RegExp(`^boss_${stageName}_jobs_.*\\.json$`));
           const blockingReason = collectionBlockingReason("boss", partialPath, collect.stderr);
@@ -568,9 +651,14 @@ async function main() {
           const login = await runNodeAsync(["src/platforms/liepin/check_liepin_login_status.js"], "liepin-login-check", liepinEnv, { timeoutMs: loginCheckTimeoutMs });
           if (!login.ok) return { platform: "liepin", ok: false, error: login.timedOut ? "登录态校验超时" : "登录态校验失败", stderr: String(login.stderr || "").slice(-4000) };
         }
-        const per = envNumber("LIEPIN_PER_KEYWORD", envNumber("PER_KEYWORD", strategy.perKeyword));
-        const max = envNumber("LIEPIN_MAX_TOTAL", envNumber("MAX_TOTAL", strategy.maxTotal));
-        const collect = await runNodeAsync(["src/platforms/liepin/liepin_batch_collect.js", stageName, String(per), String(max), strategy.specText], "liepin-collect", liepinEnv, { idleTimeoutMs: liepinCollectIdleTimeoutMs, timeoutMs: liepinCollectTotalTimeoutMs });
+        const per = envNumber("LIEPIN_PER_KEYWORD", envNumber("PER_KEYWORD", perKeyword));
+        const max = envNumber("LIEPIN_MAX_TOTAL", envNumber("MAX_TOTAL", maxTotal));
+        const collect = await runNodeAsync(
+          ["src/platforms/liepin/liepin_batch_collect.js", stageName, String(per), String(max), specText, planPath],
+          "liepin-collect",
+          liepinEnv,
+          { idleTimeoutMs: liepinCollectIdleTimeoutMs, timeoutMs: liepinCollectTotalTimeoutMs },
+        );
         if (!collect.ok) {
           const partialPath = tryLatestFile(new RegExp(`^liepin_${stageName}_jobs_.*\\.json$`));
           if (partialPath) return { platform: "liepin", ok: true, partial: true, rawPath: partialPath, error: collect.timedOut ? `采集${collect.timeoutKind === "idle" ? "空闲" : "总时长"}超时，仅保留超时前已完成数据` : "采集部分完成，部分关键词失败", timedOut: collect.timedOut, timeoutKind: collect.timeoutKind, stderr: String(collect.stderr || "").slice(-4000) };
@@ -581,12 +669,22 @@ async function main() {
     }
     const results = [];
     appendLog("platform collection mode", { mode: "sequential", reason: "shared Chrome CDP session" });
-    for (const task of tasks) {
-      results.push(await task());
-    }
+    for (const task of tasks) results.push(await task());
+    collectResults.push(...results);
     for (const result of results) {
-      // 质量闸门：采集进程报了 ok，但结构化字段整轮缺失（典型是平台风控降级）时降级为 partial，
-      // 让 platformStatuses 变成 partial_success 并触发告警，而不是静默当成一次成功采集。
+      // v1.3 核心修正：0 条可用岗位 + 关键词错误，不能当成“部分成功”。
+      // 这通常意味着 CDP/登录/风控/页面结构失败；继续跑只会生成“正常零结果”日报并占掉半天配额。
+      if (result.rawPath) {
+        const records = fileRecordCount(result.rawPath);
+        const errors = keywordErrorCount(result.rawPath);
+        if (result.ok && records === 0 && errors > 0) {
+          result.ok = false;
+          result.partial = false;
+          result.error = `采集未获得可用岗位：${errors} 个关键词失败，已阻断空结果进入日报`;
+          appendLog("collection produced no usable records", { platform: result.platform, errors, rawPath: result.rawPath });
+        }
+      }
+      // 质量闸门：结构化字段整轮缺失（典型风控降级）降级为 partial。
       if (result.ok && result.rawPath && !result.partial) {
         const quality = assessCollectionQuality(result.platform, result.rawPath);
         if (quality && quality.degraded) {
@@ -597,14 +695,9 @@ async function main() {
         }
       }
       appendLog("platform collect result", result);
-      if (result.ok && result.rawPath) rawPaths.push({ platform: result.platform, path: result.rawPath });
-      if (!result.ok) platformStatuses[result.platform] = "failed";
-      else if (result.partial) platformStatuses[result.platform] = "partial_success";
-      else platformStatuses[result.platform] = "success";
+      if (result.ok && result.rawPath) addPathOnce(rawPaths, result.platform, result.rawPath);
+      setPlatformStatus(platformStatuses, result.platform, !result.ok ? "failed" : result.partial ? "partial_success" : "success");
       if (!result.ok || result.partial) {
-        if (!result.ok) failedPlatforms.push(result.platform);
-        if (result.partial) partialPlatforms.push(result.platform);
-        const level = result.partial ? "部分成功" : "失败";
         try {
           const alert = await sendWorkflowAlert(buildCollectionAlert(result), { topic: "recruitment_alert" });
           appendLog("platform collection alert attempted", { platform: result.platform, partial: Boolean(result.partial), alert });
@@ -613,8 +706,7 @@ async function main() {
         }
       }
     }
-    if (!rawPaths.length) throw new Error("No platform collection succeeded");
-    // 采集阶段结束：关闭采集自己创建的标签（不动用户手动打开的标签）
+    if (!rawPaths.length && !ingestedPaths.length && !scoredPaths.length) throw new Error("No platform collection succeeded");
     try {
       const closedTabs = await closeCollectTabs();
       appendLog("collect tabs closed", { closed: closedTabs });
@@ -622,72 +714,123 @@ async function main() {
       appendLog("collect tabs close skipped", { error: closeError.message });
     }
   }
-  if (screenEnabled) {
-    if (enableBoss) {
-      const input = rawPaths.find((item) => item.platform === "boss")?.path;
-      if (!input) appendLog("boss-screen skipped", { reason: "no boss raw file" });
-      else {
-      const result = runNodeOptional(["src/platforms/boss/postprocess_boss_stage2.js", input, today], "boss-screen");
-      const parsed = result.ok ? parseLastJson(result.stdout) : null;
-      if (result.ok) screenedPaths.push({ platform: "boss", path: requiredOutputPath(parsed, "jsonPath", "boss-screen") });
+
+  if (ingestEnabled) {
+    for (const platform of ["boss", "liepin"]) {
+      const enabled = platform === "boss" ? enableBoss : enableLiepin;
+      if (!enabled) continue;
+      const input = rawPaths.find((item) => item.platform === platform)?.path;
+      if (!input) {
+        appendLog("ingest skipped", { platform, reason: "no raw file" });
+        continue;
       }
-    }
-    if (enableLiepin) {
-      const input = rawPaths.find((item) => item.platform === "liepin")?.path;
-      if (!input) appendLog("liepin-screen skipped", { reason: "no liepin raw file" });
-      else {
-      const result = runNodeOptional(["src/platforms/liepin/postprocess_liepin_stage2.js", input, today], "liepin-screen");
+      const result = runNodeOptional(["src/ingest/job_ingest.js", input, `--date=${today}`], `ingest-${platform}`);
       const parsed = result.ok ? parseLastJson(result.stdout) : null;
-      if (result.ok) screenedPaths.push({ platform: "liepin", path: requiredOutputPath(parsed, "jsonPath", "liepin-screen") });
+      const item = (parsed?.results || []).find((entry) => String(entry.platform || "").toLowerCase().includes(platform)) || (parsed?.results || [])[0];
+      if (!result.ok || !item?.jsonPath) {
+        setPlatformStatus(platformStatuses, platform, "failed");
+        appendLog("ingest failed", { platform, error: result.error?.message || "no ingested output" });
+        continue;
+      }
+      if (!platformStatuses[platform]) setPlatformStatus(platformStatuses, platform, "success");
+      addPathOnce(ingestedPaths, platform, item.jsonPath);
+      const pending = Number(item.summary?.pending || 0);
+      const newCount = Number(item.summary?.new_primary || 0) + Number(item.summary?.new_duplicate || 0);
+      if (pending > 0) {
+        setPlatformStatus(platformStatuses, platform, "partial_success");
+        appendLog("ingest has pending records", { platform, pending, newCount, summary: item.summary });
+      } else {
+        appendLog("ingest finished", { platform, summary: item.summary });
       }
     }
   }
-  if (evaluateEnabled) {
-    if (enableBoss) {
-      const input = screenedPaths.find((item) => item.platform === "boss")?.path;
-      if (!input) appendLog("boss-evaluate skipped", { reason: "no boss screened file" });
-      else {
-      const result = runNodeOptional(["src/evaluate/evaluate_job_fit.js", input, today, "boss_stage3_fit_evaluated"], "boss-evaluate");
+
+  if (scoreEnabled) {
+    if (!ingestedPaths.length && !scoredPaths.length) throw new Error("Score stage is enabled but no ingested file is available.");
+    for (const item of ingestedPaths) {
+      const args = ["src/evaluate/score_jobs.js", item.path, `--date=${today}`];
+      if (!envBool("ENABLE_JOB_STORE", true)) args.push("--dry-run");
+      const result = runNodeOptional(args, `score-${item.platform}`);
       const parsed = result.ok ? parseLastJson(result.stdout) : null;
-      if (result.ok) evaluatedPaths.push({ platform: "boss", path: requiredOutputPath(parsed, "outJson", "boss-evaluate") });
+      if (!result.ok || !parsed?.jsonPath) {
+        setPlatformStatus(platformStatuses, item.platform, "failed");
+        appendLog("score failed", { platform: item.platform, error: result.error?.message || "no scored output" });
+        continue;
       }
-    }
-    if (enableLiepin) {
-      const input = screenedPaths.find((item) => item.platform === "liepin")?.path;
-      if (!input) appendLog("liepin-evaluate skipped", { reason: "no liepin screened file" });
-      else {
-      const result = runNodeOptional(["src/evaluate/evaluate_job_fit.js", input, today, "liepin_stage3_fit_evaluated"], "liepin-evaluate");
-      const parsed = result.ok ? parseLastJson(result.stdout) : null;
-      if (result.ok) evaluatedPaths.push({ platform: "liepin", path: requiredOutputPath(parsed, "outJson", "liepin-evaluate") });
-      }
+      if (!platformStatuses[item.platform]) setPlatformStatus(platformStatuses, item.platform, "success");
+      addPathOnce(scoredPaths, item.platform, parsed.jsonPath);
+      appendLog("score finished", { platform: item.platform, summary: parsed.summary });
     }
   }
-  if (envBool("ENABLE_JOB_STORE", true) && evaluatedPaths.length) {
-    const args = ["src/store/job_store_update.js", "upsert", ...evaluatedPaths.map((item) => item.path), `--date=${today}`];
-    const result = runNodeOptional(args, "job-store-upsert");
-    const parsed = result.ok ? parseLastJson(result.stdout) : null;
-    if (parsed?.trackedFiles?.length) {
-      evaluatedPaths.length = 0;
-      for (const file of parsed.trackedFiles) {
-        evaluatedPaths.push({ platform: file.platform, path: file.jsonPath });
-      }
-    }
-  }
+
   if (pushEnabled) {
-    if (!evaluatedPaths.length) throw new Error("No evaluated files available for push");
-    const args = ["src/push/job_push_draft_and_send.js", ...evaluatedPaths.map((item) => item.path)];
+    if (!scoredPaths.length) throw new Error("Push stage is enabled but no scored file is available. Enable ENABLE_SCORE or provide INPUT_SCORED_JSON.");
+    const args = ["src/push/job_push_draft_and_send.js", ...scoredPaths.map((item) => item.path)];
     if (process.env.SEND_MODE === "send") args.push("--send");
     runNode(args, "draft-or-send");
   }
-  if (envBool("ENABLE_JOB_STORE", true) && envBool("ENABLE_STATUS_REFRESH", true) && evaluatedPaths.length) {
-    for (const item of evaluatedPaths) {
-      const args = ["src/store/job_store_update.js", "refresh", item.path, `--date=${today}`, `--platform=${item.platform}`];
-      runNodeOptional(args, `job-store-refresh-${item.platform}`);
+
+  if (envBool("ENABLE_JOB_STORE", true) && envBool("ENABLE_STATUS_REFRESH", true) && collectResults.length) {
+    // v1.3：刷新“今天是否还看到”必须用本轮列表实际看到的岗位 ID，
+    // 不能用“新增入库文件”——后者只含新岗位，会把所有存量岗位误判为缺失。
+    for (const result of collectResults) {
+      if (!result.ok || result.partial || !result.rawPath) continue;
+      try {
+        const payload = JSON.parse(fs.readFileSync(result.rawPath, "utf8"));
+        const seenKeys = Array.isArray(payload.seen_job_ids) ? payload.seen_job_ids : [];
+        if (!seenKeys.length) {
+          appendLog("job-store refresh skipped", { platform: result.platform, reason: "collector did not expose seen_job_ids" });
+          continue;
+        }
+        const refreshPath = path.join(outputsDir, `refresh_seen_${result.platform}_${Date.now()}.json`);
+        writeJsonAtomic(refreshPath, {
+          platform: result.platform === "boss" ? "BOSS" : "猎聘",
+          dateKey: today,
+          seen_job_ids: seenKeys,
+          records: [...new Set(seenKeys)].map((key) => ({
+            platform: result.platform === "boss" ? "BOSS" : "猎聘",
+            record_key: key,
+            evaluation_date: today,
+          })),
+        });
+        runNodeOptional(
+          ["src/store/job_store_update.js", "refresh", refreshPath, `--date=${today}`, `--platform=${result.platform}`],
+          `job-store-refresh-${result.platform}`,
+        );
+      } catch (refreshError) {
+        appendLog("job-store refresh skipped", { platform: result.platform, error: refreshError.message });
+      }
     }
   }
+
+  // 每日账本：机器可读 JSON/JSONL + 人可读 Markdown；同时用账本重建关键词滚动档案。
+  try {
+    const ledgerEntries = readLedger(today);
+    const merged = mergeDay(ledgerEntries);
+    const ledgerMd = writeDailySummary(today, merged);
+    const ledgerJson = writeDailyJson(today, merged);
+    rebuildProfilesFromLedger({ days: 30 });
+    pruneLedger(90);
+    appendLog("collection ledger written", { rows: merged.length, ledgerMd, ledgerJson });
+  } catch (ledgerError) {
+    appendLog("collection ledger skipped", { error: ledgerError.message });
+  }
+
+  const partialPlatforms = Object.entries(platformStatuses).filter(([, status]) => status === "partial_success").map(([platform]) => platform);
+  const failedPlatforms = Object.entries(platformStatuses).filter(([, status]) => status === "failed").map(([platform]) => platform);
   const workflowStatus = partialPlatforms.length || failedPlatforms.length ? "partial_success" : "success";
-  appendLog("workflow finished", { workflowStatus, partialPlatforms, failedPlatforms, rawPaths, screenedPaths, evaluatedPaths });
-  console.log(JSON.stringify({ type: "workflow_result", status: workflowStatus, partialPlatforms, failedPlatforms, platformStatuses, rawPaths, screenedPaths, evaluatedPaths }));
+  appendLog("workflow finished", { workflowStatus, partialPlatforms, failedPlatforms, rawPaths, ingestedPaths, scoredPaths, keywordPlan: keywordPlan?.filePath || "" });
+  console.log(JSON.stringify({
+    type: "workflow_result",
+    status: workflowStatus,
+    partialPlatforms,
+    failedPlatforms,
+    platformStatuses,
+    rawPaths,
+    ingestedPaths,
+    scoredPaths,
+    keywordPlan: keywordPlan?.filePath || "",
+  }));
   if (partialPlatforms.length || failedPlatforms.length) process.exitCode = 2;
   releaseWorkflowLock(activeWorkflowLock);
   activeWorkflowLock = null;

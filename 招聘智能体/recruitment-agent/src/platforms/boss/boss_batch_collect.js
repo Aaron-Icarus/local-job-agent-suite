@@ -2,6 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const { loadEnv, envBool, envNumber } = require("../../core/load_env");
 const { findOrCreateCollectTab } = require("../../core/cdp_common");
+const { loadJobStore } = require("../../store/job_store");
+const { appendLedgerEntries } = require("../../store/collection_ledger");
 
 loadEnv();
 
@@ -35,6 +37,40 @@ const keywordSpecs = (process.argv[5] || "岗位信息::AI项目经理,岗位信
   .map(parseKeywordSpec)
   .filter((item) => item.keyword);
 const keywords = keywordSpecs.map((item) => item.keyword);
+
+// v1.3：关键词计划由 keyword_planner 生成（含每个词的目标新增/最大页数）。
+// 兼容旧调用：没有计划文件时退回旧的固定关键词顺序。
+const planPath = process.argv[6] || process.env.KEYWORD_PLAN_PATH || "";
+function loadBossPlan(filePath) {
+  if (!filePath) return [];
+  try {
+    const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const plans = payload.channels?.boss || payload.boss || (Array.isArray(payload) ? payload : []);
+    return (plans || []).map((item) => ({
+      keyword: String(item.keyword || "").trim(),
+      strategy_type: item.strategy_type || item.level_type || "未分级",
+      target_new: Number(item.target_new || perKeyword),
+      max_pages: Number(item.max_pages || envNumber("BOSS_MAX_PAGES", 3)),
+      match_score: item.match_score,
+      priority: item.priority,
+      is_new: item.is_new,
+    })).filter((item) => item.keyword);
+  } catch {
+    return [];
+  }
+}
+const plannedSpecs = loadBossPlan(planPath);
+const workSpecs = plannedSpecs.length
+  ? plannedSpecs
+  : keywordSpecs.map((item) => ({
+    keyword: item.keyword,
+    strategy_type: item.strategy_type,
+    target_new: perKeyword,
+    max_pages: envNumber("BOSS_MAX_PAGES", 3),
+  }));
+const totalNewTarget = envNumber("BOSS_TARGET_NEW", maxTotal);
+const detailAttemptLimit = envNumber("BOSS_DETAIL_ATTEMPT_LIMIT", Math.max(totalNewTarget * 2, totalNewTarget + 5));
+const minJdChars = envNumber("BOSS_MIN_JD_CHARS", 80);
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const csvPath = path.join(outputsDir, `boss_${stageName}_jobs_${timestamp}.csv`);
@@ -409,13 +445,14 @@ function appendSearchOccurrence(record, strategyType, keyword) {
   );
 }
 
-async function fetchList(ws, keyword, pageSize) {
+async function fetchList(ws, keyword, pageSize, page = 1) {
+  const cityCode = process.env.BOSS_CITY_CODE || "101020100";
   const expr = `(async () => {
     const params = new URLSearchParams({
       scene: '1',
       query: ${JSON.stringify(keyword)},
-      city: '101020100',
-      page: '1',
+      city: ${JSON.stringify(cityCode)},
+      page: ${JSON.stringify(String(page))},
       pageSize: ${JSON.stringify(String(pageSize))}
     });
     const resp = await fetch('/wapi/zpgeek/search/joblist.json', {
@@ -490,7 +527,7 @@ async function searchUi(ws, keyword, firstJobName) {
 
 async function captureDetailPageSnapshot(ws, maxAttempts = 3) {
   const params = {
-    expression: `(() => ({ href: location.href, title: document.title, text: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 2000) }))()`,
+    expression: `(() => ({ href: location.href, title: document.title, text: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 8000) }))()`,
     returnByValue: true,
     awaitPromise: true,
   };
@@ -879,6 +916,11 @@ function extractRecord(item) {
 
 const headers = [
   "record_key",
+  "platform_job_id",
+  "source_keyword",
+  "source_page",
+  "detail_status",
+  "job_url",
   "search_strategy_type",
   "search_strategy_types_json",
   "keyword",
@@ -929,6 +971,11 @@ const headers = [
 
 const zhHeaders = {
   record_key: "去重键",
+  platform_job_id: "平台岗位ID",
+  source_keyword: "来源关键词",
+  source_page: "来源页码",
+  detail_status: "详情状态",
+  job_url: "岗位链接",
   search_strategy_type: "搜索策略类型",
   search_strategy_types_json: "搜索策略类型JSON",
   keyword: "搜索关键词",
@@ -978,6 +1025,7 @@ const zhHeaders = {
 };
 
 function writeOutputs(payload) {
+  if (!payload.dateKey) payload.dateKey = todayShanghai();
   fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2), "utf8");
   const lines = [
     headers.map((header) => csvCell(zhHeaders[header] || header)).join(","),
@@ -989,110 +1037,235 @@ function writeOutputs(payload) {
   fs.writeFileSync(csvPath, "\ufeff" + lines.join("\r\n"), "utf8");
 }
 
-async function main() {
-  const seen = new Map();
-  const rawItems = [];
-  const records = [];
-  const keywordStats = [];
-  let partial = false;
+async function captureDetailRecord(ws, job, spec) {
+  if (!enableUiDetailCapture) return { skipped: true, reason: "BOSS_UI_DETAIL_CAPTURE=false", listJob: job };
+  const jobId = String(job?.encryptJobId || "").trim();
+  if (!jobId) return { error: "missing_platform_job_id", listJob: job };
+  const detailUrl = `https://www.zhipin.com/job_detail/${jobId}.html`;
+  await ws.cmd("Page.navigate", { url: detailUrl }, 15000);
+  await sleep(envNumber("BOSS_DETAIL_WAIT_MS", 4500));
+  const snapshot = await captureDetailPageSnapshot(ws, 2);
+  const href = snapshot.page?.href || "";
+  const matched = href.includes(`/job_detail/${jobId}.html`);
+  const raw = {
+    keyword: spec.keyword,
+    searchStrategyType: spec.strategy_type,
+    listJob: job,
+    captures: [],
+    page: snapshot.page || {},
+    error: matched ? undefined : "detail_not_captured",
+  };
+  const record = extractRecord(raw);
+  record.detail_url = detailUrl;
+  record.job_url = detailUrl;
+  record.platform_job_id = record.job_id || jobId;
+  record.detail_status = record.collection_status;
+  record.source_page = spec.page;
+  record.source_keyword = spec.keyword;
+  return record;
+}
 
-  for (const spec of keywordSpecs) {
-    if (records.length >= maxTotal) break;
-    const { keyword, strategy_type: strategyType } = spec;
-    let list;
-    let jobs;
-    let ui;
+function isRiskError(message) {
+  return /\b(?:37|38)\b|环境存在异常|安全验证|验证码|captcha|verify|请登录|登录态/i.test(String(message || ""));
+}
+
+async function main() {
+  const store = loadJobStore();
+  const existingKeys = new Set(Object.keys(store.jobs || {}));
+  const seenKeys = new Set();
+  const seenAllKeys = new Set();
+  const records = [];
+  const pending = [];
+  const keywordStats = [];
+  const ledgerEntries = [];
+  let partial = false;
+  let totalNew = 0;
+  let totalDetailAttempts = 0;
+  let detailBudgetExhausted = false;
+  let riskStop = false;
+
+  for (const spec of workSpecs) {
+    if (totalNew >= totalNewTarget || riskStop || detailBudgetExhausted) break;
+    const startedAt = Date.now();
+    const stats = {
+      date: todayShanghai(),
+      stage: "collect",
+      channel: "BOSS",
+      keyword: spec.keyword,
+      strategy_type: spec.strategy_type,
+      target_new: Number(spec.target_new || perKeyword),
+      match_score: spec.match_score,
+      priority: spec.priority,
+      is_new_keyword: Boolean(spec.is_new),
+      pages: 0,
+      seen: 0,
+      duplicates: 0,
+      new_candidates: 0,
+      detail_attempts: 0,
+      detail_ok: 0,
+      detail_fail: 0,
+      pending: 0,
+      page_errors: 0,
+      stop_reason: "",
+      elapsed_ms: 0,
+      errors: [],
+      collectionError: "",
+    };
     let ws;
-    let tab;
+    let pageFingerprint = "";
     try {
-      ({ tab, ws } = await openWs());
-      list = await fetchList(ws, keyword, Math.max(perKeyword * 2, bossListCandidatePool));
-      jobs = selectBossListJobs(list.jobs || [], perKeyword, keyword);
-      ui = enableUiDetailCapture
-        ? await searchUi(ws, keyword, jobs[0]?.jobName)
-        : { skipped: true, reason: "BOSS_UI_DETAIL_CAPTURE=false; list API only", href: tab?.url || "" };
-    } catch (err) {
+      ({ ws } = await openWs());
+      for (let page = 1; page <= Number(spec.max_pages || 3); page += 1) {
+        if (totalNew >= totalNewTarget || riskStop) {
+          stats.stop_reason = "budget";
+          break;
+        }
+        const remaining = Math.min(stats.target_new - stats.new_candidates, totalNewTarget - totalNew);
+        if (remaining <= 0) {
+          stats.stop_reason = "target";
+          break;
+        }
+        let list;
+        try {
+          list = await fetchList(ws, spec.keyword, Math.max(remaining * 2, bossListCandidatePool), page);
+        } catch (error) {
+          stats.page_errors += 1;
+          stats.errors.push(error.message);
+          stats.collectionError = error.message;
+          stats.stop_reason = "page_error";
+          partial = true;
+          if (isRiskError(error.message)) riskStop = true;
+          break;
+        }
+        stats.pages = page;
+        const pageJobs = selectBossListJobs(list.jobs || [], (list.jobs || []).length, spec.keyword);
+        for (const job of pageJobs) {
+          if (job.encryptJobId) seenAllKeys.add(`boss:${job.encryptJobId}`);
+        }
+        stats.seen += pageJobs.length;
+        const fingerprint = pageJobs.map((job) => job.encryptJobId || job.jobName).join("|");
+        if (page > 1 && fingerprint && fingerprint === pageFingerprint) {
+          stats.stop_reason = "page_repeat";
+          break;
+        }
+        pageFingerprint = fingerprint;
+        const pageSeen = new Set();
+        let pageNew = 0;
+
+        for (const job of pageJobs) {
+          if (totalNew >= totalNewTarget || stats.new_candidates >= stats.target_new) break;
+          const jobId = String(job.encryptJobId || "").trim();
+          stats.seen += 0;
+          if (!jobId) {
+            stats.pending += 1;
+            pending.push({ keyword: spec.keyword, page, reason: "missing_platform_job_id", job });
+            continue;
+          }
+          const key = `boss:${jobId}`;
+          if (pageSeen.has(key)) {
+            stats.duplicates += 1;
+            continue;
+          }
+          pageSeen.add(key);
+          if (seenKeys.has(key) || existingKeys.has(key)) {
+            stats.duplicates += 1;
+            continue;
+          }
+          if (totalDetailAttempts >= detailAttemptLimit) {
+            stats.stop_reason = "detail_budget";
+            detailBudgetExhausted = true;
+            break;
+          }
+          stats.detail_attempts += 1;
+          totalDetailAttempts += 1;
+          let record;
+          try {
+            record = await captureDetailRecord(ws, job, { ...spec, page });
+          } catch (error) {
+            record = { error: "detail_capture_failed", detail_error: error.message, listJob: job };
+            stats.errors.push(error.message);
+          }
+          const status = record?.collection_status || record?.detail_status || "";
+          if (!record || status !== "ok" || String(record.job_description || "").trim().length < minJdChars) {
+            stats.detail_fail += 1;
+            stats.pending += 1;
+            pending.push({
+              keyword: spec.keyword,
+              page,
+              reason: record?.error || record?.detail_error || (status ? `detail_status_${status}` : "detail_missing"),
+              job,
+              detail_url: record?.detail_url || "",
+            });
+            continue;
+          }
+          record.source_keyword = spec.keyword;
+          record.source_page = page;
+          record.detail_status = "ok";
+          records.push(record);
+          seenKeys.add(key);
+          stats.new_candidates += 1;
+          stats.detail_ok += 1;
+          pageNew += 1;
+          totalNew += 1;
+          console.log(JSON.stringify({
+            stageName,
+            count: records.length,
+            keyword: spec.keyword,
+            page,
+            job: record.job_title,
+            company: record.company,
+            status: record.collection_status,
+          }, null, 0));
+        }
+
+        writeOutputs({ stageName, keywordSpecs, workSpecs, perKeyword, maxTotal: totalNewTarget, keywordStats: [...keywordStats, stats], records, pending, complete: false, partial });
+        if (detailBudgetExhausted) break;
+        if (stats.new_candidates >= stats.target_new) {
+          stats.stop_reason = "target";
+          break;
+        }
+        if (totalNew >= totalNewTarget) {
+          stats.stop_reason = "budget";
+          break;
+        }
+        if (!pageJobs.length) {
+          stats.stop_reason = "no_more";
+          break;
+        }
+        const duplicateRate = stats.seen ? stats.duplicates / stats.seen : 0;
+        if (page > 1 && duplicateRate > envNumber("BOSS_PAGE_DUP_STOP_RATIO", 0.85)) {
+          stats.stop_reason = "high_duplicate";
+          break;
+        }
+        if (page >= Number(spec.max_pages || 3)) {
+          stats.stop_reason = "max_pages";
+          break;
+        }
+        await sleep(envNumber("BOSS_PAGE_WAIT_MS", 1800) + Math.floor(Math.random() * 1200));
+      }
+    } catch (error) {
       partial = true;
-      keywordStats.push({ strategyType, keyword, collectionError: err.message, candidates: 0 });
-      writeOutputs({ stageName, keywordSpecs, keywords, perKeyword, maxTotal, keywordStats, records, rawItems });
-      console.error(JSON.stringify({ stageName, keyword, collectionError: err.message }));
-      continue;
+      stats.page_errors += 1;
+      stats.errors.push(error.message);
+      stats.collectionError = error.message;
+      stats.stop_reason = "error";
+      if (isRiskError(error.message)) riskStop = true;
+      console.error(JSON.stringify({ stageName, keyword: spec.keyword, collectionError: error.message }));
     } finally {
       ws?.close();
     }
-
-    keywordStats.push({
-      strategyType,
-      keyword,
-      listStatus: list.status,
-      listCode: list.json?.code,
-      listMessage: list.json?.message,
-      resCount: list.json?.zpData?.resCount,
-      candidatePool: (list.jobs || []).length,
-      selection: enableRankedCandidateSelection ? "ranked_pool" : "top_n",
-      candidates: jobs.length,
-      ui,
-    });
-
-    for (const job of jobs) {
-      if (records.length >= maxTotal) break;
-      const key = job.encryptJobId ? `boss:${job.encryptJobId}` : `fallback:${job.brandName}|${job.jobName}|${job.salaryDesc}`;
-      if (seen.has(key)) {
-        appendSearchOccurrence(records[seen.get(key)], strategyType, keyword);
-        writeOutputs({ stageName, keywordSpecs, keywords, perKeyword, maxTotal, keywordStats, records, rawItems });
-        continue;
-      }
-
-      let raw;
-      try {
-        raw = enableUiDetailCapture
-          ? await clickAndCapture(job, keyword, strategyType)
-          : {
-            keyword,
-            searchStrategyType: strategyType,
-            listJob: job,
-            captures: [],
-            page: {},
-            detailSkipped: true,
-          };
-      } catch (err) {
-        // One card must not make the whole batch unusable. extractRecord can
-        // retain list-side fields and label this item for review.
-        raw = {
-          keyword,
-          searchStrategyType: strategyType,
-          listJob: job,
-          captures: [],
-          page: {},
-          error: "detail_capture_failed",
-          detailError: err.message,
-        };
-        console.error(JSON.stringify({ stageName, keyword, job: job.jobName, detailError: err.message }));
-      }
-      rawItems.push(raw);
-      const record = extractRecord(raw);
-      records.push(record);
-      seen.set(key, records.length - 1);
-
-      console.log(JSON.stringify({
-        stageName,
-        count: records.length,
-        strategyType,
-        keyword,
-        job: record.job_title,
-        company: record.company,
-        status: record.collection_status,
-        priority: record.overall_priority,
-      }, null, 0));
-
-      writeOutputs({ stageName, keywordSpecs, keywords, perKeyword, maxTotal, keywordStats, records, rawItems });
-      await sleep(3500 + Math.floor(Math.random() * 2500));
-    }
+    stats.elapsed_ms = Date.now() - startedAt;
+    stats.candidates = stats.new_candidates;
+    stats.strategyType = spec.strategy_type;
+    keywordStats.push(stats);
+    ledgerEntries.push(stats);
+    // 每个关键词结束就落一条账本；进程被超时/风控打断时，已完成的词不会丢。
+    appendLedgerEntries(todayShanghai(), [stats]);
   }
 
-  const payload = { stageName, keywordSpecs, keywords, perKeyword, maxTotal, keywordStats, records, rawItems, complete: true, partial };
+  const payload = { stageName, dateKey: todayShanghai(), keywordSpecs, workSpecs, perKeyword, maxTotal: totalNewTarget, keywordStats, records, pending, seen_job_ids: [...seenAllKeys], complete: true, partial };
   writeOutputs(payload);
-  console.log(JSON.stringify({ csvPath, jsonPath, total: records.length, keywordStats }, null, 2));
+  console.log(JSON.stringify({ csvPath, jsonPath, total: records.length, pending: pending.length, keywordStats }, null, 2));
   if (partial) process.exitCode = 2;
 }
 
@@ -1103,4 +1276,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { captureDetailPageSnapshot, extractRecord };
+module.exports = { captureDetailPageSnapshot, extractRecord, loadBossPlan, fetchList };

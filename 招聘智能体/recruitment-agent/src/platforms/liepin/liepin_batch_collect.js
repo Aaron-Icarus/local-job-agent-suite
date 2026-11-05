@@ -4,6 +4,8 @@ const { loadEnv } = require("../../core/load_env");
 const { cdpBaseUrl, findOrCreateTab, findOrCreateCollectTab, getJson, openWsForTab, navigate, evaluate, sleep } = require("../../core/cdp_common");
 const { shanghaiDateKey } = require("../../core/time_utils");
 const { fieldZh, fieldDescriptions } = require("../../core/field_dictionary");
+const { loadJobStore } = require("../../store/job_store");
+const { appendLedgerEntries } = require("../../store/collection_ledger");
 
 loadEnv();
 
@@ -14,8 +16,14 @@ fs.mkdirSync(outputsDir, { recursive: true });
 const stageName = process.argv[2] || "stage1";
 const perKeyword = Number(process.argv[3] || process.env.LIEPIN_PER_KEYWORD || 5);
 const maxTotal = Number(process.argv[4] || process.env.LIEPIN_MAX_TOTAL || 30);
-const enableDetail = /^true$/i.test(process.env.LIEPIN_ENABLE_DETAIL || "false");
+// v1.3：入库要求“平台详细信息 + 唯一 ID”，猎聘默认必须打开详情。
+const enableDetail = !/^(false|0|no|off)$/i.test(process.env.LIEPIN_ENABLE_DETAIL || "true");
 const targetCity = process.env.TARGET_CITY || "上海";
+const planPath = process.argv[6] || process.env.KEYWORD_PLAN_PATH || "";
+const totalNewTarget = Number(process.env.LIEPIN_TARGET_NEW || maxTotal);
+const detailAttemptLimit = Number(process.env.LIEPIN_DETAIL_ATTEMPT_LIMIT || Math.max(totalNewTarget * 2, totalNewTarget + 5));
+const minJdChars = Number(process.env.LIEPIN_MIN_JD_CHARS || 100);
+const maxPages = Number(process.env.LIEPIN_MAX_PAGES || 3);
 
 function parseKeywordSpec(text) {
   const raw = text.trim();
@@ -30,6 +38,35 @@ const keywordSpecs = (process.argv[5] || "岗位信息::AI项目经理,岗位信
   .filter(Boolean)
   .map(parseKeywordSpec)
   .filter((item) => item.keyword);
+
+function loadLiepinPlan(filePath) {
+  if (!filePath) return [];
+  try {
+    const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const plans = payload.channels?.liepin || payload.liepin || (Array.isArray(payload) ? payload : []);
+    return (plans || []).map((item) => ({
+      keyword: String(item.keyword || "").trim(),
+      strategy_type: item.strategy_type || item.level_type || "未分级",
+      target_new: Number(item.target_new || perKeyword),
+      max_pages: Number(item.max_pages || maxPages),
+      match_score: item.match_score,
+      priority: item.priority,
+      is_new: item.is_new,
+    })).filter((item) => item.keyword);
+  } catch {
+    return [];
+  }
+}
+
+const plannedSpecs = loadLiepinPlan(planPath);
+const workSpecs = plannedSpecs.length
+  ? plannedSpecs
+  : keywordSpecs.map((item) => ({
+    keyword: item.keyword,
+    strategy_type: item.strategy_type,
+    target_new: perKeyword,
+    max_pages: maxPages,
+  }));
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const jsonPath = path.join(outputsDir, `liepin_${stageName}_jobs_${timestamp}.json`);
@@ -135,21 +172,23 @@ async function searchKeywordByUi(ws, keyword) {
 // 改为直接导航到猎聘的关键词搜索页：/zhaopin/?dqs=<城市码>&key=<关键词>
 // （020=上海；实测同一关键词能拿到 16 条与关键词强相关的真实职位卡片）。
 // 导航失败或没落到搜索页时，保留原来的 UI 输入方式作为兜底。
-async function searchKeyword(ws, keyword) {
+async function searchKeyword(ws, keyword, page = 1) {
   const cityCode = process.env.LIEPIN_CITY_CODE || "020";
-  const url = `https://www.liepin.com/zhaopin/?dqs=${encodeURIComponent(cityCode)}&key=${encodeURIComponent(keyword)}`;
+  const pageParam = process.env.LIEPIN_PAGE_PARAM || "page";
+  const pageQuery = page > 1 ? `&${encodeURIComponent(pageParam)}=${page}` : "";
+  const url = `https://www.liepin.com/zhaopin/?dqs=${encodeURIComponent(cityCode)}&key=${encodeURIComponent(keyword)}${pageQuery}`;
   try {
     await navigate(ws, url, 10000);
-    await sleep(4000);
+    await sleep(Number(process.env.LIEPIN_PAGE_WAIT_MS || 4000));
     const current = (await evaluate(ws, "location.href", 5000)) || "";
     if (/liepin\.com\/zhaopin/i.test(current)) {
-      return { ok: true, via: "url_navigation", keyword, href: current };
+      return { ok: true, via: "url_navigation", keyword, page, href: current };
     }
     const fallback = await searchKeywordByUi(ws, keyword);
-    return { ...fallback, via: "ui_input_fallback", navigatedTo: current };
+    return { ...fallback, via: "ui_input_fallback", page, navigatedTo: current };
   } catch (error) {
     const fallback = await searchKeywordByUi(ws, keyword).catch(() => ({ ok: false, reason: error.message, href: "" }));
-    return { ...fallback, via: "ui_input_after_nav_error", navError: error.message };
+    return { ...fallback, via: "ui_input_after_nav_error", page, navError: error.message };
   }
 }
 
@@ -227,19 +266,25 @@ async function extractCards(ws, keyword, limit) {
   })()`, 20000);
 }
 
-async function detailTextFor(url) {
+async function detailTextFor(ws, url) {
   if (!url) return { detail_text: "", detail_status: "no_link" };
-  const tab = await findOrCreateTab((u) => u === url, url);
-  const ws = await openWsForTab(tab);
   try {
     await navigate(ws, url, 4500);
     const value = await evaluate(ws, `(() => {
       const text = document.body ? document.body.innerText : "";
-      return { href: location.href, title: document.title, text: text.slice(0, 6000) };
+      return { href: location.href, title: document.title, text: text.slice(0, 8000) };
     })()`, 15000);
-    return { detail_url: value.href || url, detail_text: value.text || "", detail_status: value.text ? "ok" : "empty" };
-  } finally {
-    ws.close();
+    const text = String(value.text || "").replace(/\s+/g, " ").trim();
+    const href = String(value.href || url);
+    const looksLikeJob = /\/a\/\d+\.shtml|job\/\d+/i.test(href);
+    const looksLikeLogin = /登录|安全验证|验证码|captcha|verify/i.test(text.slice(0, 500));
+    return {
+      detail_url: href,
+      detail_text: text,
+      detail_status: looksLikeJob && !looksLikeLogin && text.length >= minJdChars ? "ok" : "empty",
+    };
+  } catch (error) {
+    return { detail_url: url, detail_text: "", detail_status: "error", detail_error: error.message };
   }
 }
 
@@ -252,8 +297,11 @@ function buildRecord(card, detail, spec) {
   return {
     platform: "猎聘",
     record_key: recordKey,
+    platform_job_id: jobId,
     search_strategy_type: spec.strategy_type,
     keyword: spec.keyword,
+    source_keyword: spec.keyword,
+    source_page: spec.page,
     current_search_keyword_group_json: JSON.stringify(keywordGroup(spec.keyword)),
     collected_at: new Date().toISOString(),
     source: "liepin_cdp_dom",
@@ -272,7 +320,7 @@ function buildRecord(card, detail, spec) {
     experience: card.experience,
     degree: card.degree,
     tags: "",
-    job_description: detail.detail_text || card.text,
+    job_description: detail.detail_text || "",
     recruiter_name: "",
     recruiter_title: "",
     recruiter_id: "",
@@ -282,19 +330,21 @@ function buildRecord(card, detail, spec) {
     liepin_job_url: card.href || detail.detail_url || "",
     source_url: detail.detail_url || card.href || "",
     page_card_text: card.text,
+    detail_status: detail.detail_status,
     collection_status: detail.detail_status === "ok" ? "ok" : "page_text_fallback",
   };
 }
 
 function writeOutputs(payload) {
+  if (!payload.dateKey) payload.dateKey = shanghaiDateKey();
   fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2), "utf8");
   const headers = [
-    "platform", "record_key", "search_strategy_type", "keyword", "current_search_keyword_group_json",
-    "used_search_keyword_groups_json", "search_occurrences_json", "collected_at",
+    "platform", "record_key", "platform_job_id", "search_strategy_type", "keyword", "source_keyword", "source_page",
+    "current_search_keyword_group_json", "used_search_keyword_groups_json", "search_occurrences_json", "collected_at",
     "company", "company_industry", "company_scale", "company_stage", "job_title", "salary", "salary_min_k", "salary_max_k",
     "salary_months", "city", "district", "address", "experience", "degree", "tags", "job_description", "recruiter_name",
     "recruiter_title", "recruiter_id", "recruiter_active_text", "latest_active_date", "liepin_job_id", "liepin_job_url",
-    "source_url", "collection_status", "page_card_text"
+    "source_url", "detail_status", "collection_status", "page_card_text"
   ];
   const lines = [
     headers.map((h) => csvCell(fieldZh[h] || h)).join(","),
@@ -305,12 +355,24 @@ function writeOutputs(payload) {
   fs.writeFileSync(csvPath, "\ufeff" + lines.join("\r\n"), "utf8");
 }
 
+function isRiskError(message) {
+  return /安全验证|验证码|captcha|verify|环境异常|访问异常|登录/i.test(String(message || ""));
+}
+
 async function main() {
+  const store = loadJobStore();
+  const existingKeys = new Set(Object.keys(store.jobs || {}));
   const records = [];
-  const rawItems = [];
+  const pending = [];
   const keywordStats = [];
+  const ledgerEntries = [];
   const seen = new Map();
+  const seenAllKeys = new Set();
   let partial = false;
+  let totalNew = 0;
+  let totalDetailAttempts = 0;
+  let detailBudgetExhausted = false;
+  let riskStop = false;
 
   function addOccurrence(record, spec) {
     const occurrence = {
@@ -331,55 +393,177 @@ async function main() {
     );
   }
 
-  for (const spec of keywordSpecs) {
-    if (records.length >= maxTotal) break;
-    const tab = await findLiepinTab();
-    const ws = await openWsForTab(tab);
+  for (const spec of workSpecs) {
+    if (totalNew >= totalNewTarget || riskStop || detailBudgetExhausted) break;
+    const startedAt = Date.now();
+    const stats = {
+      date: shanghaiDateKey(),
+      stage: "collect",
+      channel: "猎聘",
+      keyword: spec.keyword,
+      strategy_type: spec.strategy_type,
+      target_new: Number(spec.target_new || perKeyword),
+      match_score: spec.match_score,
+      priority: spec.priority,
+      is_new_keyword: Boolean(spec.is_new),
+      pages: 0,
+      seen: 0,
+      duplicates: 0,
+      new_candidates: 0,
+      detail_attempts: 0,
+      detail_ok: 0,
+      detail_fail: 0,
+      pending: 0,
+      page_errors: 0,
+      stop_reason: "",
+      elapsed_ms: 0,
+      errors: [],
+      collectionError: "",
+    };
+    let ws;
     try {
-      const ui = await searchKeyword(ws, spec.keyword);
-      await sleep(2500);
-      ws.close();
-      const freshTab = await findLiepinTab();
-      const readWs = await openWsForTab(freshTab);
-      const extracted = await extractCards(readWs, spec.keyword, perKeyword);
-      readWs.close();
-      keywordStats.push({ strategyType: spec.strategy_type, keyword: spec.keyword, ui, href: extracted.href, candidates: extracted.count, sample: extracted.sample });
-      for (const card of extracted.rows || []) {
-        if (records.length >= maxTotal) break;
-        // 只接受带真实职位链接(/a/<id>.shtml 或 /job/<id>)的卡片；
-        // “订阅/你好吴先生/快人一步拒绝信息差”等无职位链接的推广块与头部文本会被宽泛匹配误抓成职位，这里直接过滤。
-        if (!extractJobId(card.href)) continue;
-        const dedupe = card.href || normalizeKey(card.companyLine, card.title, card.salary, card.location);
-        if (seen.has(dedupe)) {
-          const existing = records[seen.get(dedupe)];
-          addOccurrence(existing, spec);
-          writeOutputs({ stageName, keywordSpecs, perKeyword, maxTotal, keywordStats, records, rawItems });
-          continue;
+      const tab = await findLiepinTab();
+      ws = await openWsForTab(tab);
+      let pageFingerprint = "";
+      for (let page = 1; page <= Number(spec.max_pages || maxPages); page += 1) {
+        if (totalNew >= totalNewTarget || riskStop) {
+          stats.stop_reason = "budget";
+          break;
         }
-        const detail = enableDetail
-          ? await detailTextFor(card.href)
-          : { detail_text: "", detail_status: "skipped", detail_url: card.href || "" };
-        rawItems.push({ spec, card, detail });
-        const record = buildRecord(card, detail, spec);
-        addOccurrence(record, spec);
-        seen.set(dedupe, records.length);
-        records.push(record);
-        console.log(JSON.stringify({ platform: "猎聘", count: records.length, keyword: spec.keyword, job: record.job_title, company: record.company, status: record.collection_status }, null, 0));
-        writeOutputs({ stageName, keywordSpecs, perKeyword, maxTotal, keywordStats, records, rawItems });
-        await sleep(2500 + Math.floor(Math.random() * 1500));
+        const remaining = Math.min(stats.target_new - stats.new_candidates, totalNewTarget - totalNew);
+        if (remaining <= 0) {
+          stats.stop_reason = "target";
+          break;
+        }
+        let extracted;
+        try {
+          const ui = await searchKeyword(ws, spec.keyword, page);
+          await sleep(Number(process.env.LIEPIN_PAGE_SETTLE_MS || 1800));
+          extracted = await extractCards(ws, spec.keyword, Math.max(remaining * 3, perKeyword));
+          stats.href = extracted.href || "";
+          stats.ui = ui;
+        } catch (error) {
+          stats.page_errors += 1;
+          stats.errors.push(error.message);
+          stats.collectionError = error.message;
+          stats.stop_reason = "page_error";
+          partial = true;
+          if (isRiskError(error.message)) riskStop = true;
+          break;
+        }
+        stats.pages = page;
+        const rows = extracted.rows || [];
+        for (const card of rows) {
+          const seenJobId = extractJobId(card.href);
+          if (seenJobId) seenAllKeys.add(`liepin:${seenJobId}`);
+        }
+        stats.seen += rows.length;
+        const fingerprint = rows.map((card) => card.href || card.title).join("|");
+        if (page > 1 && fingerprint && fingerprint === pageFingerprint) {
+          stats.stop_reason = "page_repeat";
+          break;
+        }
+        pageFingerprint = fingerprint;
+        const pageSeen = new Set();
+        let pageNew = 0;
+
+        for (const card of rows) {
+          if (totalNew >= totalNewTarget || stats.new_candidates >= stats.target_new) break;
+          const jobId = extractJobId(card.href);
+          if (!jobId) {
+            stats.pending += 1;
+            pending.push({ keyword: spec.keyword, page, reason: "missing_platform_job_id", card });
+            continue;
+          }
+          const key = `liepin:${jobId}`;
+          if (pageSeen.has(key)) {
+            stats.duplicates += 1;
+            continue;
+          }
+          pageSeen.add(key);
+          if (seen.has(key) || existingKeys.has(key)) {
+            stats.duplicates += 1;
+            if (seen.has(key)) addOccurrence(records[seen.get(key)], spec);
+            continue;
+          }
+          if (totalDetailAttempts >= detailAttemptLimit) {
+            stats.stop_reason = "detail_budget";
+            detailBudgetExhausted = true;
+            break;
+          }
+          stats.detail_attempts += 1;
+          totalDetailAttempts += 1;
+          const detail = enableDetail
+            ? await detailTextFor(ws, card.href)
+            : { detail_text: "", detail_status: "skipped", detail_url: card.href || "" };
+          const record = buildRecord(card, detail, { ...spec, page });
+          if (record.detail_status !== "ok" || String(record.job_description || "").trim().length < minJdChars) {
+            stats.detail_fail += 1;
+            stats.pending += 1;
+            pending.push({
+              keyword: spec.keyword,
+              page,
+              reason: record.detail_status === "ok" ? "jd_too_short" : `detail_${record.detail_status}`,
+              job: { jobName: card.title, brandName: card.companyLine, salaryDesc: card.salary },
+              detail_url: detail.detail_url || card.href,
+            });
+            continue;
+          }
+          addOccurrence(record, spec);
+          records.push(record);
+          seen.set(key, records.length - 1);
+          stats.new_candidates += 1;
+          stats.detail_ok += 1;
+          pageNew += 1;
+          totalNew += 1;
+          console.log(JSON.stringify({ platform: "猎聘", count: records.length, keyword: spec.keyword, page, job: record.job_title, company: record.company, status: record.collection_status }, null, 0));
+          await sleep(Number(process.env.LIEPIN_DETAIL_WAIT_MS || 1800) + Math.floor(Math.random() * 1200));
+        }
+
+        writeOutputs({ stageName, keywordSpecs, workSpecs, perKeyword, maxTotal: totalNewTarget, keywordStats: [...keywordStats, stats], records, pending, complete: false, partial });
+        if (detailBudgetExhausted) break;
+        if (stats.new_candidates >= stats.target_new) {
+          stats.stop_reason = "target";
+          break;
+        }
+        if (totalNew >= totalNewTarget) {
+          stats.stop_reason = "budget";
+          break;
+        }
+        if (!rows.length) {
+          stats.stop_reason = "no_more";
+          break;
+        }
+        const duplicateRate = stats.seen ? stats.duplicates / stats.seen : 0;
+        if (page > 1 && duplicateRate > Number(process.env.LIEPIN_PAGE_DUP_STOP_RATIO || 0.85)) {
+          stats.stop_reason = "high_duplicate";
+          break;
+        }
+        if (page >= Number(spec.max_pages || maxPages)) {
+          stats.stop_reason = "max_pages";
+          break;
+        }
       }
     } catch (error) {
       partial = true;
-      keywordStats.push({ strategyType: spec.strategy_type, keyword: spec.keyword, collectionError: error.message, candidates: 0 });
-      writeOutputs({ stageName, keywordSpecs, perKeyword, maxTotal, keywordStats, records, rawItems, complete: false, partial });
+      stats.page_errors += 1;
+      stats.errors.push(error.message);
+      stats.collectionError = error.message;
+      stats.stop_reason = "error";
+      if (isRiskError(error.message)) riskStop = true;
       console.error(JSON.stringify({ platform: "猎聘", keyword: spec.keyword, collectionError: error.message }));
     } finally {
-      ws.close();
+      ws?.close();
     }
+    stats.elapsed_ms = Date.now() - startedAt;
+    stats.candidates = stats.new_candidates;
+    stats.strategyType = spec.strategy_type;
+    keywordStats.push(stats);
+    ledgerEntries.push(stats);
+    appendLedgerEntries(shanghaiDateKey(), [stats]);
   }
-  // 2026-09-14：采集结束后把猎聘标签页还原到个人中心。
-  // 否则标签页停在 /zhaopin/?key=... 搜索页，下一轮的猎聘登录态检查会判成 unknown，
-  // 整轮猎聘被当成"登录态校验失败"跳过（已实测发生过一次）。
+
+  // 采集结束后把猎聘标签页还原到个人中心，避免下一轮登录检查误判。
   try {
     const restoreTab = await findLiepinTab();
     const restoreWs = await openWsForTab(restoreTab);
@@ -393,12 +577,16 @@ async function main() {
     // 还原失败不影响本轮已采集的数据。
   }
 
-  writeOutputs({ stageName, keywordSpecs, perKeyword, maxTotal, keywordStats, records, rawItems, complete: true, partial });
-  console.log(JSON.stringify({ csvPath, jsonPath, total: records.length, keywordStats }, null, 2));
+  writeOutputs({ stageName, dateKey: shanghaiDateKey(), keywordSpecs, workSpecs, perKeyword, maxTotal: totalNewTarget, keywordStats, records, pending, seen_job_ids: [...seenAllKeys], complete: true, partial });
+  console.log(JSON.stringify({ csvPath, jsonPath, total: records.length, pending: pending.length, keywordStats }, null, 2));
   if (partial) process.exitCode = 2;
 }
 
-main().catch((error) => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { searchKeyword, extractCards, detailTextFor, buildRecord, extractJobId };

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "notes": "本文件是候选人事实卡的“补充覆盖层”。留空的字段会从 config/profile_rules.json 和当前候选人画像派生；只有需要额外限制时才在这里填写。",
+  "cities": [],
+  "acceptable_cities": [],
+  "accept_remote": false,
+  "target_salary_k": null,
+  "target_roles": [],
+  "strengths": [],
+  "avoid_title_keywords": [
+    "销售",
+    "商务",
+    "BD",
+    "客户经理",
+    "渠道",
+    "获客",
+    "电话销售",
+    "实习",
+    "应届",
+    "管培"
+  ],
+  "avoid_jd_keywords": [],
+  "preferred_industries": [],
+  "allow_pure_tech": null,
+  "hard_salary_floor_k": null
+}

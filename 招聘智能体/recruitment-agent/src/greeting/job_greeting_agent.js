@@ -3,6 +3,7 @@ const path = require("path");
 const { loadEnv } = require("../core/load_env");
 const { recommendGreetingResult } = require("./greeting_recommender");
 const { loadDisplayIndex, recordKey } = require("../push/job_display_index");
+const { loadJobStore } = require("../store/job_store");
 
 loadEnv();
 
@@ -50,21 +51,32 @@ function resolveJobByDisplayId(displayId, options = {}) {
   if (!id) throw new Error("display_id is required");
   const index = loadDisplayIndex(options.displayIndexPath || displayIndexPath);
   const key = index.aliasesByDisplayId?.[id];
-  if (!key || !index.jobsByKey[key]) throw new Error(`Display id not found: ${id}`);
-  const entry = index.jobsByKey[key];
-  const latest = loadLatestRecord(entry, key);
+  if (key && index.jobsByKey[key]) {
+    const entry = index.jobsByKey[key];
+    const latest = loadLatestRecord(entry, key);
+    return {
+      ...entry,
+      ...(latest || {}),
+      platform: entry.platform,
+      display_id: entry.display_id,
+    };
+  }
+  // v1.3：编号在入库时分配，展示索引可能还没登记；直接从岗位库按 display_id 兜底查找。
+  const store = loadJobStore(process.env.JOB_STORE_PATH || undefined);
+  const found = Object.values(store.jobs || {}).find((entry) => entry.display_id === id);
+  if (!found) throw new Error(`Display id not found: ${id}`);
   return {
-    ...entry,
-    ...(latest || {}),
-    platform: entry.platform,
-    display_id: entry.display_id,
+    ...(found.facts || {}),
+    ...found,
+    display_id: found.display_id,
+    platform: found.platform,
   };
 }
 
 function requestToJob(request) {
   const normalized = typeof request === "string" ? { job_text: request } : (request || {});
   const jobText = normalized.job_text || normalized.jobText || normalized.image_ocr_text || normalized.ocr_text || normalized.text || "";
-  const inferredId = String(jobText).toUpperCase().match(/\b([AB]\d{3})\b/)?.[1] || "";
+  const inferredId = String(jobText).toUpperCase().match(/\b([AB]\d{3,})\b/)?.[1] || "";
   const displayId = normalized.display_id || normalized.displayId || normalized.job_id_display || inferredId;
   const topLevelJob = {};
   for (const key of ["platform", "company", "job_title", "salary", "city", "district", "business_area", "address", "experience", "degree", "tags", "job_description", "page_card_text"]) {

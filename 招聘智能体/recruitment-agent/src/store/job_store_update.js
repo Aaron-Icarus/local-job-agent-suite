@@ -43,7 +43,12 @@ function latestFiles(patterns) {
 function jsonInputs() {
   const explicit = args.filter((arg) => arg.toLowerCase().endsWith(".json") && !arg.startsWith("--"));
   if (explicit.length) return explicit;
-  return latestFiles([/^boss_stage3_fit_evaluated_.*\.json$/, /^liepin_stage3_fit_evaluated_.*\.json$/]);
+  return latestFiles([
+    /^boss_stage3_scored_.*\.json$/,
+    /^liepin_stage3_scored_.*\.json$/,
+    /^boss_stage3_fit_evaluated_.*\.json$/,
+    /^liepin_stage3_fit_evaluated_.*\.json$/,
+  ]);
 }
 
 function writeSummary(summary) {
@@ -119,7 +124,7 @@ function main() {
     const refresh = refreshMissingOpenJobs(store, [...new Set(currentKeys)], {
       dateKey,
       now,
-      closeAfterDays: envNumber("JOB_CLOSE_AFTER_MISSING_DAYS", 7),
+      closeAfterDays: envNumber("JOB_CLOSE_AFTER_MISSING_DAYS", 0),
       platforms: [...detectedPlatforms],
     });
     const snapshot = writeStoreSnapshot(store, { dateKey, outputsDir });

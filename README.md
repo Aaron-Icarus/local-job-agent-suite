@@ -1,8 +1,26 @@
 # 本地招聘信息智能体与飞书消息转发平台
 
+> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.3.0（2026-10-28）。
+
 这是一个本地运行的求职信息自动化项目，用来把“人工反复刷招聘渠道、筛岗位、整理日报、生成打招呼话术”这条链路尽量自动化。
 
 项目会读取候选人的简历和目标岗位要求，通过本地浏览器登录招聘网站，定时获取最新岗位信息，做本地入库、岗位编号、匹配评分、日报草稿和飞书推送。同时支持根据岗位信息和候选人画像生成 100-200 字的招聘方打招呼话术。
+
+## v1.3 流程调整（2026-10-28）
+
+v1.3 把流程改成 **“先存事实，再打分”**：
+
+```text
+定时唤醒 → 登录检查 → 采集（分页/预算/必须详情） → 去重入库/编号 → 评分（硬条件+软评分，可选AI） → 日报/发送
+```
+
+- 初筛只保留“数据完整性 + 去重”；销售/技术/薪资/活跃度等判断全部后移到评分。
+- 入库必须有“平台唯一 ID + 完整 JD”；拿不到就进待补，不入库、不编号。
+- 编号在真正写入岗位库时分配；跨渠道重复照常占编号，但标记“重复于更早编号”，不参与推荐。
+- 关键词按“历史新增 + 重复/失败 + 久未使用”滚动排序；每个词有目标新增和最大页数，支持逐页判断。
+- 每天生成“关键词 × 渠道”采集账本（看到/重复/新增/失败/页数/停止原因）。
+- 评分改为“候选人事实卡 + 硬条件 + 软评分 + 解释”；AI 只辅助解释和 ±8 分内微调，不能推翻硬条件；评分可对已入库岗位重算。
+- 详细说明见 [`docs/v1.3_改造说明.md`](docs/v1.3_改造说明.md)，版本记录见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 要解决的问题
 
@@ -54,10 +72,11 @@
 
 1. 配置候选人简历、求职意向和岗位筛选规则。
 2. 手动触发一次可见浏览器登录 BOSS、猎聘等招聘渠道。
-3. 招聘 Agent 按计划采集岗位信息，并写入本地岗位库。
-4. 系统对岗位做去重、编号、确定性规则评分，并在启用 AI 时做评分复核。
-5. 每日生成岗位报告草稿；确认配置后可推送到飞书群。
-6. 群内需要岗位话术时，可通过岗位编号、链接、JD 文本或截图文字触发生成。
+3. 招聘 Agent 按关键词计划分页采集岗位；**所有拟入库岗位都补齐详情**，拿不到详情的进入待补。
+4. 按“渠道 + 平台岗位 ID”去重入库并分配编号；跨渠道相似岗位照常入库但标记重复。
+5. 从岗位库读取事实，结合候选人事实卡做硬条件 + 软评分；可选 AI 辅助解释/微调。
+6. 每日生成岗位报告草稿；确认配置后可推送到飞书群。
+7. 群内需要岗位话术时，可通过岗位编号、链接、JD 文本或截图文字触发生成。
 
 ## AI 调用策略
 
@@ -71,7 +90,10 @@
 - `AI_DEFAULT_PROVIDER_ORDER=codex_runtime,openai_api`
 - `CODEX_RUNTIME_COMMAND=...`
 - `AI_OPENAI_API_KEY=...` 或 `OPENAI_API_KEY=...`
-- 单步骤覆盖：`AI_PROFILE_*`、`AI_SEARCH_KEYWORDS_*`、`AI_FIT_EVALUATION_*`、`AI_GREETING_*`
+- 单步骤覆盖：`AI_PROFILE_*`、`AI_SEARCH_KEYWORDS_*`、`AI_SCORE_REVIEW_*`、`AI_GREETING_*`
+  - `AI_SCORE_REVIEW_MAX_ROWS`（默认 8）：只复核规则分最高的少量岗位。
+  - `AI_SCORE_REVIEW_MAX_DELTA`（默认 8）：AI 最多把总分上下调整 8 分，不能改硬条件。
+  - `AI_SCORE_REVIEW_ENABLED`（默认 `false`）：设为 `true` 才开启评分复核；`AI_DEFAULT_MODE=disabled` 时即使打开也不会调用。
 
 调用优先级是：
 
@@ -97,34 +119,42 @@ AI 调用采用“握手 + 流式 + 长总时限”协议，避免模型已开�
 - 收到首个输出即视为已启动，此后不再使用短时限，改用 `AI_DEFAULT_TOTAL_TIMEOUT_MS`（默认 1800000，即 30 分钟）作为总预算并持续等待；Codex 以 `codex exec --ephemeral --skip-git-repo-check --sandbox read-only --json` 调用，JSONL 事件流与进度实时写入 `logs/ai_runtime/`，最终答案优先取事件流 result 事件。
 - 单步可用 `AI_<用途>_HANDSHAKE_TIMEOUT_MS` / `AI_<用途>_TOTAL_TIMEOUT_MS` 覆盖；OpenAI 兼容 API 兜底同样按长总时限执行。详细说明见 `招聘智能体/recruitment-agent/README.md`。
 
-## 搜索、评分与跟踪规则
+## 搜索、入库、评分与跟踪规则
 
 每日搜索关键词的基础策略在 `招聘智能体/recruitment-agent/config/search_strategy.json`。它按三层组织：
 
 - 岗位信息：直接搜索目标岗位名，命中更准。
 - 经历关键词：用简历经历和目标方向组合，发现标题不标准但职责匹配的岗位。
-- 宽泛词：扩大召回，再靠后续筛选和评分过滤。
+- 宽泛词：扩大召回，再靠后续评分过滤。
 
-启用 AI 后，系统会先读取当前候选人画像，再调用统一 AI Router 优化关键词；如果 AI 不可用或返回格式不合格，就继续使用静态 `search_strategy.json`。
+v1.3 新增了关键词滚动排序：`src/strategy/keyword_planner.js` 会读取 `data/keyword_profiles.json`（由每日采集账本重建），按“匹配度 + 历史新增率 + 久未使用 + 渠道适配 - 重复率 - 失败率”排序，并给每个词分配目标新增数和最大页数。这样前几个词不会一次吃满总配额，后面的词也有机会被轮到；从未使用/久未使用的词会获得更高权重。AI 生成关键词时也会返回 `match_score`，但只用于排序，不直接决定采多少。
 
-关键词优化会参考最近采集和评分产物中的效果数据，包括关键词候选数、实际入库数、高匹配岗位数、空结果、重复和平台异常。它的目标不是只搜岗位名，而是组合“AI/智能体/Agent/大模型 + 项目管理/交付/产品/平台/解决方案”等职责词，尽量发现标题不标准但职责匹配的机会。
+采集改为按页判断：
 
-当前采集仍以搜索结果第一页为主；BOSS 的滚动用于定位当前页详情，不等于跨页采集。后续如要避免通用关键词长期只看到第一页，应增加低频、可配置、带风控降频的页码轮换策略。
+- BOSS 列表接口支持 `page`，每页先看“看到/重复/新增”，达到该关键词目标或重复率过高就停止；详情通过 `encryptJobId` 直接打开 `/job_detail/<id>.html`，不再每打开一个岗位就重搜同一个关键词。
+- 猎聘通过 `/zhaopin/?dqs=<城市码>&key=<关键词>&page=N` 翻页（可用 `LIEPIN_PAGE_PARAM` 改为其他参数名）；第 2 页内容与第 1 页相同会自动停止（说明分页参数不被支持，需要按 `docs/v1.3_改造说明.md` 探测）。
+- **入库必须有平台唯一 ID + 完整 JD**；拿不到就进入 `data` 待补文件，不写岗位库、不占编号。
 
-岗位评分分两段执行：
+入库与评分顺序：
 
-- `src/evaluate/evaluate_job_fit.js`：确定性规则评分，生成角色类型、非技术匹配、AI/智能体相关性、项目交付、产品能力、行业经验、薪资、地点、活跃度和详情可信度等分项分。
-- `src/evaluate/ai_fit_refiner.js`：AI 复核层，默认只复核前 `AI_FIT_EVALUATION_MAX_ROWS` 条，并把结果写回 `overall_fit_score`、`application_success_score`、`focus_level`、`match_reasons_json`、`risk_reasons_json` 等字段。
+```text
+采集 → 去重入库/编号（只做完整性 + 去重） → 评分（硬条件 + 软评分 + AI 辅助） → 日报
+```
 
-评分规则是显性的，但尚未完全配置化。`config/profile_rules.json` 当前直接影响目标城市、低优先区域、薪资区间和活跃度阈值；分数权重、标题/职责识别词、关注等级阈值仍在 `src/evaluate/evaluate_job_fit.js` 中。也就是说，规则集中在招聘 Agent 的 `config/` 与 `src/evaluate/` 区域，能看、能改，但还不能只靠一个配置文件完成所有调整。
+- `src/ingest/job_ingest.js`：校验唯一 ID/详情；同渠道按唯一键更新或跳过；跨渠道相似岗位照常入库、照常占编号，但晚入库记录标记 `duplicate` 并指向更早编号；编号在真正写库时分配。
+- `src/evaluate/score_job_facts.js`：读取 `config/candidate_facts.json`（候选人事实卡，缺省从 `profile_rules.json` 派生）和 `config/scoring_rules.json`，先执行硬条件（城市/薪资底线/销售/实习/纯技术/避雷词），再做软评分；硬条件不通过不会被 AI 改回。
+- `src/evaluate/ai_score_review.js`：AI 只对规则分较高的少量岗位做解释和 ±8 分以内的微调，结果缓存；默认关闭 AI 时完全不调用。
+- `src/evaluate/score_jobs.js --from-store`：规则或简历变化后可对已入库岗位重新评分，不需要重新采集。
 
-岗位跟踪使用本地文件维护，不依赖数据库：
+岗位跟踪仍使用本地文件，不依赖数据库：
 
-- `data/job_store.json`：长期岗位库。
-- `data/job_display_index.json`：对外岗位编号和近似重复关系。
+- `data/job_store.json`：岗位事实（`facts`）+ 独立评分（`score`）+ 编号/重复/生命周期状态。
+- `data/job_numbering.json`：按渠道的编号计数器；写库成功才占号，不回收、不重排。
+- `data/keyword_profiles.json`：关键词使用档案（最近使用、新增率、重复率、失败率）。
+- `data/collection_ledger/YYYY-MM-DD.jsonl`：每日“关键词 × 渠道”采集账本；`outputs/collection_ledger_YYYY-MM-DD.md/json` 是人可读/机读汇总。
 - `data/push_state.json`：推送去重、送达记录和报告状态。
-- `src/store/job_store_update.js`：入库、快照和开放状态刷新。
-- `src/push/job_push_draft_and_send.js`：挑选新增/变化岗位生成日报，送达后才标记已推送。
+- `src/push/job_push_draft_and_send.js`：只消费已评分记录；重复记录不推荐；内容变化才重推，评分变化不重推。
+- 状态刷新使用采集器输出的 `seen_job_ids`（本轮列表实际看到的岗位），不再拿“新增入库文件”判断；`JOB_CLOSE_AFTER_MISSING_DAYS=0`（默认）只标“未知”，不自动关闭。
 
 调度规则集中在 `招聘智能体/recruitment-agent/config/schedule_policy.json`。上午 09:00-12:00、下午 13:00-18:00 各有独立的每小时触发器，19:00-20:30 有独立的每半小时日报触发器；错过不补、不唤醒电脑。每半天最多成功采集一次，两次成功采集至少相隔 2 小时。21:05 另有独立日报缺失 watchdog。修改 JSON 后必须重新运行计划任务注册脚本。
 
@@ -196,7 +226,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 ## 三个容易误解的配置
 
-- BOSS 的 `detail_capture=false` 不代表“未登录”。登录由可见登录脚本和登录检查负责；该设置只决定采集时是否自动点击岗位详情。当前默认是 `true`，用于取得完整 JD；如果人工关闭，列表岗位仍可进入“需人工确认详情”的候选。
+- BOSS/猎聘的 `detail_capture=false` 不代表“未登录”。登录由可见登录脚本和登录检查负责；该设置只决定采集时是否自动打开岗位详情。v1.3 要求入库必须有完整 JD 和平台唯一 ID；关闭详情后，列表岗位只会进入待补，不会入库/编号。
 - `targetSalaryK` 是用户在 `config/profile_rules.json` 中填写的目标薪资；`salary_min_k`、`salary_max_k` 和 `active_days` 是招聘网站针对每一条岗位返回的数据。网站字段缺失时应标记为“未知”，不能当作 0。
 - `SCHEDULE_SEND_MODE` 未填写时按 `draft` 处理，只生成草稿。只有明确填写 `SCHEDULE_SEND_MODE=send` 并通过发送配置检查后，晚间定时流程才会真实发送。
 
@@ -204,6 +234,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -LiteralPat
 
 ## 版本迭代
 
+- **2026-10-28 v1.3（采集 → 入库/编号 → 评分重构）**：
+  1. **流程重排**：采集 → 去重入库/编号 → 评分 → 日报；初筛只保留“完整性 + 去重”，业务判断统一后移。
+  2. **入库门槛**：必须有平台唯一 ID + 完整 JD；不满足进待补，不入库、不占编号。
+  3. **编号**：写岗位库时分配，按渠道独立序列；跨渠道重复照常占号并标记“重复于更早编号”，不参与推荐。
+  4. **采集**：BOSS 支持 `page` 翻页、按关键词目标/重复率停止、详情直连 `encryptJobId`；猎聘支持页码参数并检测“翻页无效”；关键词按历史新增/久未使用滚动排序，每词分配目标与最大页数。
+  5. **账本**：新增 `data/collection_ledger/YYYY-MM-DD.jsonl` 和 `outputs/collection_ledger_YYYY-MM-DD.md/json`，按“关键词 × 渠道”记录看到/重复/新增/失败/页数/停止原因。
+  6. **评分**：新增 `candidate_facts.json`、`scoring_rules.json`、`score_job_facts.js`；硬条件 + 软评分 + 解释；`score_jobs.js --from-store` 可重算，不需要重新采集。
+  7. **AI**：新增 `ai_score_review.js`；只复核规则高分岗位、最多 ±8 分、缓存结果、不能推翻硬条件；默认 AI 关闭时完全不调用。
+  8. **测试**：离线烟测升级为 `自动化测试/scripts/run_v13_smoke.js`，覆盖入库/编号/跨渠道重复/硬条件/AI 边界/关键词排序/账本；`run_offline_smoke.ps1` 已指向新测试。
 - **2026-10-02 v0.4.6（修复"字段缺失被当成 0"导致的整批误杀 + 采集频率失控）**：
   1. **字段缺失不再当作 0**：`postprocess_boss_stage2.js` / `postprocess_liepin_stage2.js` 的 `n()` 与 `evaluate_job_fit.js` 的 `scoreSalary` / `scoreActivity` 都用 `Number(v)` 直接转换，而 `Number("") === 0` 且 `Number.isFinite(0)` 为真，于是"薪资没采到"被当成"薪资 0K"：筛选侧给出"最高低于20K → 薪资整体偏低"并把整批降为"低"，评估侧 `salaryScore=10` 触发 `salaryScore <= 20` 把整批判成"暂不考虑"，日报最终变成"记录 30 条、可关注 0 条"。现统一改为"空串/纯空白/null/undefined/非数字 → 未知(null)"：薪资未知按中性 55 分并提示"薪资结构未解析，需人工确认"；活跃时间未知不再被误判成"一周内活跃"。真正偏低的薪资（如 8-15K）仍照旧判 10 分。
   2. **按渠道调度真正生效**：`scheduled_entry.runWorkflow()` 之前只把 `decision.action` 翻译成 `ENABLE_*`，没有把 `decision.pendingPlatforms` 下传，而工作流是"平台启用就采集"，导致已成功采集的平台被每个整点重复采集（2026-09-30 BOSS 被采 9 轮、约 2.5 小时连续抓取，触发平台风控降级）。现通过 `COLLECT_PLATFORMS` 把待采平台白名单传给 `daily_workflow`，只采真正待采的平台。

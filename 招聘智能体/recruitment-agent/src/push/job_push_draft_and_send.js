@@ -9,14 +9,12 @@ const { recommendGreeting, recommendGreetingResult } = require("../greeting/gree
 const {
   loadJobStore,
   saveJobStore,
-  upsertRecords,
   markPushedItems,
   jobStoreKey,
 } = require("../store/job_store");
 const {
   loadDisplayIndex,
   saveDisplayIndex,
-  decorateRecordsWithDisplayIds,
   markRecommended,
 } = require("./job_display_index");
 
@@ -34,8 +32,6 @@ const forceSend = args.has("--force-send");
 const enableJobStore = envBool("ENABLE_JOB_STORE", true);
 const reportTopN = envNumber("REPORT_TOP_N", 12);
 const splitByPlatform = envBool("REPORT_SPLIT_BY_PLATFORM", true);
-const similarThreshold = envNumber("SIMILAR_JOB_THRESHOLD", 0.8);
-const similarWindowDays = envNumber("SIMILAR_JOB_WINDOW_DAYS", 45);
 const today = shanghaiDateKey();
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 
@@ -124,18 +120,23 @@ function deliveryKey(row, channelName = "") {
   return `${channelName || platformName(row)}:${jobKey(row)}`;
 }
 
+// v1.3：标识“岗位事实是否变化”，而不是“评分是否变化”。
+// 评分是可重算的辅助结果，不应因为 AI 微调分数就重复推荐同一岗位。
 function deliverySignature(row) {
+  const facts = row.facts || {};
+  if (facts.content_hash) return JSON.stringify({ content_hash: facts.content_hash });
   return JSON.stringify({
-    focus_level: row.focus_level || "",
-    salary: row.salary || "",
+    title: row.job_title || "",
+    company: row.company || "",
+    salary: row.salary || facts.salary_text || "",
     latest_active_date: row.latest_active_date || "",
-    overall_fit_score: Number(row.overall_fit_score || 0),
-    application_success_score: Number(row.application_success_score || 0),
+    job_url: row.job_url || facts.job_url || "",
   });
 }
 
 function isCandidate(row) {
-  return ["重点关注", "重点关注-需确认详情", "可关注"].includes(row.focus_level);
+  if (row.record_status === "duplicate") return false;
+  return ["重点关注", "重点关注-需确认详情", "可关注", "需确认"].includes(row.focus_level);
 }
 
 function sortByPriority(a, b) {
@@ -249,6 +250,7 @@ function buildPushItem(row, index, channelName) {
 }
 
 function buildReport(records, state, inputPath, channelName = "") {
+  records = records.filter((row) => row.record_status !== "duplicate");
   const candidates = records.filter(isCandidate);
   const newCandidates = candidates.filter((row) => !state.deliveries[deliveryKey(row, channelName)]);
   const changedCandidates = candidates.filter((row) => {
@@ -271,9 +273,9 @@ function buildReport(records, state, inputPath, channelName = "") {
   const quietMessage = fallbackPriority.length
     ? ""
     : records.length === 0
-      ? "本次采集正常完成，但招聘平台没有返回岗位。系统仍生成本日报，便于确认任务确实执行过。"
+      ? "本轮没有新增入库岗位（可能是去重后无新增，或采集/详情失败进入待补）。系统仍生成日报，便于确认任务确实执行过。"
       : candidates.length === 0
-        ? `本次已检查 ${records.length} 条岗位，但没有岗位达到“可关注”阈值。`
+        ? `本次已检查 ${records.length} 条岗位，但没有岗位达到“可关注/需确认”阈值。`
         : "本次没有新增或内容发生变化的可关注岗位；已发送过且未变化的岗位不会重复推荐。";
   const md = [
     `# ${title}`,
@@ -430,21 +432,28 @@ async function main() {
   const inputPaths = process.argv.filter((arg) => arg.endsWith(".json"));
   const resolvedInputPaths = inputPaths.length
     ? inputPaths
-    : latestFiles([/^boss_stage3_fit_evaluated_.*\.json$/, /^liepin_stage3_fit_evaluated_.*\.json$/]);
+    : latestFiles([/^boss_stage3_scored_.*\.json$/, /^liepin_stage3_scored_.*\.json$/]);
   const payloads = resolvedInputPaths.map((inputPath) => ({ inputPath, payload: JSON.parse(fs.readFileSync(inputPath, "utf8")) }));
   const records = payloads.flatMap(({ inputPath, payload }) => (payload.records || []).map((row) => ({
     platform: payload.platform || row.platform || (row.liepin_job_url ? "猎聘" : "BOSS"),
     source_evaluated_file: inputPath,
     ...row
   })));
+  const activeRecords = records.filter((row) => row.record_status !== "duplicate");
   const state = loadState();
   const displayIndex = loadDisplayIndex(displayIndexPath);
-  decorateRecordsWithDisplayIds(records, { index: displayIndex, threshold: similarThreshold, windowDays: similarWindowDays });
   const jobStore = enableJobStore ? loadJobStore() : null;
-  if (jobStore) {
-    upsertRecords(jobStore, records, { dateKey: today });
+  // v1.3：编号只在入库阶段分配，这里绝不补号/重排。
+  // 旧文件缺编号时，只尝试从岗位库按主键补回；补不到就保持空号，后续人工处理。
+  for (const row of activeRecords) {
+    if (row.display_id) continue;
+    const entry = jobStore?.jobs?.[jobKey(row)];
+    if (entry?.display_id) row.display_id = entry.display_id;
   }
-  const reportGroups = groupReports(records, state, resolvedInputPaths.join("; "));
+  let reportGroups = groupReports(activeRecords, state, resolvedInputPaths.join("; "));
+  if (!reportGroups.length) {
+    reportGroups = [{ channelName: "", records: [], report: buildReport([], state, resolvedInputPaths.join("; ")) }];
+  }
   const results = [];
   for (const group of reportGroups) {
     for (const row of group.report.priority) {
@@ -507,7 +516,7 @@ async function main() {
       email: emailResult,
     });
   }
-  updateSeen(state, records);
+  updateSeen(state, activeRecords);
   saveDisplayIndex(displayIndexPath, displayIndex);
   if (jobStore) saveJobStore(jobStore);
   state.reports.push({

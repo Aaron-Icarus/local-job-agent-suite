@@ -3,6 +3,9 @@ const path = require("path");
 const crypto = require("crypto");
 const { shanghaiDateKey, shanghaiDateTime, daysBetweenDateKeys } = require("../core/time_utils");
 const { fieldZh, fieldDescriptions } = require("../core/field_dictionary");
+const { readJson, writeJsonAtomic } = require("../core/atomic_json");
+const { allocateDisplayId, saveNumbering } = require("./job_numbering");
+const { findEarlierCrossChannelDuplicate } = require("./job_duplicates");
 
 const STORE_VERSION = 1;
 const DEFAULT_STORE_PATH = path.resolve(__dirname, "..", "..", "data", "job_store.json");
@@ -49,6 +52,7 @@ const lifecycleHeaders = [
 const trackedContentFields = [
   "platform",
   "record_key",
+  "platform_job_id",
   "display_id",
   "company",
   "company_industry",
@@ -86,16 +90,12 @@ const trackedContentFields = [
   "liepin_job_url",
   "source_url",
   "detail_url",
+  "job_url",
   "collection_status",
-  "screen_priority",
-  "focus_level",
-  "overall_fit_score",
-  "application_success_score",
-  "application_success_band",
-  "evaluation_summary",
-  "greeting_message",
-  "greeting_strategy",
-  "greeting_basis",
+  "detail_status",
+  "source_keyword",
+  "source_page",
+  "ingested_at",
 ];
 
 function ensureDir(dir) {
@@ -128,14 +128,18 @@ function normalizeStore(parsed) {
 
 function loadJobStore(storePath = defaultStorePath()) {
   if (!fs.existsSync(storePath)) return emptyStore();
-  return normalizeStore(JSON.parse(fs.readFileSync(storePath, "utf8")));
+  const parsed = readJson(storePath, null);
+  if (!parsed || typeof parsed !== "object") {
+    try { fs.copyFileSync(storePath, `${storePath}.corrupt.${Date.now()}`); } catch { /* best effort */ }
+    return emptyStore();
+  }
+  return normalizeStore(parsed);
 }
 
 function saveJobStore(store, storePath = defaultStorePath()) {
   store.version = store.version || STORE_VERSION;
   store.updated_at = shanghaiDateTime();
-  ensureDir(path.dirname(storePath));
-  fs.writeFileSync(storePath, JSON.stringify(store, null, 2), "utf8");
+  writeJsonAtomic(storePath, store, { backup: true });
 }
 
 function val(value) {
@@ -206,26 +210,81 @@ function jobUrl(row) {
   return "";
 }
 
-function snapshotFromRow(row) {
-  const out = {};
-  for (const field of trackedContentFields) {
-    if (row[field] !== undefined && row[field] !== null && row[field] !== "") {
-      out[field] = stableValue(row[field]);
-    }
-  }
-  out.platform = platformName(row);
-  out.job_url = jobUrl(row);
-  return out;
+// 岗位事实：只保留“平台上客观存在的信息”，不包含任何评分/推荐判断。
+function factsFromRow(row) {
+  const platform = platformName(row);
+  const platformJobId = stableValue(row.platform_job_id || row.job_id || row.boss_job_id || row.liepin_job_id);
+  const facts = {
+    platform,
+    platform_job_id: platformJobId,
+    job_url: jobUrl(row) || stableValue(row.job_url),
+    company: stableValue(row.company),
+    company_industry: stableValue(row.company_industry),
+    company_scale: stableValue(row.company_scale),
+    company_stage: stableValue(row.company_stage),
+    company_summary: stableValue(row.company_summary),
+    job_title: stableValue(row.job_title),
+    salary_text: stableValue(row.salary),
+    salary_min_k: stableValue(row.salary_min_k),
+    salary_max_k: stableValue(row.salary_max_k),
+    salary_months: stableValue(row.salary_months),
+    city: stableValue(row.city),
+    district: stableValue(row.district),
+    business_area: stableValue(row.business_area),
+    address: stableValue(row.address || row.business_area || row.city),
+    experience: stableValue(row.experience),
+    degree: stableValue(row.degree),
+    tags: stableValue(row.tags),
+    skills: stableValue(row.skills),
+    job_description: stableValue(row.job_description),
+    boss_active_text: stableValue(row.boss_active_text),
+    recruiter_active_text: stableValue(row.recruiter_active_text),
+    latest_active_date: stableValue(row.latest_active_date),
+    boss_online: row.boss_online === true || row.boss_online === "true",
+    detail_status: stableValue(row.detail_status || row.collection_status),
+    collected_at: stableValue(row.collected_at),
+    source_keyword: stableValue(row.source_keyword || row.keyword),
+    source_page: stableValue(row.source_page || row.page),
+    refresh_time: stableValue(row.refresh_time),
+    tags_json: JSON.stringify(Array.isArray(row.tags) ? row.tags : []),
+  };
+  // 内容指纹只看“岗位事实是否变化”，不看采集时间/来源关键词/页码，避免同一岗位每天重采就被判成内容变化。
+  const hashPayload = { ...facts };
+  delete hashPayload.collected_at;
+  delete hashPayload.source_keyword;
+  delete hashPayload.source_page;
+  delete hashPayload.content_hash;
+  facts.content_hash = stableObjectHash(hashPayload);
+  return facts;
+}
+
+function enrichRowWithFacts(row, facts, extra = {}) {
+  return {
+    ...row,
+    ...facts,
+    salary: facts.salary_text,
+    job_url: facts.job_url,
+    ...extra,
+  };
 }
 
 function createEntry(key, row, snapshot, hash, options) {
   const now = options.now || shanghaiDateTime();
   const dateKey = options.dateKey || shanghaiDateKey();
+  const facts = options.facts || factsFromRow(row);
   return {
     job_store_key: key,
     platform: snapshot.platform,
     record_key: stableValue(row.record_key),
-    display_id: stableValue(row.display_id),
+    platform_job_id: facts.platform_job_id,
+    display_id: options.displayId || stableValue(row.display_id),
+    facts,
+    record_status: options.recordStatus || "active",
+    duplicate_of_key: options.duplicateOfKey || "",
+    duplicate_of_display_id: options.duplicateOfDisplayId || "",
+    duplicate_score: options.duplicateScore || 0,
+    ingested_at: options.ingestedAt || now,
+    score: options.score || null,
     company: stableValue(row.company),
     job_title: stableValue(row.job_title),
     salary: stableValue(row.salary),
@@ -269,6 +328,106 @@ function createEntry(key, row, snapshot, hash, options) {
     is_chatting: stableValue(row.is_chatting) || "否",
     chat_status: stableValue(row.chat_status) || "未沟通",
     chatting_note: stableValue(row.chatting_note),
+  };
+}
+
+function snapshotFromRow(row) {
+  const facts = row.facts || null;
+  const out = {};
+  for (const field of trackedContentFields) {
+    let value = row[field];
+    if ((value === undefined || value === null || value === "") && facts) {
+      value = field === "salary" ? facts.salary_text : facts[field];
+    }
+    if (value !== undefined && value !== null && value !== "") out[field] = stableValue(value);
+  }
+  out.platform = platformName(row);
+  out.job_url = jobUrl(row) || stableValue(facts?.job_url || row.job_url);
+  return out;
+}
+
+// 入库：只校验“数据完整性 + 去重”，不做任何好坏判断。
+// 被调用方保证行里已经有平台唯一 ID 和完整 JD；这里再兜底检查一次。
+function ingestFacts(store, row, options = {}) {
+  const now = options.now || shanghaiDateTime();
+  const dateKey = options.dateKey || shanghaiDateKey();
+  const key = jobStoreKey(row);
+  const facts = factsFromRow(row);
+  if (!facts.platform_job_id || !facts.job_description || facts.job_description.trim().length < (options.minJdLength || 40)) {
+    return { key, isNew: false, accepted: false, reason: "missing_platform_id_or_full_jd", facts };
+  }
+  const existing = store.jobs[key];
+  if (existing) {
+    const merged = enrichRowWithFacts(row, facts, { display_id: existing.display_id });
+    const snapshot = snapshotFromRow(merged);
+    const hash = stableObjectHash(snapshot);
+    const changed = existing.content_hash !== hash;
+    const contentFieldChanges = changed ? changedFields(existing.content_snapshot, snapshot) : [];
+    if (changed) {
+      existing.content_hash = hash;
+      existing.content_snapshot = snapshot;
+      existing.content_changed = "是";
+      existing.changed_fields = contentFieldChanges;
+      existing.job_content_updated_at = now;
+    } else {
+      existing.content_changed = "否";
+      existing.changed_fields = [];
+    }
+    existing.facts = facts;
+    existing.content_snapshot = snapshot;
+    existing.record_key = stableValue(row.record_key || existing.record_key);
+    existing.company = facts.company;
+    existing.job_title = facts.job_title;
+    existing.salary = facts.salary_text;
+    existing.city = facts.city;
+    existing.district = facts.district;
+    existing.address = facts.address;
+    existing.job_url = facts.job_url;
+    existing.last_seen_at = now;
+    existing.last_seen_date = dateKey;
+    existing.status_checked_at = now;
+    existing.job_status = "open";
+    existing.is_open = "是";
+    existing.close_reason = "";
+    existing.missing_since_date = "";
+    existing.last_missing_at = "";
+    existing.last_missing_date = "";
+    existing.not_seen_refresh_count = 0;
+    existing.data_updated_at = now;
+    return { key, accepted: true, isNew: false, changed, displayId: existing.display_id, recordStatus: existing.record_status || "active", facts };
+  }
+
+  const numberingState = options.numberingState || null;
+  const allocation = allocateDisplayId(store, facts.platform, options.numberingPath, numberingState);
+  const enriched = enrichRowWithFacts(row, facts, { display_id: allocation.displayId });
+  const snapshot = snapshotFromRow(enriched);
+  const hash = stableObjectHash(snapshot);
+  const duplicate = findEarlierCrossChannelDuplicate(store, enriched, {
+    threshold: options.duplicateThreshold || 0.8,
+    currentKey: key,
+  });
+  const entry = createEntry(key, enriched, snapshot, hash, {
+    now,
+    dateKey,
+    facts,
+    displayId: allocation.displayId,
+    ingestedAt: now,
+    recordStatus: duplicate ? "duplicate" : "active",
+    duplicateOfKey: duplicate?.key || "",
+    duplicateOfDisplayId: duplicate?.entry?.display_id || "",
+    duplicateScore: duplicate?.score || 0,
+  });
+  store.jobs[key] = entry;
+  return {
+    key,
+    accepted: true,
+    isNew: true,
+    changed: true,
+    displayId: allocation.displayId,
+    recordStatus: entry.record_status,
+    duplicateOfDisplayId: entry.duplicate_of_display_id,
+    facts,
+    numbering: allocation.numbering,
   };
 }
 
@@ -432,6 +591,11 @@ function decorateRowsWithStore(store, rows, options = {}) {
       ...row,
       ...lifecycleFields(entry || { job_store_key: key }, dateKey),
       job_store_key: key,
+      display_id: entry?.display_id || row.display_id || "",
+      record_status: entry?.record_status || row.record_status || "active",
+      duplicate_of_display_id: entry?.duplicate_of_display_id || "",
+      facts: entry?.facts || row.facts || null,
+      score: entry?.score || row.score || null,
     };
   });
 }
@@ -600,7 +764,7 @@ function markPushedItems(store, items, options = {}) {
 function refreshMissingOpenJobs(store, currentKeys, options = {}) {
   const now = options.now || shanghaiDateTime();
   const dateKey = options.dateKey || shanghaiDateKey();
-  const closeAfterDays = Number(options.closeAfterDays || process.env.JOB_CLOSE_AFTER_MISSING_DAYS || 7);
+  const closeAfterDays = Number(options.closeAfterDays ?? process.env.JOB_CLOSE_AFTER_MISSING_DAYS ?? 0);
   const current = new Set(currentKeys || []);
   const allowedPlatforms = new Set((options.platforms || []).map((value) => platformKey({ platform: value })));
   const changed = [];
@@ -608,8 +772,28 @@ function refreshMissingOpenJobs(store, currentKeys, options = {}) {
   const unknown = [];
   for (const [key, entry] of Object.entries(store.jobs || {})) {
     if (allowedPlatforms.size && !allowedPlatforms.has(platformKey(entry))) continue;
+    if (entry.record_status === "duplicate") continue; // 重复记录不参与“是否关闭”的主记录判断
+    if (current.has(key)) {
+      // 本轮列表里实际看到了它：刷新 last_seen，并把它从 missing/unknown/closed 恢复为 open。
+      const previousStatus = entry.job_status || "open";
+      entry.last_seen_at = now;
+      entry.last_seen_date = dateKey;
+      entry.status_checked_at = now;
+      entry.status_check_method = "latest_collection_seen";
+      entry.missing_since_date = "";
+      entry.last_missing_at = "";
+      entry.last_missing_date = "";
+      entry.not_seen_refresh_count = 0;
+      entry.job_status = "open";
+      entry.is_open = "是";
+      entry.close_reason = "";
+      entry.closed_at = "";
+      entry.closed_date = "";
+      entry.data_updated_at = now;
+      if (previousStatus !== "open") changed.push({ key, previousStatus, nextStatus: "open", missingDays: 0 });
+      continue;
+    }
     if (entry.job_status === "closed") continue;
-    if (current.has(key)) continue;
     if (entry.first_seen_date === dateKey) continue;
     if (entry.last_seen_date === dateKey) continue;
 
@@ -623,7 +807,7 @@ function refreshMissingOpenJobs(store, currentKeys, options = {}) {
     }
     entry.last_missing_date = dateKey;
     const missingDays = Math.max(1, (daysBetweenDateKeys(entry.missing_since_date, dateKey) ?? 0) + 1);
-    if (missingDays >= closeAfterDays) {
+    if (closeAfterDays > 0 && missingDays >= closeAfterDays) {
       entry.job_status = "closed";
       entry.is_open = "否";
       entry.closed_at = entry.closed_at || now;
@@ -633,7 +817,9 @@ function refreshMissingOpenJobs(store, currentKeys, options = {}) {
     } else {
       entry.job_status = "unknown";
       entry.is_open = "未知";
-      entry.close_reason = `未在本轮刷新结果中出现，等待后续刷新确认；连续 ${closeAfterDays} 天缺失后才标记关闭`;
+      entry.close_reason = closeAfterDays > 0
+        ? `未在本轮刷新结果中出现，等待后续刷新确认；连续 ${closeAfterDays} 天缺失后才标记关闭`
+        : "未在本轮刷新结果中出现；自动关闭未启用，需人工复核是否仍开放";
       unknown.push(key);
     }
     entry.data_updated_at = now;
@@ -661,6 +847,9 @@ function storeRecords(store, dateKey = shanghaiDateKey()) {
     ...lifecycleFields(entry, dateKey),
     platform: entry.platform || "",
     display_id: entry.display_id || "",
+    record_status: entry.record_status || "active",
+    duplicate_of_display_id: entry.duplicate_of_display_id || "",
+    job_store_key: entry.job_store_key || "",
     record_key: entry.record_key || "",
     company: entry.company || "",
     job_title: entry.job_title || "",
@@ -694,6 +883,9 @@ module.exports = {
   platformKey,
   jobUrl,
   platformName,
+  factsFromRow,
+  enrichRowWithFacts,
+  ingestFacts,
   lifecycleFields,
   decorateRowsWithStore,
   upsertRecords,
