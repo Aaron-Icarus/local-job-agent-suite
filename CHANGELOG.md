@@ -73,7 +73,7 @@
 ### 已知限制（v1.4.0 MVP）
 
 1. 尚未用真实 BOSS/猎聘账号做完整线上回归；采集执行器仍调用旧采集脚本，**角色级关键词尚未真正传入采集器**；
-2. Electron 依赖未在本机安装/打包验证，`npm run electron` 前需 `npm install`；安装包未生成；
+2. Electron 依赖已安装（Electron 35.7.5），但本机启动受 crashpad/图形环境限制，尚未完成 GUI 实机验证和安装包生成；
 3. AI 相似度/角色画像生成只留接口，当前确认只有本地相似度；
 4. AI Provider 的 Key 使用本地 AES 密钥文件，不是 Windows DPAPI；Electron `safeStorage` 后续接入；
 5. 日报发送默认需要配置飞书 webhook；未配置时只生成草稿；
