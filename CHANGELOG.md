@@ -3,10 +3,43 @@
 本文件只记录**设计、方案、架构层面**的变化，不逐文件罗列改动。  
 详细实现说明见 `docs/v1.3_改造说明.md`；v1.4 方案见 `docs/requirements/`、`docs/prd/`、`docs/plans/`；历史提交见 GitHub 仓库。
 
-- 当前版本：**v1.4.3**
+- 当前版本：**v1.5.0**
 - 当前版本日期：**2026-11-06**
 - 记录整理：2026-11-06
 - 版本号规则：`v主版本.次版本.修订号`；流程/架构调整升次版本，纯修复升修订号。
+
+---
+
+## v1.5.0 — 2026-11-06：对话/ReAct、消息平台、职位库筛选与跨平台
+
+### 新增
+
+- **对话页面**：支持 MD 简历上传、目标岗位/城市/薪资/经历补全、本地 `resume_profile_skill.md`、AI 可选增强、生成角色画像、按角色快速查岗位编号。
+- **ReAct 基本结构**：`observe → parse_resume → ask_missing / search_jobs → generate_profile`，工具步骤写入消息 metadata；配置 AI Provider 后画像生成可走 AI，失败回退本地规则。
+- **消息平台接入**：
+  - 消息页支持飞书 App ID/App Secret/群 ID/Verify Token/Encrypt Key；
+  - 写入原 `消息平台/message-platform/.env`，同步启用 channels/routes 中的群 ID；
+  - 可启动/停止原消息平台长连接进程，显示状态和日志；
+  - 保留简单 webhook 发送。
+- **职位库**：关键词/编号/公司/岗位/JD 搜索、地点、最低/最高薪资、日期范围、排序、每页数量、数字分页、页码跳转；筛选之间 AND。
+- **跨平台**：Chrome 路径增加 macOS，新增 `启动招聘智能体.command`，Electron Builder 增加 macOS DMG 配置。
+- **依赖检查**：新增 `npm run doctor`，检查 Node/Chrome/Electron/消息平台目录与 SDK；新增安装说明。
+- **启动登录页**：打开登录页时不再 `--start-minimized`，按钮会打开可见 Chrome 并提示。
+
+### 验证
+
+- v1.4/v1.5 测试：34/34 通过；
+- 启动器实测打开 Electron；
+- 职位库分页/筛选 API 实测；
+- 对话 API 实测：缺信息追问 → 补全 → 生成画像；
+- 页面设计工作台检查。
+
+### 已知限制
+
+- 原消息平台依赖（飞书 SDK）未在当前机器安装，启动会失败并显示日志；需按安装说明安装。
+- 对话的 AI 画像生成需要配置 AI Provider；无 Key 时使用本地规则。
+- 角色级关键词仍未传入旧采集器。
+- macOS 启动器/打包未在真实 Mac 上验证。
 
 ---
 

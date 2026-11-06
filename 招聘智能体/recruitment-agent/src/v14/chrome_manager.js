@@ -8,7 +8,16 @@ const COMMON_PATHS = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
   path.join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  path.join(process.env.HOME || "", "Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome"),
 ];
+
+function defaultProfileDir() {
+  if (process.platform === "darwin") {
+    return path.join(process.env.HOME || "", "Library", "Application Support", "JobAgent", "ChromeProfile");
+  }
+  return path.join(process.env.LOCALAPPDATA || "", "JobAgent", "ChromeProfile");
+}
 
 function findChrome() {
   for (const item of COMMON_PATHS) {
@@ -18,7 +27,7 @@ function findChrome() {
 }
 
 function buildChromeArgs(input = {}) {
-  const profileDir = input.profileDir || path.join(process.env.LOCALAPPDATA || "", "JobAgent", "ChromeProfile");
+  const profileDir = input.profileDir || defaultProfileDir();
   const port = Number(input.port || 9222);
   const args = [
     `--remote-debugging-port=${port}`,
@@ -27,8 +36,8 @@ function buildChromeArgs(input = {}) {
     "--no-default-browser-check",
     "--disable-background-timer-throttling",
     "--disable-renderer-backgrounding",
-    "--start-minimized",
   ];
+  if (input.startMinimized !== false) args.push("--start-minimized");
   if (input.startUrl) args.push(input.startUrl);
   return args;
 }

@@ -81,7 +81,7 @@ test("API 健康检查、静态页面、设置校验和角色生命周期", asyn
 
   const messages = await jsonFetch(`${base}/api/messages`);
   assert.equal(messages.body.ok, true);
-  assert.equal(messages.body.original_message_platform.integrated, false);
+  assert.equal(messages.body.original_message_platform.integrated, true);
   const testMessage = await jsonFetch(`${base}/api/messages/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

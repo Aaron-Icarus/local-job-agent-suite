@@ -130,6 +130,26 @@ test("Excel 导出包含岗位、评分和可点击链接", (t) => {
   assert.match(fs.readFileSync(result.filePath, "utf8"), /测试公司/);
 });
 
+test("职位库搜索、AND 筛选与分页", (t) => {
+  const { db, role } = seedJobAndRole(t);
+  let result = scores.searchRoleJobs(db, role.role_uuid, { q: "测试公司", page: 1, pageSize: 1 });
+  assert.equal(result.total, 1);
+  assert.equal(result.jobs[0].display_id, "A001");
+  assert.equal(result.pages, 1);
+
+  result = scores.searchRoleJobs(db, role.role_uuid, { q: "不存在", page: 1, pageSize: 20 });
+  assert.equal(result.total, 0);
+
+  result = scores.searchRoleJobs(db, role.role_uuid, {
+    location: "上海",
+    salaryMin: 10,
+    salaryMax: 20,
+    page: 1,
+    pageSize: 20,
+  });
+  assert.equal(result.total, 1);
+});
+
 test("MD 简历解析、导入并生成角色画像", (t) => {
   const { db } = setup(t);
   const markdown = `# 张三简历

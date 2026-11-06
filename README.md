@@ -1,32 +1,38 @@
 # 本地招聘信息智能体与飞书消息转发平台
 
-> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.4.3（2026-11-06）。
+> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.5.0（2026-11-06）。
 >
-> v1.4 客户端方案：
+> v1.4/v1.5 客户端方案：
 > [需求说明](docs/requirements/v1.4_客户端化与多角色_需求说明.md) ·
 > [PRD v3.0](docs/prd/招聘信息智能体_客户端_PRD_v3.0.md) ·
 > [执行计划](docs/plans/v1.4_客户端化_执行计划.md) ·
 > [小白说明](docs/v1.4_小白说明.md) ·
-> [v1.4.2 验证记录](docs/v1.4.2_验证记录.md)
+> [安装与依赖](docs/安装与依赖.md)
 >
 > v1.4 新数据层使用 `node:sqlite`，要求 Node.js >= 22.5.0；v1.3 旧 CLI 仍兼容原环境。
 > Electron 使用 28.3.3，`npm run electron` 已带 `--no-sandbox`（本机 Windows 兼容）。
 
-## v1.4 客户端（开发完成，MVP）
+## v1.5 客户端（Windows / macOS）
 
-**最简单：双击根目录 `启动招聘智能体.cmd`。**  
+**Windows：双击根目录 `启动招聘智能体.cmd`。**  
+**macOS：双击 `启动招聘智能体.command`（首次可能需要 `chmod +x`）。**
+
 启动器会检查依赖/演示数据，优先打开 Electron；失败时自动打开浏览器页面。
 
 ```powershell
 cd 招聘智能体\recruitment-agent
 npm install                 # 首次安装 Electron 依赖
+npm run doctor              # 检查 Node/Chrome/Electron/消息平台依赖
 npm run v14:seed-demo       # 可选：写入演示角色/岗位
 npm run v14:serve           # 只启动本地 API + 页面
 npm run electron            # 启动桌面客户端（托盘）
 ```
 
 - 数据默认在 `data/v1.4/jobs.db`，可用 `V14_DB_PATH` 覆盖；
-- 页面：首页、角色、任务、职位库、设置、AI 能力、消息、日报；
+- 页面：首页、对话、角色、任务、职位库、设置、AI 能力、消息、日报；
+- 对话支持 MD 简历 → 角色画像 Skill/可选 AI → 生成角色；按角色快速查岗位编号；
+- 职位库支持关键词/编号/公司/岗位/JD 搜索、地点/薪资/日期筛选、排序、数字分页和跳页；
+- 消息页支持飞书 App ID/Secret/群 ID 配置，并可启动/停止原消息平台服务；
 - 采集/入库队列、多角色评分、调度、登录检查、飞书日报、Excel 导出已接入新链路；
 - 旧 v1.3 CLI 保留，不自动迁移；需要时运行 `npm run v14:migrate`。
 

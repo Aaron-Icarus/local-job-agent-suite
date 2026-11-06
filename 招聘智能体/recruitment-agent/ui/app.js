@@ -10,6 +10,15 @@ const state = {
   confirmRoleId: "",
   resumeContent: "",
   resumeFileName: "",
+  jobPage: 1,
+  jobPageSize: 20,
+  jobTotal: 0,
+  jobPages: 1,
+  chatSessionId: "",
+  chatSessions: [],
+  chatSuggestions: [],
+  chatResumeContent: "",
+  chatResumeFileName: "",
 };
 
 async function api(path, options = {}) {
@@ -131,7 +140,7 @@ async function refreshRoles() {
     }).join("");
   }
   const options = state.roles.map((role) => `<option value="${role.role_uuid}">${esc(role.role_number)} ${esc(role.nickname)}</option>`).join("");
-  for (const id of ["jobRoleSelect", "reportRoleSelect"]) {
+  for (const id of ["jobRoleSelect", "reportRoleSelect", "chatRoleSelect"]) {
     const select = document.getElementById(id);
     if (select) {
       select.innerHTML = options || '<option value="">无角色</option>';
@@ -183,21 +192,63 @@ async function refreshJobs() {
     document.getElementById("jobList").innerHTML = '<div class="empty">先创建角色。</div>';
     return;
   }
-  const data = await api(`/api/jobs?role=${encodeURIComponent(roleUuid)}&limit=100`);
+  const params = new URLSearchParams({
+    role: roleUuid,
+    q: document.getElementById("jobSearch").value.trim(),
+    location: document.getElementById("jobLocation").value.trim(),
+    salaryMin: document.getElementById("jobSalaryMin").value.trim(),
+    salaryMax: document.getElementById("jobSalaryMax").value.trim(),
+    dateFrom: document.getElementById("jobDateFrom").value,
+    dateTo: document.getElementById("jobDateTo").value,
+    sort: document.getElementById("jobSort").value,
+    page: String(state.jobPage),
+    pageSize: String(state.jobPageSize),
+  });
+  const data = await api(`/api/jobs?${params.toString()}`);
   state.jobs = data.jobs || [];
+  state.jobTotal = data.total || 0;
+  state.jobPages = data.pages || 1;
+  state.jobPage = data.page || 1;
+  document.getElementById("jobTotal").textContent = `共 ${state.jobTotal} 条 · 第 ${state.jobPage}/${state.jobPages} 页`;
   const list = document.getElementById("jobList");
   list.innerHTML = state.jobs.length ? state.jobs.map((job) => `
     <div class="row">
       <div>
-        <strong>${esc(job.job_display_id)} ${esc(job.company || "")} · ${esc(job.title || "")}</strong>
-        ${tag(job.job_status || "open", job.job_status === "closed" ? "bad" : "ok")}
-        ${job.duplicate_status === "duplicate" ? tag("重复", "bad") : ""}
-        <div class="meta">${esc(job.salary_text || "-")} · ${esc(job.city || "-")} · 采集 ${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")} · 评分 ${job.score ?? "-"} ${esc(job.tier || "")}</div>
+        <strong>${esc(job.display_id)} ${esc(job.company || "")} · ${esc(job.title || "")}</strong>
+        ${tag(job.job_status || job.main_job_status || "open", (job.job_status || job.main_job_status) === "closed" ? "bad" : "ok")}
+        ${(job.duplicate_status || job.main_duplicate_status) === "duplicate" ? tag("重复", "bad") : ""}
+        <div class="meta">${esc(job.salary_text || "-")} · ${esc(job.city || "-")}${job.district ? " " + esc(job.district) : ""} · 采集 ${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")} · 评分 ${job.score ?? "-"} ${esc(job.tier || "")}</div>
       </div>
       <div class="actions">
         ${job.job_url ? `<a class="small" href="${esc(job.job_url)}" target="_blank" rel="noreferrer">打开岗位</a>` : ""}
       </div>
-    </div>`).join("") : '<div class="empty">该角色暂无岗位。</div>';
+    </div>`).join("") : '<div class="empty">没有符合条件的岗位。</div>';
+  renderJobPager();
+}
+
+function renderJobPager() {
+  const pager = document.getElementById("jobPager");
+  if (!pager) return;
+  const total = state.jobPages;
+  const current = state.jobPage;
+  const pages = new Set([1, total, current - 1, current, current + 1]);
+  for (let i = 2; i <= 4; i += 1) pages.add(i);
+  for (let i = total - 3; i < total; i += 1) if (i > 0) pages.add(i);
+  const sorted = [...pages].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+  const buttons = [];
+  let previous = 0;
+  for (const page of sorted) {
+    if (previous && page - previous > 1) buttons.push('<span class="hint">…</span>');
+    buttons.push(`<button class="small ${page === current ? "active" : "ghost"}" data-page="${page}">${page}</button>`);
+    previous = page;
+  }
+  pager.innerHTML = `
+    <button class="small ghost" data-page="${Math.max(1, current - 1)}" ${current <= 1 ? "disabled" : ""}>上一页</button>
+    ${buttons.join("")}
+    <button class="small ghost" data-page="${Math.min(total, current + 1)}" ${current >= total ? "disabled" : ""}>下一页</button>
+    <span class="hint">跳到</span><input id="jobJump" type="number" min="1" max="${total}" value="${current}">
+    <button class="small" id="btnJobJump">跳转</button>
+  `;
 }
 
 async function refreshSettings() {
@@ -268,6 +319,93 @@ async function refreshMessages() {
         </div>
       </div>`).join("") : '<div class="empty">还没有通知记录。</div>';
   }
+  const mp = data.original_message_platform?.status;
+  if (mp) {
+    const mpStatus = document.getElementById("mpStatus");
+    if (mpStatus) {
+      mpStatus.textContent = `${mp.running ? "运行中" : "未运行"} · AppID ${mp.appIdConfigured ? "已配置" : "未配置"} · Secret ${mp.secretConfigured ? "已配置" : "未配置"} · 群ID ${mp.chatIdConfigured ? "已配置" : "未配置"}`;
+    }
+    const mpLog = document.getElementById("mpLog");
+    if (mpLog) mpLog.textContent = mp.logTail || "暂无日志";
+    const chatInput = document.getElementById("mpChatId");
+    if (chatInput && mp.chatId) chatInput.value = mp.chatId;
+  }
+}
+
+async function refreshChatSessions() {
+  const data = await api("/api/chat/sessions");
+  state.chatSessions = data.sessions || [];
+  const list = document.getElementById("chatSessions");
+  if (!list) return;
+  list.innerHTML = state.chatSessions.length ? state.chatSessions.map((session) => `
+    <div class="row">
+      <div>
+        <strong>${esc(session.title || "对话")}</strong>
+        <div class="meta">${esc(fmt(session.updated_at))}</div>
+      </div>
+      <div class="actions"><button class="small ghost" data-chat-session="${session.id}">打开</button></div>
+    </div>`).join("") : '<div class="empty">还没有对话。</div>';
+}
+
+function renderChat(session) {
+  const container = document.getElementById("chatMessages");
+  if (!container) return;
+  state.chatSuggestions = [];
+  if (!session || !session.messages?.length) {
+    container.innerHTML = '<div class="empty">上传简历或直接提问。例如：“帮我生成角色画像：实施顾问，上海，18-25K，5 年经验”。</div>';
+    return;
+  }
+  container.innerHTML = session.messages.map((message) => {
+    const meta = message.metadata || {};
+    let extra = "";
+    if (meta.action === "profile_ready" && meta.suggested) {
+      const index = state.chatSuggestions.push(meta.suggested) - 1;
+      extra = `<div class="meta"><button class="small" data-chat-create-role="${index}">用此画像创建角色</button></div>`;
+    }
+    if (meta.action === "job_search" && meta.jobs?.length) {
+      extra = `<div class="meta">岗位编号：${meta.jobs.map((job) => esc(job.id)).join("、")}</div>`;
+    }
+    return `<div class="chat-bubble ${message.role === "user" ? "user" : "assistant"}">${esc(message.content)}${extra ? `<div class="meta">${extra}</div>` : ""}</div>`;
+  }).join("");
+  container.scrollTop = container.scrollHeight;
+}
+
+async function ensureChatSession() {
+  if (state.chatSessionId) return state.chatSessionId;
+  const roleUuid = document.getElementById("chatRoleSelect")?.value || "";
+  const result = await api("/api/chat/sessions", {
+    method: "POST",
+    body: { title: "角色画像对话", roleUuid },
+  });
+  state.chatSessionId = result.session.id;
+  return state.chatSessionId;
+}
+
+async function loadChatSession(id) {
+  const result = await api(`/api/chat/sessions/${id}`);
+  state.chatSessionId = id;
+  renderChat(result.session);
+}
+
+async function sendChat() {
+  const text = document.getElementById("chatInput").value.trim();
+  if (!text && !state.chatResumeContent) return;
+  const sessionId = await ensureChatSession();
+  const result = await api(`/api/chat/sessions/${sessionId}/messages`, {
+    method: "POST",
+    body: {
+      text,
+      resume_md: state.chatResumeContent || undefined,
+      resume_file_name: state.chatResumeFileName || undefined,
+      roleUuid: document.getElementById("chatRoleSelect")?.value || undefined,
+    },
+  });
+  state.chatResumeContent = "";
+  state.chatResumeFileName = "";
+  document.getElementById("chatResumeFile").value = "";
+  document.getElementById("chatInput").value = "";
+  renderChat(result.session);
+  await refreshChatSessions();
 }
 
 async function refreshAll() {
@@ -280,6 +418,7 @@ async function refreshAll() {
     await refreshProviders();
     await refreshReports();
     await refreshMessages();
+    await refreshChatSessions();
     showLog("dashboardLog", "就绪：可执行一次调度，或先创建角色并启动任务。");
   } catch (error) {
     toast(`加载失败：${error.message}`, true);
@@ -312,6 +451,47 @@ function bind() {
   window.addEventListener("hashchange", () => activateTab(location.hash.slice(1)));
   activateTab(location.hash.slice(1));
 
+  document.getElementById("chatResumeFile").addEventListener("change", async (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    state.chatResumeContent = await file.text();
+    state.chatResumeFileName = file.name;
+    toast(`已选择简历：${file.name}`);
+  });
+  document.getElementById("btnNewChat").onclick = () => {
+    state.chatSessionId = "";
+    state.chatSuggestions = [];
+    renderChat(null);
+  };
+  document.getElementById("btnChatSend").onclick = async () => {
+    try { await sendChat(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("chatSessions").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-chat-session]");
+    if (!button) return;
+    try { await loadChatSession(button.dataset.chatSession); } catch (error) { alert(error.message); }
+  });
+  document.getElementById("chatMessages").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-chat-create-role]");
+    if (!button) return;
+    const suggested = state.chatSuggestions[Number(button.dataset.chatCreateRole)];
+    if (!suggested) return;
+    try {
+      const result = await api("/api/roles", {
+        method: "POST",
+        body: {
+          nickname: suggested.nickname || "聊天创建角色",
+          profile_md: suggested.profile_md,
+          target_roles: suggested.target_roles,
+          target_city: suggested.target_city,
+          target_salary: suggested.target_salary,
+        },
+      });
+      await refreshRoles();
+      toast(`角色 ${result.role.role_number} 已创建，请确认渠道`);
+    } catch (error) { alert(error.message); }
+  });
+
   document.getElementById("btnRefresh").onclick = refreshAll;
   document.getElementById("btnTick").onclick = doTick;
   document.getElementById("btnTick2").onclick = doTick;
@@ -342,8 +522,8 @@ function bind() {
       if (open) {
         const platform = open.dataset.channelOpen;
         const result = await api("/api/chrome/open", { method: "POST", body: { platform } });
-        showLog("dashboardLog", `已打开 ${platform} 登录页`);
-        void result;
+        showLog("dashboardLog", `已打开 ${platform} 登录页：${result.url}`);
+        toast(`已打开 ${platform} 登录页`);
       }
     } catch (error) { showLog("dashboardLog", error.message); }
   });
@@ -430,7 +610,42 @@ function bind() {
     } catch (error) { alert(error.message); }
   });
 
-  document.getElementById("jobRoleSelect").onchange = refreshJobs;
+  document.getElementById("jobRoleSelect").onchange = () => {
+    state.jobPage = 1;
+    refreshJobs();
+  };
+  document.getElementById("btnJobSearch").onclick = () => {
+    state.jobPage = 1;
+    refreshJobs();
+  };
+  document.getElementById("btnJobReset").onclick = () => {
+    for (const id of ["jobSearch", "jobLocation", "jobSalaryMin", "jobSalaryMax", "jobDateFrom", "jobDateTo"]) {
+      document.getElementById(id).value = "";
+    }
+    document.getElementById("jobSort").value = "score_desc";
+    document.getElementById("jobPageSize").value = "20";
+    state.jobPage = 1;
+    state.jobPageSize = 20;
+    refreshJobs();
+  };
+  document.getElementById("jobPageSize").onchange = () => {
+    state.jobPageSize = Number(document.getElementById("jobPageSize").value || 20);
+    state.jobPage = 1;
+    refreshJobs();
+  };
+  document.getElementById("jobPager").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-page]");
+    if (button) {
+      state.jobPage = Number(button.dataset.page || 1);
+      refreshJobs();
+      return;
+    }
+    if (event.target.id === "btnJobJump") {
+      const value = Number(document.getElementById("jobJump").value || 1);
+      state.jobPage = Math.max(1, Math.min(state.jobPages, value));
+      refreshJobs();
+    }
+  });
   document.getElementById("btnExport").onclick = () => {
     const roleUuid = document.getElementById("jobRoleSelect").value;
     if (roleUuid) window.location.href = `/api/export/${roleUuid}`;
@@ -487,6 +702,34 @@ function bind() {
     } catch (error) { alert(error.message); }
   });
 
+  document.getElementById("btnSaveMp").onclick = async () => {
+    try {
+      await api("/api/message-platform/config", {
+        method: "POST",
+        body: {
+          appId: document.getElementById("mpAppId").value.trim(),
+          appSecret: document.getElementById("mpAppSecret").value,
+          chatId: document.getElementById("mpChatId").value.trim(),
+          verifyToken: document.getElementById("mpVerifyToken").value,
+          encryptKey: document.getElementById("mpEncryptKey").value,
+        },
+      });
+      await refreshMessages();
+      showLog("dashboardLog", "飞书应用配置已保存（.env）");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnStartMp").onclick = async () => {
+    try {
+      await api("/api/message-platform/start", { method: "POST", body: {} });
+      await refreshMessages();
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnStopMp").onclick = async () => {
+    try {
+      await api("/api/message-platform/stop", { method: "POST", body: {} });
+      await refreshMessages();
+    } catch (error) { alert(error.message); }
+  };
   document.getElementById("btnSaveWebhook").onclick = async () => {
     try {
       const result = await api("/api/settings", {

@@ -15,6 +15,8 @@ const ai = require("./ai_providers");
 const reports = require("./report_service");
 const { buildExcelHtml } = require("./export_service");
 const { listNotifications, createNotification } = require("./notifier");
+const messagePlatform = require("./message_platform_service");
+const chat = require("./chat_service");
 const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
 
 function json(res, status, payload) {
@@ -85,6 +87,25 @@ function createAppServer(options = {}) {
       if (pathname === "/api/roles" && req.method === "GET") {
         return json(res, 200, { ok: true, roles: roles.listRoles(db) });
       }
+
+      if (pathname === "/api/chat/sessions" && req.method === "GET") {
+        return json(res, 200, { ok: true, sessions: chat.listSessions(db) });
+      }
+      if (pathname === "/api/chat/sessions" && req.method === "POST") {
+        return json(res, 200, { ok: true, session: chat.createSession(db, await readBody(req)) });
+      }
+      const chatSession = pathname.match(/^\/api\/chat\/sessions\/([^/]+)$/);
+      if (chatSession && req.method === "GET") {
+        const session = chat.getSession(db, chatSession[1]);
+        if (!session) return json(res, 404, { ok: false, error: "对话不存在" });
+        return json(res, 200, { ok: true, session });
+      }
+      const chatMessage = pathname.match(/^\/api\/chat\/sessions\/([^/]+)\/messages$/);
+      if (chatMessage && req.method === "POST") {
+        const body = await readBody(req);
+        const result = await chat.runTurn(db, chatMessage[1], body);
+        return json(res, 200, { ok: true, ...result });
+      }
       if (pathname === "/api/roles" && req.method === "POST") {
         const result = roles.createRole(db, await readBody(req));
         return json(res, 200, { ok: true, ...result });
@@ -116,8 +137,8 @@ function createAppServer(options = {}) {
         const body = await readBody(req);
         const platform = String(body.platform || "");
         const url = platform === "猎聘" ? "https://c.liepin.com/" : "https://www.zhipin.com/web/geek/jobs";
-        const child = startChrome({ startUrl: url, port: Number(body.port || 9222) });
-        return json(res, 200, { ok: true, platform, url, pid: child.child.pid });
+        const child = startChrome({ startUrl: url, port: Number(body.port || 9222), startMinimized: false });
+        return json(res, 200, { ok: true, platform, url, message: "Chrome 已打开登录页", pid: child.child.pid });
       }
 
       const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update)$/);
@@ -161,8 +182,18 @@ function createAppServer(options = {}) {
       if (pathname === "/api/jobs" && req.method === "GET") {
         const roleUuid = url.searchParams.get("role") || "";
         if (roleUuid) {
-          const rows = scores.listRoleJobs(db, roleUuid, { limit: Number(url.searchParams.get("limit") || 100) });
-          return json(res, 200, { ok: true, jobs: rows });
+          const result = scores.searchRoleJobs(db, roleUuid, {
+            q: url.searchParams.get("q") || "",
+            location: url.searchParams.get("location") || "",
+            salaryMin: url.searchParams.get("salaryMin") || "",
+            salaryMax: url.searchParams.get("salaryMax") || "",
+            dateFrom: url.searchParams.get("dateFrom") || "",
+            dateTo: url.searchParams.get("dateTo") || "",
+            sort: url.searchParams.get("sort") || "score_desc",
+            page: Number(url.searchParams.get("page") || 1),
+            pageSize: Number(url.searchParams.get("pageSize") || 20),
+          });
+          return json(res, 200, { ok: true, ...result });
         }
         return json(res, 200, { ok: true, jobs: listJobs(db, { limit: 100 }) });
       }
@@ -233,11 +264,24 @@ function createAppServer(options = {}) {
           reports: reports.listReports(db, { limit: 20 }),
           notifications: listNotifications(db, { limit: 30 }),
           original_message_platform: {
-            integrated: false,
+            integrated: true,
             path: "消息平台/message-platform",
-            note: "原消息平台是独立服务，负责飞书入站消息/群聊 Agent；客户端当前只接日报与通知发送。",
+            note: "已接入配置/启停；原消息平台仍以独立进程运行。",
+            status: messagePlatform.status(),
           },
         });
+      }
+      if (pathname === "/api/message-platform" && req.method === "GET") {
+        return json(res, 200, { ok: true, status: messagePlatform.status() });
+      }
+      if (pathname === "/api/message-platform/config" && req.method === "POST") {
+        return json(res, 200, { ok: true, status: messagePlatform.writeEnv(await readBody(req)) && messagePlatform.status() });
+      }
+      if (pathname === "/api/message-platform/start" && req.method === "POST") {
+        return json(res, 200, { ok: true, status: messagePlatform.startService() });
+      }
+      if (pathname === "/api/message-platform/stop" && req.method === "POST") {
+        return json(res, 200, { ok: true, status: messagePlatform.stopService() });
       }
       if (pathname === "/api/messages/test" && req.method === "POST") {
         const settings = getSettings(db);

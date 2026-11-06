@@ -10,7 +10,7 @@
   <header class="topbar">
     <div class="brand">
       <strong>招聘智能体</strong>
-      <span class="badge">v1.4 客户端</span>
+      <span class="badge">v1.5 客户端</span>
     </div>
     <div class="top-status">
       <span id="healthBadge" class="pill">连接中…</span>
@@ -20,6 +20,7 @@
 
   <nav class="tabs" id="tabs">
     <button data-tab="dashboard" class="active">首页</button>
+    <button data-tab="chat">对话</button>
     <button data-tab="roles">角色</button>
     <button data-tab="tasks">任务</button>
     <button data-tab="jobs">职位库</button>
@@ -41,6 +42,35 @@
       </div>
       <p class="hint">“立即执行一次调度”= 让程序按当前时间/空闲策略判断该做什么；“手动生成采集任务”= 不等待定时，直接创建一次采集任务。</p>
       <pre id="dashboardLog" class="log"></pre>
+    </section>
+
+    <section id="tab-chat" class="tab-panel">
+      <div class="section-head">
+        <h1>对话</h1>
+        <div class="toolbar">
+          <select id="chatRoleSelect"></select>
+          <button id="btnNewChat" class="ghost">新对话</button>
+        </div>
+      </div>
+      <div class="chat-layout">
+        <div class="panel chat-sessions">
+          <h2>会话</h2>
+          <div id="chatSessions" class="list"></div>
+        </div>
+        <div class="panel chat-main">
+          <div id="chatMessages" class="chat-messages">
+            <div class="empty">上传简历或直接提问。例如：“帮我生成角色画像：实施顾问，上海，18-25K，5 年经验”。</div>
+          </div>
+          <div class="chat-compose">
+            <label class="file-line">简历 MD<input id="chatResumeFile" type="file" accept=".md,.markdown,.txt"></label>
+            <textarea id="chatInput" rows="3" placeholder="继续补充目标岗位、城市、薪资、经历，或问“这个角色最近有哪些岗位”"></textarea>
+            <div class="toolbar">
+              <button id="btnChatSend">发送</button>
+              <span class="hint">本地画像 Skill；配置 AI Provider 后可增强。</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section id="tab-roles" class="tab-panel">
@@ -91,7 +121,41 @@
           <button id="btnExport">导出 Excel</button>
         </div>
       </div>
+      <div class="panel filter-panel">
+        <div class="filter-grid">
+          <label>关键词/编号/公司/岗位/JD<input id="jobSearch" placeholder="A001、公司、岗位、JD 关键字"></label>
+          <label>地点<input id="jobLocation" placeholder="上海/浦东"></label>
+          <label>最低薪资（K）<input id="jobSalaryMin" type="number" min="0" placeholder="15"></label>
+          <label>最高薪资（K）<input id="jobSalaryMax" type="number" min="0" placeholder="30"></label>
+          <label>开始日期<input id="jobDateFrom" type="date"></label>
+          <label>结束日期<input id="jobDateTo" type="date"></label>
+          <label>排序
+            <select id="jobSort">
+              <option value="score_desc">评分从高到低</option>
+              <option value="date_desc">最近采集优先</option>
+              <option value="salary_desc">薪资从高到低</option>
+              <option value="salary_asc">薪资从低到高</option>
+              <option value="company_asc">公司名 A-Z</option>
+            </select>
+          </label>
+          <label>每页
+            <select id="jobPageSize">
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+        </div>
+        <div class="toolbar">
+          <button id="btnJobSearch">搜索/筛选</button>
+          <button id="btnJobReset" class="ghost">重置</button>
+          <span id="jobTotal" class="hint"></span>
+        </div>
+      </div>
       <div id="jobList" class="list"></div>
+      <div class="pager" id="jobPager"></div>
     </section>
 
     <section id="tab-settings" class="tab-panel">
@@ -146,16 +210,26 @@
       <h1>消息与通知</h1>
       <div class="split">
         <div class="panel">
-          <h2>飞书群机器人</h2>
-          <label>Webhook<input id="msgWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
+          <h2>飞书机器人应用</h2>
+          <label>App ID<input id="mpAppId" placeholder="cli_xxx"></label>
+          <label>App Secret<input id="mpAppSecret" type="password" placeholder="只保存在本机 .env"></label>
+          <label>群 ID（Chat ID）<input id="mpChatId" placeholder="oc_xxx"></label>
+          <label>Verification Token<input id="mpVerifyToken" type="password"></label>
+          <label>Encrypt Key（可选）<input id="mpEncryptKey" type="password"></label>
           <div class="toolbar">
-            <button id="btnSaveWebhook">保存</button>
+            <button id="btnSaveMp">保存配置</button>
+            <button id="btnStartMp" class="ghost">启动消息平台</button>
+            <button id="btnStopMp" class="ghost">停止</button>
+          </div>
+          <p id="mpStatus" class="hint">未配置。</p>
+          <pre id="mpLog" class="log" style="max-height:120px"></pre>
+          <h2>简单 Webhook（可选）</h2>
+          <label>群机器人 Webhook<input id="msgWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
+          <div class="toolbar">
+            <button id="btnSaveWebhook">保存 Webhook</button>
             <button id="btnTestWebhook" class="ghost">发送测试</button>
           </div>
           <p id="msgStatus" class="hint">未配置 webhook。</p>
-          <h2>原始消息平台</h2>
-          <p class="hint">独立服务，负责飞书入站消息、群聊 Agent 会话和命令路由；客户端当前只接“日报/通知发送”，没有把完整消息平台并入。</p>
-          <p class="hint">目录：<code>消息平台/message-platform</code><br>启动：<code>node src/cli/start_feishu_long_connection.js</code>（需先配置 .env）</p>
         </div>
         <div class="panel">
           <h2>最近通知</h2>
