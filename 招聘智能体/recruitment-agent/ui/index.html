@@ -25,6 +25,7 @@
     <button data-tab="jobs">职位库</button>
     <button data-tab="settings">设置</button>
     <button data-tab="ai">AI 能力</button>
+    <button data-tab="messages">消息</button>
     <button data-tab="reports">日报</button>
   </nav>
 
@@ -137,6 +138,28 @@
         <div class="panel">
           <h2>供应商列表</h2>
           <div id="aiList" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-messages" class="tab-panel">
+      <h1>消息与通知</h1>
+      <div class="split">
+        <div class="panel">
+          <h2>飞书群机器人</h2>
+          <label>Webhook<input id="msgWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
+          <div class="toolbar">
+            <button id="btnSaveWebhook">保存</button>
+            <button id="btnTestWebhook" class="ghost">发送测试</button>
+          </div>
+          <p id="msgStatus" class="hint">未配置 webhook。</p>
+          <h2>原始消息平台</h2>
+          <p class="hint">独立服务，负责飞书入站消息、群聊 Agent 会话和命令路由；客户端当前只接“日报/通知发送”，没有把完整消息平台并入。</p>
+          <p class="hint">目录：<code>消息平台/message-platform</code><br>启动：<code>node src/cli/start_feishu_long_connection.js</code>（需先配置 .env）</p>
+        </div>
+        <div class="panel">
+          <h2>最近通知</h2>
+          <div id="messageLog" class="list"></div>
         </div>
       </div>
     </section>

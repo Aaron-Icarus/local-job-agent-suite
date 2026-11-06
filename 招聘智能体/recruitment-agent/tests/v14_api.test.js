@@ -79,6 +79,16 @@ test("API 健康检查、静态页面、设置校验和角色生命周期", asyn
   assert.equal(board.body.ok, true);
   assert.ok(Array.isArray(board.body.tasks));
 
+  const messages = await jsonFetch(`${base}/api/messages`);
+  assert.equal(messages.body.ok, true);
+  assert.equal(messages.body.original_message_platform.integrated, false);
+  const testMessage = await jsonFetch(`${base}/api/messages/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(testMessage.response.status, 400);
+
   const exported = await fetch(`${base}/api/export/${roleUuid}`);
   assert.equal(exported.status, 200);
   assert.match(exported.headers.get("content-type") || "", /ms-excel/);

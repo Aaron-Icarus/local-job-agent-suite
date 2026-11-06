@@ -20,12 +20,15 @@ if (-not (Test-Path -LiteralPath $db)) {
 
 $env:V14_DB_PATH = $db
 $env:V14_PORT = "4780"
+# Electron 进程的 PATH 可能找不到 node，显式传系统 Node 路径，避免后台服务启动失败。
+$nodeExe = (Get-Command node -ErrorAction Stop).Source
+$env:V14_NODE = $nodeExe
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 $electron = Join-Path $app "node_modules\.bin\electron.cmd"
 
 if (Test-Path -LiteralPath $electron) {
   Write-Host "启动桌面客户端..."
-  Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$electron`" . --no-sandbox" -WorkingDirectory $app -WindowStyle Hidden
+  Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "set ELECTRON_RUN_AS_NODE=&& `"$electron`" . --no-sandbox") -WorkingDirectory $app -WindowStyle Hidden
   Start-Sleep -Seconds 5
   $healthy = $false
   try {

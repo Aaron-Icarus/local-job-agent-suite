@@ -14,7 +14,7 @@ const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
 const { buildExcelHtml } = require("./export_service");
-const { listNotifications } = require("./notifier");
+const { listNotifications, createNotification } = require("./notifier");
 const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
 
 function json(res, status, payload) {
@@ -220,6 +220,42 @@ function createAppServer(options = {}) {
 
       if (pathname === "/api/notifications") {
         return json(res, 200, { ok: true, notifications: listNotifications(db) });
+      }
+
+      if (pathname === "/api/messages" && req.method === "GET") {
+        const settings = getSettings(db);
+        return json(res, 200, {
+          ok: true,
+          webhook_configured: Boolean(settings.feishu_webhook),
+          webhook_masked: settings.feishu_webhook
+            ? `${String(settings.feishu_webhook).slice(0, 28)}…`
+            : "",
+          reports: reports.listReports(db, { limit: 20 }),
+          notifications: listNotifications(db, { limit: 30 }),
+          original_message_platform: {
+            integrated: false,
+            path: "消息平台/message-platform",
+            note: "原消息平台是独立服务，负责飞书入站消息/群聊 Agent；客户端当前只接日报与通知发送。",
+          },
+        });
+      }
+      if (pathname === "/api/messages/test" && req.method === "POST") {
+        const settings = getSettings(db);
+        const webhook = settings.feishu_webhook || "";
+        if (!webhook) return json(res, 400, { ok: false, error: "请先保存飞书 webhook" });
+        const text = `招聘智能体测试消息\n时间：${new Date().toLocaleString("zh-CN")}`;
+        const sent = await reports.sendFeishu(webhook, text);
+        const notification = createNotification(db, {
+          type: "message_test",
+          title: "飞书测试消息",
+          body: text,
+          channels: ["feishu"],
+        });
+        db.prepare("UPDATE notifications SET status = 'sent', sent_at = ? WHERE id = ?").run(
+          new Date().toISOString(),
+          notification.id
+        );
+        return json(res, 200, { ok: true, sent, notificationId: notification.id });
       }
 
       if (req.method === "GET") {

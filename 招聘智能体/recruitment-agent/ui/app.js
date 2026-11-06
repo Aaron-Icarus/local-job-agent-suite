@@ -247,6 +247,29 @@ async function refreshReports() {
     </div>`).join("") : '<div class="empty">还没有日报。</div>';
 }
 
+async function refreshMessages() {
+  const data = await api("/api/messages");
+  const input = document.getElementById("msgWebhook");
+  if (input) input.value = state.settings.feishu_webhook || "";
+  const status = document.getElementById("msgStatus");
+  if (status) {
+    status.textContent = data.webhook_configured
+      ? `已配置：${data.webhook_masked || "webhook"}`
+      : "未配置 webhook；日报/测试消息无法发送。";
+  }
+  const list = document.getElementById("messageLog");
+  if (list) {
+    const items = data.notifications || [];
+    list.innerHTML = items.length ? items.map((item) => `
+      <div class="row">
+        <div>
+          <strong>${esc(item.title || item.type)}</strong> ${tag(item.status, item.status === "sent" ? "ok" : item.status === "failed" ? "bad" : "warn")}
+          <div class="meta">${esc(item.type)} · ${esc(fmt(item.created_at))} ${item.body ? "· " + esc(item.body).slice(0, 120) : ""}</div>
+        </div>
+      </div>`).join("") : '<div class="empty">还没有通知记录。</div>';
+  }
+}
+
 async function refreshAll() {
   await refreshHealth();
   try {
@@ -256,6 +279,7 @@ async function refreshAll() {
     await refreshSettings();
     await refreshProviders();
     await refreshReports();
+    await refreshMessages();
     showLog("dashboardLog", "就绪：可执行一次调度，或先创建角色并启动任务。");
   } catch (error) {
     toast(`加载失败：${error.message}`, true);
@@ -462,6 +486,25 @@ function bind() {
       await refreshProviders();
     } catch (error) { alert(error.message); }
   });
+
+  document.getElementById("btnSaveWebhook").onclick = async () => {
+    try {
+      const result = await api("/api/settings", {
+        method: "POST",
+        body: { feishu_webhook: document.getElementById("msgWebhook").value.trim() },
+      });
+      showLog("dashboardLog", result.warnings?.length ? result.warnings.join("\n") : "飞书 webhook 已保存");
+      await refreshSettings();
+      await refreshMessages();
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnTestWebhook").onclick = async () => {
+    try {
+      const result = await api("/api/messages/test", { method: "POST", body: {} });
+      showLog("dashboardLog", result);
+      await refreshMessages();
+    } catch (error) { alert(error.message); }
+  };
 
   document.getElementById("btnBuildReport").onclick = async () => {
     const roleUuid = document.getElementById("reportRoleSelect").value;
