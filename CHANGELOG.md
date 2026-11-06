@@ -21,6 +21,10 @@
   - 写入原 `消息平台/message-platform/.env`，同步启用 channels/routes 中的群 ID；
   - 可启动/停止原消息平台长连接进程，显示状态和日志；
   - 保留简单 webhook 发送。
+- **飞书多群路由**：新增 `feishu_groups` / `feishu_group_roles`；最多 10 个群，可按角色勾选登录状态/操作异常/每日日报；支持一键填充运行中角色、单个修改、配置后刷新列表；没有匹配群时回退本地通知。
+- **群内 @机器人反向对话**：原消息平台新增 `local_chat` executor，默认 Agent 改为本地对话；飞书群消息转发到本地 `/api/chat`，AI/画像/岗位查询结果回群。
+- **页面细节**：对话移到菜单最后；顶部栏和菜单 sticky；对话输入 Enter 发送、Shift+Enter 换行。
+- **AI 测试**：Provider 测试改为真实 `chat/completions`，不再只看 `/models`，能暴露额度/模型未开通问题。
 - **职位库**：关键词/编号/公司/岗位/JD 搜索、地点、最低/最高薪资、日期范围、排序、每页数量、数字分页、页码跳转；筛选之间 AND。
 - **跨平台**：Chrome 路径增加 macOS，新增 `启动招聘智能体.command`，Electron Builder 增加 macOS DMG 配置。
 - **依赖检查**：新增 `npm run doctor`，检查 Node/Chrome/Electron/消息平台目录与 SDK；新增安装说明。
@@ -36,8 +40,8 @@
 
 ### 已知限制
 
-- 原消息平台依赖（飞书 SDK）未在当前机器安装，启动会失败并显示日志；需按安装说明安装。
-- 对话的 AI 画像生成需要配置 AI Provider；无 Key 时使用本地规则。
+- 原消息平台飞书 SDK 已安装，但 App ID/Secret/群 ID 未配置，真实长连接未启动。
+- 对话的 AI 画像生成需要配置 AI Provider；无 Key 时使用本地规则。豆包账号当前 `SetLimitExceeded`，需在方舟控制台调整 Safe Experience Mode。
 - 角色级关键词仍未传入旧采集器。
 - macOS 启动器/打包未在真实 Mac 上验证。
 

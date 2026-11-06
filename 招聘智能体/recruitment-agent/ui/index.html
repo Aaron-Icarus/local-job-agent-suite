@@ -20,7 +20,6 @@
 
   <nav class="tabs" id="tabs">
     <button data-tab="dashboard" class="active">首页</button>
-    <button data-tab="chat">对话</button>
     <button data-tab="roles">角色</button>
     <button data-tab="tasks">任务</button>
     <button data-tab="jobs">职位库</button>
@@ -28,6 +27,7 @@
     <button data-tab="ai">AI 能力</button>
     <button data-tab="messages">消息</button>
     <button data-tab="reports">日报</button>
+    <button data-tab="chat">对话</button>
   </nav>
 
   <main>
@@ -234,6 +234,32 @@
         <div class="panel">
           <h2>最近通知</h2>
           <div id="messageLog" class="list"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="section-head">
+          <h2>飞书群与角色路由（最多 10 个群）</h2>
+          <span class="hint">没有配置群时只发软件弹窗/本地通知</span>
+        </div>
+        <div class="split">
+          <div>
+            <label>群名称<input id="groupName" placeholder="例如：求职日报群"></label>
+            <label>群 Chat ID<input id="groupChatId" placeholder="oc_xxx"></label>
+            <label>群 Webhook（可选）<input id="groupWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
+            <div class="checks" id="groupRoleChecks"></div>
+            <div class="checks">
+              <label><input id="groupNotifyLogin" type="checkbox" checked> 登录状态</label>
+              <label><input id="groupNotifyError" type="checkbox" checked> 操作异常</label>
+              <label><input id="groupNotifyDaily" type="checkbox" checked> 每日日报</label>
+            </div>
+            <div class="toolbar">
+              <button id="btnFillGroup">一键填充运行中角色</button>
+              <button id="btnSaveGroup">保存群</button>
+              <button id="btnSyncGroups" class="ghost">同步群到消息平台</button>
+              <button id="btnResetGroup" class="ghost">清空</button>
+            </div>
+          </div>
+          <div id="groupList" class="list"></div>
         </div>
       </div>
     </section>

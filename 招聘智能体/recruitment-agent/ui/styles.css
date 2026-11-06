@@ -18,6 +18,7 @@ body {
   font: 14px/1.55 "Microsoft YaHei", "Segoe UI", sans-serif;
 }
 .topbar {
+  position: sticky; top: 0; z-index: 30;
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 22px; background: #0f2d28; color: #fff;
 }
@@ -32,7 +33,7 @@ body {
   background: #e7f6f1; color: var(--ok);
 }
 .pill.bad { background: #fee4e2; color: var(--danger); }
-.tabs { display: flex; gap: 4px; padding: 8px 18px; background: #fff; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs { display: flex; gap: 4px; padding: 8px 18px; background: #fff; border-bottom: 1px solid var(--line); overflow-x: auto; position: sticky; top: 64px; z-index: 29; }
 .tabs button {
   border: 0; background: transparent; color: var(--muted); padding: 8px 12px;
   border-radius: 8px; cursor: pointer; white-space: nowrap;
@@ -89,9 +90,9 @@ input, select, textarea {
   padding: 8px 10px; font: inherit; color: var(--text); background: #fff;
 }
 textarea { resize: vertical; }
-.checks { display: flex; gap: 12px; color: var(--text); font-size: 13px; }
-.checks label { display: flex; align-items: center; gap: 4px; margin: 0; }
-.checks input { width: auto; }
+.checks { display: flex; gap: 12px; color: var(--text); font-size: 13px; flex-wrap: wrap; }
+.checks label { display: flex; align-items: center; gap: 6px; margin: 0; min-height: 32px; }
+.checks input[type="checkbox"] { width: 24px; height: 24px; margin: 0; accent-color: var(--brand); }
 button {
   border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer;
   background: var(--brand); color: #fff; font-weight: 600;

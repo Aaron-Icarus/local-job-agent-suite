@@ -16,6 +16,8 @@ function applySchema(db) {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
   db.exec(schema);
   ensureColumn(db, "roles", "resume_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "chat_sessions", "external_key", "TEXT NOT NULL DEFAULT ''");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_external ON chat_sessions(external_key) WHERE external_key <> ''");
 }
 
 function ensureColumn(db, table, column, definition) {

@@ -19,6 +19,8 @@ const state = {
   chatSuggestions: [],
   chatResumeContent: "",
   chatResumeFileName: "",
+  feishuGroups: [],
+  editingGroupId: "",
 };
 
 async function api(path, options = {}) {
@@ -294,7 +296,10 @@ async function refreshReports() {
         <strong>${esc(report.report_date)}</strong> ${tag(report.status, report.status === "sent" ? "ok" : "warn")}
         <div class="meta">${esc((report.content || "").split("\n")[0] || "")}</div>
       </div>
-      <div class="actions"><button class="small ghost" data-report="${report.id}">查看</button></div>
+      <div class="actions">
+        <button class="small ghost" data-report="${report.id}">查看</button>
+        <button class="small" data-report-groups="${report.id}">发到群</button>
+      </div>
     </div>`).join("") : '<div class="empty">还没有日报。</div>';
 }
 
@@ -411,6 +416,36 @@ async function sendChat() {
   await refreshChatSessions();
 }
 
+async function refreshGroups() {
+  const data = await api("/api/feishu-groups");
+  state.feishuGroups = data.groups || [];
+  const checks = document.getElementById("groupRoleChecks");
+  if (checks) {
+    checks.innerHTML = state.roles.map((role) => `<label><input type="checkbox" data-group-role="${role.role_uuid}"> ${esc(role.role_number)} ${esc(role.nickname)} ${role.status === "running" ? "（运行中）" : ""}</label>`).join("");
+  }
+  const list = document.getElementById("groupList");
+  if (list) {
+    list.innerHTML = state.feishuGroups.length ? state.feishuGroups.map((group) => {
+      const roles = group.roles.map((item) => state.roles.find((role) => role.role_uuid === item.role_uuid)?.nickname || item.role_uuid.slice(0, 6)).join("、");
+      const nodes = [
+        group.roles.some((item) => item.notify_login) ? "登录" : "",
+        group.roles.some((item) => item.notify_error) ? "异常" : "",
+        group.roles.some((item) => item.notify_daily) ? "日报" : "",
+      ].filter(Boolean).join("/");
+      return `<div class="row">
+        <div>
+          <strong>${esc(group.name)}</strong> ${tag(group.enabled ? "启用" : "关闭", group.enabled ? "ok" : "")}
+          <div class="meta">Chat ID: ${esc(group.chat_id)} · 角色：${esc(roles || "未选")} · 节点：${esc(nodes || "无")}${group.webhook ? " · webhook" : ""}</div>
+        </div>
+        <div class="actions">
+          <button class="small ghost" data-edit-group="${group.id}">修改</button>
+          <button class="small danger" data-delete-group="${group.id}">删除</button>
+        </div>
+      </div>`;
+    }).join("") : '<div class="empty">还没有配置飞书群。</div>';
+  }
+}
+
 async function refreshAll() {
   await refreshHealth();
   try {
@@ -421,6 +456,7 @@ async function refreshAll() {
     await refreshProviders();
     await refreshReports();
     await refreshMessages();
+    await refreshGroups();
     await refreshChatSessions();
     showLog("dashboardLog", "就绪：可执行一次调度，或先创建角色并启动任务。");
   } catch (error) {
@@ -469,6 +505,12 @@ function bind() {
   document.getElementById("btnChatSend").onclick = async () => {
     try { await sendChat(); } catch (error) { alert(error.message); }
   };
+  document.getElementById("chatInput").addEventListener("keydown", async (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      try { await sendChat(); } catch (error) { alert(error.message); }
+    }
+  });
   document.getElementById("chatSessions").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-chat-session]");
     if (!button) return;
@@ -492,6 +534,78 @@ function bind() {
       });
       await refreshRoles();
       toast(`角色 ${result.role.role_number} 已创建，请确认渠道`);
+    } catch (error) { alert(error.message); }
+  });
+
+  document.getElementById("btnFillGroup").onclick = () => {
+    document.querySelectorAll('[data-group-role]').forEach((input) => {
+      const role = state.roles.find((item) => item.role_uuid === input.dataset.groupRole);
+      input.checked = Boolean(role && role.status === "running");
+    });
+    for (const id of ["groupNotifyLogin", "groupNotifyError", "groupNotifyDaily"]) {
+      document.getElementById(id).checked = true;
+    }
+  };
+  document.getElementById("btnResetGroup").onclick = () => {
+    state.editingGroupId = "";
+    for (const id of ["groupName", "groupChatId", "groupWebhook"]) document.getElementById(id).value = "";
+    document.querySelectorAll('[data-group-role]').forEach((input) => { input.checked = false; });
+    for (const id of ["groupNotifyLogin", "groupNotifyError", "groupNotifyDaily"]) document.getElementById(id).checked = true;
+  };
+  document.getElementById("btnSyncGroups").onclick = async () => {
+    try {
+      const result = await api("/api/message-platform/sync-groups", { method: "POST", body: {} });
+      await refreshMessages();
+      toast(`已同步 ${result.groups} 个群到消息平台，重启服务生效`);
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnSaveGroup").onclick = async () => {
+    const roles = [...document.querySelectorAll('[data-group-role]:checked')].map((input) => ({
+      role_uuid: input.dataset.groupRole,
+      notify_login: document.getElementById("groupNotifyLogin").checked,
+      notify_error: document.getElementById("groupNotifyError").checked,
+      notify_daily: document.getElementById("groupNotifyDaily").checked,
+    }));
+    try {
+      await api("/api/feishu-groups", {
+        method: "POST",
+        body: {
+          id: state.editingGroupId || undefined,
+          name: document.getElementById("groupName").value.trim(),
+          chatId: document.getElementById("groupChatId").value.trim(),
+          webhook: document.getElementById("groupWebhook").value.trim(),
+          roles,
+        },
+      });
+      state.editingGroupId = "";
+      await refreshGroups();
+      toast("飞书群配置已保存");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("groupList").addEventListener("click", async (event) => {
+    const edit = event.target.closest("button[data-edit-group]");
+    const del = event.target.closest("button[data-delete-group]");
+    try {
+      if (edit) {
+        const group = state.feishuGroups.find((item) => item.id === edit.dataset.editGroup);
+        if (!group) return;
+        state.editingGroupId = group.id;
+        document.getElementById("groupName").value = group.name;
+        document.getElementById("groupChatId").value = group.chat_id;
+        document.getElementById("groupWebhook").value = group.webhook || "";
+        document.querySelectorAll('[data-group-role]').forEach((input) => {
+          const match = group.roles.find((item) => item.role_uuid === input.dataset.groupRole);
+          input.checked = Boolean(match);
+        });
+        const first = group.roles[0];
+        document.getElementById("groupNotifyLogin").checked = first ? first.notify_login : true;
+        document.getElementById("groupNotifyError").checked = first ? first.notify_error : true;
+        document.getElementById("groupNotifyDaily").checked = first ? first.notify_daily : true;
+      }
+      if (del) {
+        await api(`/api/feishu-groups/${del.dataset.deleteGroup}`, { method: "DELETE" });
+        await refreshGroups();
+      }
     } catch (error) { alert(error.message); }
   });
 
@@ -761,7 +875,16 @@ function bind() {
     } catch (error) { alert(error.message); }
   };
 
-  document.getElementById("reportList").addEventListener("click", (event) => {
+  document.getElementById("reportList").addEventListener("click", async (event) => {
+    const groupsButton = event.target.closest("button[data-report-groups]");
+    if (groupsButton) {
+      try {
+        const result = await api(`/api/reports/${groupsButton.dataset.reportGroups}/send-groups`, { method: "POST", body: {} });
+        showLog("dashboardLog", result);
+        alert(result.delivered ? `已发送到 ${result.delivered} 个群` : "没有匹配的群，已记录本地通知");
+      } catch (error) { alert(error.message); }
+      return;
+    }
     const button = event.target.closest("button[data-report]");
     if (!button) return;
     const report = state.reports.find((item) => String(item.id) === String(button.dataset.report));

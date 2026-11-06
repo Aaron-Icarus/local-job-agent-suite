@@ -17,6 +17,7 @@ const { buildExcelHtml } = require("./export_service");
 const { listNotifications, createNotification } = require("./notifier");
 const messagePlatform = require("./message_platform_service");
 const chat = require("./chat_service");
+const feishuGroups = require("./feishu_groups");
 const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
 
 function json(res, status, payload) {
@@ -130,6 +131,9 @@ function createAppServer(options = {}) {
         const result = await checkPlatform(platform);
         const status = result.ok ? "logged_in" : result.status === "login_required" ? "login_required" : "error";
         const saved = recordCheck(db, platform, status, result.error || "");
+        if (!result.ok) {
+          await feishuGroups.sendToGroups(db, "login", `【登录异常】${platform}：${status}，请打开客户端检查登录。`);
+        }
         return json(res, 200, { ok: result.ok, platform, result, saved });
       }
 
@@ -238,6 +242,13 @@ function createAppServer(options = {}) {
         });
         return json(res, 200, { ok: result.ok, ...result });
       }
+      const reportGroups = pathname.match(/^\/api\/reports\/(\d+)\/send-groups$/);
+      if (reportGroups) {
+        const report = db.prepare("SELECT * FROM reports WHERE id = ?").get(Number(reportGroups[1]));
+        if (!report) return json(res, 404, { ok: false, error: "日报不存在" });
+        const result = await feishuGroups.sendReportToGroups(db, report);
+        return json(res, 200, { ok: result.ok, ...result });
+      }
 
       if (pathname.startsWith("/api/export/") && req.method === "GET") {
         const roleUuid = pathname.split("/").pop();
@@ -282,6 +293,25 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/message-platform/stop" && req.method === "POST") {
         return json(res, 200, { ok: true, status: messagePlatform.stopService() });
+      }
+      if (pathname === "/api/message-platform/sync-groups" && req.method === "POST") {
+        const groups = feishuGroups.listGroups(db);
+        return json(res, 200, {
+          ok: true,
+          groups: groups.length,
+          status: messagePlatform.syncGroups(groups.map((group) => group.chat_id)),
+        });
+      }
+
+      if (pathname === "/api/feishu-groups" && req.method === "GET") {
+        return json(res, 200, { ok: true, groups: feishuGroups.listGroups(db) });
+      }
+      if (pathname === "/api/feishu-groups" && req.method === "POST") {
+        return json(res, 200, { ok: true, group: feishuGroups.saveGroup(db, await readBody(req)) });
+      }
+      const feishuGroupId = pathname.match(/^\/api\/feishu-groups\/([^/]+)$/);
+      if (feishuGroupId && req.method === "DELETE") {
+        return json(res, 200, { ok: true, deleted: feishuGroups.deleteGroup(db, feishuGroupId[1]) });
       }
       if (pathname === "/api/messages/test" && req.method === "POST") {
         const settings = getSettings(db);

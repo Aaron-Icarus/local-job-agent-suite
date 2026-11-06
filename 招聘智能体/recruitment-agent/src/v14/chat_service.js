@@ -51,11 +51,16 @@ async function askAI(db, prompt) {
 }
 
 function createSession(db, input = {}) {
+  const externalKey = String(input.externalKey || "");
+  if (externalKey) {
+    const existing = db.prepare("SELECT id FROM chat_sessions WHERE external_key = ?").get(externalKey);
+    if (existing) return getSession(db, existing.id);
+  }
   const id = crypto.randomUUID();
   const now = nowIso();
   db.prepare(
-    "INSERT INTO chat_sessions(id, title, role_uuid, state_json, created_at, updated_at) VALUES(?, ?, ?, '{}', ?, ?)"
-  ).run(id, String(input.title || "新对话"), String(input.roleUuid || ""), now, now);
+    "INSERT INTO chat_sessions(id, title, role_uuid, external_key, state_json, created_at, updated_at) VALUES(?, ?, ?, ?, '{}', ?, ?)"
+  ).run(id, String(input.title || "新对话"), String(input.roleUuid || ""), externalKey, now, now);
   return getSession(db, id);
 }
 

@@ -70,6 +70,34 @@ function updateConfigs(chatId) {
   }
 }
 
+function syncGroups(chatIds = []) {
+  const ids = [...new Set(chatIds.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 10);
+  if (!ids.length) return status();
+  if (fs.existsSync(CHANNELS_FILE)) {
+    const channels = JSON.parse(fs.readFileSync(CHANNELS_FILE, "utf8"));
+    for (const channel of channels.channels || []) {
+      channel.enabled = true;
+      channel.allowed_chat_ids = ids;
+    }
+    fs.writeFileSync(CHANNELS_FILE, JSON.stringify(channels, null, 2), "utf8");
+  }
+  if (fs.existsSync(ROUTES_FILE)) {
+    const routes = JSON.parse(fs.readFileSync(ROUTES_FILE, "utf8"));
+    const conversations = routes.conversations || [];
+    const template = conversations[0];
+    if (template) {
+      routes.conversations = ids.map((chatId, index) => ({
+        ...template,
+        conversation_id: `${template.source_id || "feishu"}_${index + 1}`,
+        chat_id: chatId,
+        enabled: true,
+      }));
+      fs.writeFileSync(ROUTES_FILE, JSON.stringify(routes, null, 2), "utf8");
+    }
+  }
+  return status();
+}
+
 function status() {
   const env = readEnv();
   return {
@@ -139,6 +167,7 @@ module.exports = {
   ENV_FILE,
   readEnv,
   writeEnv,
+  syncGroups,
   status,
   startService,
   stopService,
