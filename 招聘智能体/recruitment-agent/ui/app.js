@@ -345,6 +345,9 @@ async function refreshChatSessions() {
       </div>
       <div class="actions"><button class="small ghost" data-chat-session="${session.id}">打开</button></div>
     </div>`).join("") : '<div class="empty">还没有对话。</div>';
+  if (!state.chatSessionId && state.chatSessions[0]) {
+    await loadChatSession(state.chatSessions[0].id);
+  }
 }
 
 function renderChat(session) {
