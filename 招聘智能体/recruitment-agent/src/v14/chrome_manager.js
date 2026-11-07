@@ -41,6 +41,9 @@ function buildChromeArgs(input = {}) {
     "--no-default-browser-check",
     "--disable-background-timer-throttling",
     "--disable-renderer-backgrounding",
+    "--hide-crash-restore-bubble",
+    "--disable-session-crashed-bubble",
+    "--no-session-crashed-bubble",
   ];
   if (input.startMinimized !== false) args.push("--start-minimized");
   if (input.startUrl) args.push(input.startUrl);
@@ -202,6 +205,18 @@ async function minimizeChrome(port) {
   }
 }
 
+async function closeChrome(port) {
+  try {
+    const versionResponse = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
+    const version = await versionResponse.json();
+    if (!version.webSocketDebuggerUrl) return false;
+    await cdpCall(version.webSocketDebuggerUrl, "Browser.close", {}, 2000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureChrome(input = {}) {
   const resolved = await resolveCdpPort(input.port);
   if (resolved.reused || await isCdpReady(resolved.port)) {
@@ -251,6 +266,7 @@ module.exports = {
   resolveCdpPort,
   ensureChrome,
   minimizeChrome,
+  closeChrome,
   startChrome,
   stopChrome,
 };
