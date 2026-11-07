@@ -512,3 +512,12 @@ Renderer (React/Vite)
 - `npm run v14:clear-demo` 可清理业务数据并保留设置/AI/飞书群；
 - Windows 干净状态双击 `.cmd` 打开窗口；
 - 单元测试与离线烟测通过。
+
+### 11.9 路径与便携性
+
+- 项目代码、数据、日志、密钥、消息平台均使用相对路径；
+- 启动器基于脚本所在目录，不依赖当前工作目录；
+- 支持 `V14_DB_PATH`、`V14_LOG_DIR`、`V14_CHROME_PROFILE`、`V14_MESSAGE_PLATFORM_DIR` 等环境变量覆盖；
+- 提供 `npm run path:audit` 检查项目绝对路径；
+- 迁移到新电脑时复制整个项目目录并安装 Node/Chrome 即可；
+- 系统级 Chrome 安装路径和用户下载目录不属于项目绝对路径。

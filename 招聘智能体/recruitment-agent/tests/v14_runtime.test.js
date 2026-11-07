@@ -74,7 +74,7 @@ test("采集子任务失败会标记事件失败", async (t) => {
 });
 
 test("Chrome 参数包含独立 Profile、CDP 端口、最小化", () => {
-  const args = buildChromeArgs({ profileDir: "C:\\temp\\profile", port: 9333, startUrl: "https://www.zhipin.com" });
+  const args = buildChromeArgs({ profileDir: path.join(os.tmpdir(), "v14-chrome-profile"), port: 9333, startUrl: "https://www.zhipin.com" });
   assert.ok(args.includes("--remote-debugging-port=9333"));
   assert.ok(args.some((item) => item.startsWith("--user-data-dir=")));
   assert.ok(args.includes("--start-minimized"));
