@@ -164,6 +164,18 @@ function createAppServer(options = {}) {
         const defaultGroup = feishuGroups.applyDefaultGroup(db, result.role.role_uuid);
         return json(res, 200, { ok: true, ...result, defaultGroup });
       }
+      const roleEdit = pathname.match(/^\/api\/roles\/([^/]+)$/);
+      if (roleEdit && ["PATCH", "PUT"].includes(req.method)) {
+        const body = await readBody(req);
+        const result = roles.updateRole(db, roleEdit[1], body);
+        if (Array.isArray(body.role_keywords)) {
+          keywordService.save(db, roleEdit[1], {
+            recommended: body.role_keywords,
+            fallback: body.fallback_keywords || keywordService.extractFallbackFromProfile(body.profile_md),
+          });
+        }
+        return json(res, 200, { ok: true, ...result });
+      }
 
       if (pathname === "/api/resumes" && req.method === "GET") {
         return json(res, 200, { ok: true, resumes: resumes.listResumes(db) });

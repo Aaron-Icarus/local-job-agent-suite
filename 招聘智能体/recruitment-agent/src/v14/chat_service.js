@@ -139,6 +139,21 @@ function dailyKeywords(state) {
   return [...keywords].slice(0, 12);
 }
 
+function normalizeKeywordSections(text) {
+  let result = String(text || "");
+  for (const heading of ["技能关键词", "兜底关键词"]) {
+    const pattern = new RegExp(`(##\\s*${heading}\\s*\\n)([\\s\\S]*?)(?=\\n##\\s|$)`);
+    result = result.replace(pattern, (_, title, body) => {
+      const items = [...new Set(String(body)
+        .split(/[\n,，、]/)
+        .map((item) => item.replace(/^[-*\d.\s]+/, "").trim())
+        .filter(Boolean))];
+      return `${title}${items.join("、")}`;
+    });
+  }
+  return result;
+}
+
 function sanitizeProfile(text) {
   let result = String(text || "");
   result = result.replace(/\n##\s*每日搜索关键词[\s\S]*?(?=\n##\s|$)/g, "\n");
@@ -147,7 +162,7 @@ function sanitizeProfile(text) {
     if (/1[3-9]\d{9}/.test(line) || /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/.test(line)) return false;
     return true;
   }).join("\n");
-  return result.replace(/\n{3,}/g, "\n\n").trim();
+  return normalizeKeywordSections(result.replace(/\n{3,}/g, "\n\n").trim());
 }
 
 function parseKeywordList(text) {

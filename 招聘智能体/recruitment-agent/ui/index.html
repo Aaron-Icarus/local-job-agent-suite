@@ -88,7 +88,7 @@
           <label>目标岗位<input id="roleTargets" placeholder="AI项目经理, AI产品经理"></label>
           <label>目标城市<input id="roleCity" placeholder="上海"></label>
           <label>期望薪资<input id="roleSalary" placeholder="18-30K"></label>
-          <label>关键词（逗号分隔）<input id="roleKeywords" placeholder="AI项目经理, AI产品经理, 智能体交付"></label>
+          <label>关键词（用“、”分隔）<input id="roleKeywords" placeholder="AI项目经理、AI产品经理、智能体交付"></label>
           <button id="btnGenerateKeywords" type="button" class="ghost">AI 生成每日关键词</button>
           <p class="hint">每日关键词单独保存到角色，不写入画像 MD。</p>
           <button id="btnCreateRole">创建角色</button>
@@ -300,6 +300,23 @@
       <div id="reportList" class="list"></div>
     </section>
   </main>
+
+  <dialog id="editRoleDialog">
+    <div class="panel dialog-panel" style="max-width:760px">
+      <h2>修改角色</h2>
+      <p class="hint">确认前可以修改昵称、画像、目标条件、关键词；保存后回到待确认。</p>
+      <label>昵称<input id="editRoleNickname"></label>
+      <label>简历/画像<textarea id="editRoleProfile" rows="6"></textarea></label>
+      <label>目标岗位<input id="editRoleTargets"></label>
+      <label>目标城市<input id="editRoleCity"></label>
+      <label>期望薪资<input id="editRoleSalary"></label>
+      <label>关键词（用“、”分隔）<input id="editRoleKeywords"></label>
+      <div class="toolbar">
+        <button id="btnSaveRoleEdit">保存修改</button>
+        <button id="btnCancelRoleEdit" class="ghost">取消</button>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="confirmDialog">
     <form method="dialog" class="panel dialog-panel">

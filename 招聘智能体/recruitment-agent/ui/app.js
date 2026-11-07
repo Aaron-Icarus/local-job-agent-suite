@@ -24,6 +24,7 @@ const state = {
   recheckPolling: false,
   recheckTimer: null,
   keywordRoleUuid: "",
+  editRoleUuid: "",
 };
 
 async function api(path, options = {}) {
@@ -136,6 +137,7 @@ async function refreshRoles() {
         </div>
         <div class="actions">
           ${role.status === "pending_confirm" ? `<button class="small" data-action="confirm" data-id="${role.role_uuid}">确认渠道</button>` : ""}
+          ${role.status === "pending_confirm" ? `<button class="small ghost" data-edit-role="${role.role_uuid}">修改</button>` : ""}
           ${["pending_start", "paused"].includes(role.status) ? `<button class="small" data-action="start" data-id="${role.role_uuid}">启动</button>` : ""}
           ${role.status === "running" ? `<button class="small ghost" data-action="pause" data-id="${role.role_uuid}">暂停</button>` : ""}
           <button class="small ghost" data-action="copy" data-id="${role.role_uuid}">复制</button>
@@ -459,8 +461,20 @@ async function refreshGroups() {
   }
 }
 
-async function openKeywordDialog(roleUuid) {
-  state.keywordRoleUuid = roleUuid;
+function openEditRole(roleUuid) {
+  const role = state.roles.find((item) => item.role_uuid === roleUuid);
+  if (!role) return;
+  state.editRoleUuid = roleUuid;
+  document.getElementById("editRoleNickname").value = role.nickname || "";
+  document.getElementById("editRoleProfile").value = role.profile_md || "";
+  document.getElementById("editRoleTargets").value = role.target_roles || "";
+  document.getElementById("editRoleCity").value = role.target_city || "";
+  document.getElementById("editRoleSalary").value = role.target_salary || "";
+  document.getElementById("editRoleKeywords").value = (role.role_keywords || []).join("、");
+  document.getElementById("editRoleDialog").showModal();
+}
+
+async function openKeywordDialog(roleUuid) {  state.keywordRoleUuid = roleUuid;
   const data = await api(`/api/roles/${roleUuid}/keywords`);
   const entries = data.keywords || [];
   const current = entries.filter((item) => item.is_current);
@@ -605,6 +619,26 @@ function bind() {
   document.getElementById("btnCloseHelp").onclick = () => document.getElementById("helpDialog").close();
   document.getElementById("btnCloseNotification").onclick = () => document.getElementById("notificationDialog").close();
   document.getElementById("btnCloseKeywords").onclick = () => document.getElementById("keywordDialog").close();
+  document.getElementById("btnCancelRoleEdit").onclick = () => document.getElementById("editRoleDialog").close();
+  document.getElementById("btnSaveRoleEdit").onclick = async () => {
+    if (!state.editRoleUuid) return;
+    try {
+      await api(`/api/roles/${state.editRoleUuid}`, {
+        method: "PATCH",
+        body: {
+          nickname: document.getElementById("editRoleNickname").value.trim(),
+          profile_md: document.getElementById("editRoleProfile").value,
+          target_roles: document.getElementById("editRoleTargets").value.trim(),
+          target_city: document.getElementById("editRoleCity").value.trim(),
+          target_salary: document.getElementById("editRoleSalary").value.trim(),
+          role_keywords: document.getElementById("editRoleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+        },
+      });
+      document.getElementById("editRoleDialog").close();
+      await refreshRoles();
+      toast("角色已修改");
+    } catch (error) { alert(error.message); }
+  };
   document.getElementById("btnGenerateRoleKeywords").onclick = async () => {
     try { await generateRoleKeywords(); } catch (error) { alert(error.message); }
   };
@@ -756,7 +790,7 @@ function bind() {
           target_salary: document.getElementById("roleSalary").value.trim(),
         },
       });
-      document.getElementById("roleKeywords").value = (result.keywords || []).join(", ");
+      document.getElementById("roleKeywords").value = (result.keywords || []).join("、");
       toast(result.aiUsed ? "AI 已生成每日关键词" : "已用本地规则生成关键词");
     } catch (error) { alert(error.message); }
   };
@@ -808,6 +842,11 @@ function bind() {
   document.getElementById("btnCancelConfirm").onclick = () => document.getElementById("confirmDialog").close();
 
   document.getElementById("roleList").addEventListener("click", async (event) => {
+    const editButton = event.target.closest("button[data-edit-role]");
+    if (editButton) {
+      openEditRole(editButton.dataset.editRole);
+      return;
+    }
     const keywordButton = event.target.closest("button[data-keywords]");
     if (keywordButton) {
       try { await openKeywordDialog(keywordButton.dataset.keywords); } catch (error) { alert(error.message); }
