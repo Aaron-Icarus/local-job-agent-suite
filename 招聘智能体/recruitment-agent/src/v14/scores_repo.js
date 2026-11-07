@@ -293,6 +293,68 @@ function countPendingScores(db, roleUuid) {
   );
 }
 
+function searchRoleJobs(db, roleUuid, options = {}) {
+  const clauses = ["rj.role_uuid = ?"];
+  const params = [roleUuid];
+  const q = String(options.q || "").trim();
+  if (q) {
+    clauses.push("(j.display_id LIKE ? OR j.company LIKE ? OR j.title LIKE ? OR j.job_description LIKE ?)");
+    const like = `%${q}%`;
+    params.push(like, like, like, like);
+  }
+  const location = String(options.location || "").trim();
+  if (location) {
+    clauses.push("(j.city LIKE ? OR j.district LIKE ? OR j.address LIKE ?)");
+    const like = `%${location}%`;
+    params.push(like, like, like);
+  }
+  if (options.salaryMin !== "" && options.salaryMin != null) {
+    clauses.push("(j.salary_max_k IS NULL OR j.salary_max_k >= ?)");
+    params.push(Number(options.salaryMin));
+  }
+  if (options.salaryMax !== "" && options.salaryMax != null) {
+    clauses.push("(j.salary_min_k IS NULL OR j.salary_min_k <= ?)");
+    params.push(Number(options.salaryMax));
+  }
+  if (options.dateFrom) {
+    clauses.push("j.last_seen_date >= ?");
+    params.push(String(options.dateFrom));
+  }
+  if (options.dateTo) {
+    clauses.push("j.last_seen_date <= ?");
+    params.push(String(options.dateTo));
+  }
+  const where = clauses.join(" AND ");
+  const sortMap = {
+    score_desc: "rj.score DESC, rj.score_time DESC",
+    date_desc: "j.last_seen_date DESC, j.display_id DESC",
+    salary_desc: "j.salary_max_k DESC, j.salary_min_k DESC",
+    salary_asc: "j.salary_min_k ASC, j.salary_max_k ASC",
+    company_asc: "j.company ASC, j.display_id ASC",
+  };
+  const order = sortMap[options.sort] || sortMap.score_desc;
+  const pageSize = Math.max(1, Math.min(200, Number(options.pageSize || 20)));
+  const page = Math.max(1, Number(options.page || 1));
+  const total = Number(
+    db.prepare(
+      `SELECT COUNT(*) AS count FROM role_jobs rj JOIN jobs j ON j.job_uuid = rj.job_uuid WHERE ${where}`
+    ).get(...params).count || 0
+  );
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, pages);
+  const jobs = db.prepare(
+    `SELECT rj.*, j.display_id, j.company, j.title, j.job_url, j.salary_text, j.city, j.district,
+            j.first_seen_date, j.last_seen_date, j.last_recheck_at, j.ingested_at, j.job_status AS main_job_status,
+            j.duplicate_status AS main_duplicate_status, j.long_lived_days
+     FROM role_jobs rj
+     JOIN jobs j ON j.job_uuid = rj.job_uuid
+     WHERE ${where}
+     ORDER BY ${order}
+     LIMIT ? OFFSET ?`
+  ).all(...params, pageSize, (safePage - 1) * pageSize);
+  return { jobs, total, page: safePage, pageSize, pages };
+}
+
 module.exports = {
   jobUpdatedAt,
   ensureRoleJobsForRole,
@@ -303,5 +365,6 @@ module.exports = {
   saveScore,
   getRoleJob,
   listRoleJobs,
+  searchRoleJobs,
   countPendingScores,
 };

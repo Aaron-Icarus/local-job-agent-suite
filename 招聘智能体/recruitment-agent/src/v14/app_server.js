@@ -14,7 +14,12 @@ const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
 const { buildExcelHtml } = require("./export_service");
-const { listNotifications } = require("./notifier");
+const { listNotifications, createNotification } = require("./notifier");
+const messagePlatform = require("./message_platform_service");
+const chat = require("./chat_service");
+const feishuGroups = require("./feishu_groups");
+const logger = require("./logger");
+const jobRecheck = require("./job_recheck");
 const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
 
 function json(res, status, payload) {
@@ -64,6 +69,13 @@ function createAppServer(options = {}) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     const pathname = decodeURIComponent(url.pathname);
+    const startedAt = Date.now();
+    res.on("finish", () => {
+      logger.info("http", `${req.method} ${pathname}`, {
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    });
     try {
       if (pathname === "/api/health") {
         return json(res, 200, {
@@ -72,6 +84,13 @@ function createAppServer(options = {}) {
           roles: roles.listRoles(db).length,
           tasks: listTasks(db, { limit: 5 }).length,
           login: loginStatus(db),
+        });
+      }
+      if (pathname === "/api/logs" && req.method === "GET") {
+        return json(res, 200, {
+          ok: true,
+          stats: logger.stats(),
+          logs: logger.tail(Number(url.searchParams.get("limit") || 200)),
         });
       }
       if (pathname === "/api/settings" && req.method === "GET") {
@@ -85,9 +104,29 @@ function createAppServer(options = {}) {
       if (pathname === "/api/roles" && req.method === "GET") {
         return json(res, 200, { ok: true, roles: roles.listRoles(db) });
       }
+
+      if (pathname === "/api/chat/sessions" && req.method === "GET") {
+        return json(res, 200, { ok: true, sessions: chat.listSessions(db) });
+      }
+      if (pathname === "/api/chat/sessions" && req.method === "POST") {
+        return json(res, 200, { ok: true, session: chat.createSession(db, await readBody(req)) });
+      }
+      const chatSession = pathname.match(/^\/api\/chat\/sessions\/([^/]+)$/);
+      if (chatSession && req.method === "GET") {
+        const session = chat.getSession(db, chatSession[1]);
+        if (!session) return json(res, 404, { ok: false, error: "对话不存在" });
+        return json(res, 200, { ok: true, session });
+      }
+      const chatMessage = pathname.match(/^\/api\/chat\/sessions\/([^/]+)\/messages$/);
+      if (chatMessage && req.method === "POST") {
+        const body = await readBody(req);
+        const result = await chat.runTurn(db, chatMessage[1], body);
+        return json(res, 200, { ok: true, ...result });
+      }
       if (pathname === "/api/roles" && req.method === "POST") {
         const result = roles.createRole(db, await readBody(req));
-        return json(res, 200, { ok: true, ...result });
+        const defaultGroup = feishuGroups.applyDefaultGroup(db, result.role.role_uuid);
+        return json(res, 200, { ok: true, ...result, defaultGroup });
       }
 
       if (pathname === "/api/resumes" && req.method === "GET") {
@@ -109,6 +148,9 @@ function createAppServer(options = {}) {
         const result = await checkPlatform(platform);
         const status = result.ok ? "logged_in" : result.status === "login_required" ? "login_required" : "error";
         const saved = recordCheck(db, platform, status, result.error || "");
+        if (!result.ok) {
+          await feishuGroups.sendToGroups(db, "login", `【登录异常】${platform}：${status}，请打开客户端检查登录。`);
+        }
         return json(res, 200, { ok: result.ok, platform, result, saved });
       }
 
@@ -116,8 +158,8 @@ function createAppServer(options = {}) {
         const body = await readBody(req);
         const platform = String(body.platform || "");
         const url = platform === "猎聘" ? "https://c.liepin.com/" : "https://www.zhipin.com/web/geek/jobs";
-        const child = startChrome({ startUrl: url, port: Number(body.port || 9222) });
-        return json(res, 200, { ok: true, platform, url, pid: child.child.pid });
+        const child = startChrome({ startUrl: url, port: Number(body.port || 9222), startMinimized: false });
+        return json(res, 200, { ok: true, platform, url, message: "Chrome 已打开登录页", pid: child.child.pid });
       }
 
       const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update)$/);
@@ -158,11 +200,39 @@ function createAppServer(options = {}) {
         return json(res, 200, { ok: Boolean(plan), ...(plan || {}) });
       }
 
+      if (pathname === "/api/jobs/recheck/status" && req.method === "GET") {
+        return json(res, 200, { ok: true, status: jobRecheck.getStatus(), batches: jobRecheck.listBatches(db, 5) });
+      }
+      if (pathname === "/api/jobs/recheck/candidates" && req.method === "GET") {
+        const items = jobRecheck.candidates(db);
+        return json(res, 200, { ok: true, count: items.length, jobs: items.map((job) => ({
+          displayId: job.display_id, company: job.company, title: job.title,
+          lastSeenDate: job.last_seen_date, lastRecheckAt: job.last_recheck_at,
+        })) });
+      }
+      if (pathname === "/api/jobs/recheck" && req.method === "POST") {
+        const body = await readBody(req);
+        if (body.action === "cancel") return json(res, 200, { ok: true, ...jobRecheck.cancelRecheck() });
+        return json(res, 200, { ok: true, ...jobRecheck.startRecheck(db) });
+      }
+      if (pathname === "/api/jobs/recheck/batches" && req.method === "GET") {
+        return json(res, 200, { ok: true, batches: jobRecheck.listBatches(db) });
+      }
       if (pathname === "/api/jobs" && req.method === "GET") {
         const roleUuid = url.searchParams.get("role") || "";
         if (roleUuid) {
-          const rows = scores.listRoleJobs(db, roleUuid, { limit: Number(url.searchParams.get("limit") || 100) });
-          return json(res, 200, { ok: true, jobs: rows });
+          const result = scores.searchRoleJobs(db, roleUuid, {
+            q: url.searchParams.get("q") || "",
+            location: url.searchParams.get("location") || "",
+            salaryMin: url.searchParams.get("salaryMin") || "",
+            salaryMax: url.searchParams.get("salaryMax") || "",
+            dateFrom: url.searchParams.get("dateFrom") || "",
+            dateTo: url.searchParams.get("dateTo") || "",
+            sort: url.searchParams.get("sort") || "score_desc",
+            page: Number(url.searchParams.get("page") || 1),
+            pageSize: Number(url.searchParams.get("pageSize") || 20),
+          });
+          return json(res, 200, { ok: true, ...result });
         }
         return json(res, 200, { ok: true, jobs: listJobs(db, { limit: 100 }) });
       }
@@ -207,6 +277,13 @@ function createAppServer(options = {}) {
         });
         return json(res, 200, { ok: result.ok, ...result });
       }
+      const reportGroups = pathname.match(/^\/api\/reports\/(\d+)\/send-groups$/);
+      if (reportGroups) {
+        const report = db.prepare("SELECT * FROM reports WHERE id = ?").get(Number(reportGroups[1]));
+        if (!report) return json(res, 404, { ok: false, error: "日报不存在" });
+        const result = await feishuGroups.sendReportToGroups(db, report);
+        return json(res, 200, { ok: result.ok, ...result });
+      }
 
       if (pathname.startsWith("/api/export/") && req.method === "GET") {
         const roleUuid = pathname.split("/").pop();
@@ -222,6 +299,78 @@ function createAppServer(options = {}) {
         return json(res, 200, { ok: true, notifications: listNotifications(db) });
       }
 
+      if (pathname === "/api/messages" && req.method === "GET") {
+        const settings = getSettings(db);
+        return json(res, 200, {
+          ok: true,
+          webhook_configured: Boolean(settings.feishu_webhook),
+          webhook_masked: settings.feishu_webhook
+            ? `${String(settings.feishu_webhook).slice(0, 28)}…`
+            : "",
+          reports: reports.listReports(db, { limit: 20 }),
+          notifications: listNotifications(db, { limit: 30 }),
+          original_message_platform: {
+            integrated: true,
+            path: "消息平台/message-platform",
+            note: "已接入配置/启停；原消息平台仍以独立进程运行。",
+            status: messagePlatform.status(),
+          },
+        });
+      }
+      if (pathname === "/api/message-platform" && req.method === "GET") {
+        return json(res, 200, { ok: true, status: messagePlatform.status() });
+      }
+      if (pathname === "/api/message-platform/config" && req.method === "POST") {
+        return json(res, 200, { ok: true, status: messagePlatform.writeEnv(await readBody(req)) && messagePlatform.status() });
+      }
+      if (pathname === "/api/message-platform/start" && req.method === "POST") {
+        return json(res, 200, { ok: true, status: messagePlatform.startService() });
+      }
+      if (pathname === "/api/message-platform/stop" && req.method === "POST") {
+        return json(res, 200, { ok: true, status: messagePlatform.stopService() });
+      }
+      if (pathname === "/api/message-platform/sync-groups" && req.method === "POST") {
+        const groups = feishuGroups.listGroups(db);
+        return json(res, 200, {
+          ok: true,
+          groups: groups.length,
+          status: messagePlatform.syncGroups(groups.map((group) => group.chat_id)),
+        });
+      }
+
+      if (pathname === "/api/feishu-groups" && req.method === "GET") {
+        return json(res, 200, { ok: true, groups: feishuGroups.listGroups(db) });
+      }
+      if (pathname === "/api/feishu-groups" && req.method === "POST") {
+        return json(res, 200, { ok: true, group: feishuGroups.saveGroup(db, await readBody(req)) });
+      }
+      const feishuGroupId = pathname.match(/^\/api\/feishu-groups\/([^/]+)$/);
+      if (feishuGroupId && req.method === "DELETE") {
+        return json(res, 200, { ok: true, deleted: feishuGroups.deleteGroup(db, feishuGroupId[1]) });
+      }
+      const feishuGroupTest = pathname.match(/^\/api\/feishu-groups\/([^/]+)\/test$/);
+      if (feishuGroupTest && req.method === "POST") {
+        return json(res, 200, { ok: true, result: await feishuGroups.testGroup(db, feishuGroupTest[1]) });
+      }
+      if (pathname === "/api/messages/test" && req.method === "POST") {
+        const settings = getSettings(db);
+        const webhook = settings.feishu_webhook || "";
+        if (!webhook) return json(res, 400, { ok: false, error: "请先保存飞书 webhook" });
+        const text = `招聘智能体测试消息\n时间：${new Date().toLocaleString("zh-CN")}`;
+        const sent = await reports.sendFeishu(webhook, text);
+        const notification = createNotification(db, {
+          type: "message_test",
+          title: "飞书测试消息",
+          body: text,
+          channels: ["feishu"],
+        });
+        db.prepare("UPDATE notifications SET status = 'sent', sent_at = ? WHERE id = ?").run(
+          new Date().toISOString(),
+          notification.id
+        );
+        return json(res, 200, { ok: true, sent, notificationId: notification.id });
+      }
+
       if (req.method === "GET") {
         const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
         const filePath = path.join(uiDir, relative);
@@ -232,6 +381,7 @@ function createAppServer(options = {}) {
       }
       return json(res, 404, { ok: false, error: "Not found" });
     } catch (error) {
+      logger.error("http", `${req.method} ${pathname} 失败：${error.message}`);
       return json(res, 400, { ok: false, error: error.message });
     }
   });

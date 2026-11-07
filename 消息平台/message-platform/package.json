@@ -1,0 +1,8 @@
+{
+  "name": "message-platform",
+  "version": "1.5.0",
+  "private": true,
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0"
+  }
+}
