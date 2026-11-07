@@ -5,6 +5,7 @@ const { parseResumeMarkdown, resumeToProfileMarkdown } = require("./resume_parse
 const { searchRoleJobs } = require("./scores_repo");
 const { getRole } = require("./roles_repo");
 const { runWithFallback } = require("./ai_providers");
+const keywordService = require("./keyword_service");
 
 const KNOWN_CITIES = ["上海", "北京", "深圳", "广州", "杭州", "苏州", "成都", "武汉", "南京", "西安", "重庆"];
 
@@ -160,25 +161,65 @@ function parseKeywordList(text) {
   return raw.split(/[,\n，、]/).map((item) => item.replace(/^[-*\d.\s"]+|["\]]+$/g, "").trim()).filter((item) => item && item.length <= 40);
 }
 
+function uniqueKeywords(list, limit) {
+  return [...new Set((list || []).map((item) => String(item).trim()).filter(Boolean))].slice(0, limit);
+}
+
+function parseKeywordPayload(text) {
+  try {
+    const parsed = JSON.parse(String(text || "").replace(/^```json\s*|\s*```$/g, ""));
+    if (Array.isArray(parsed)) return { recommended: parsed, fallback: [] };
+    if (parsed && typeof parsed === "object") {
+      return {
+        recommended: Array.isArray(parsed.recommended) ? parsed.recommended : (Array.isArray(parsed.keywords) ? parsed.keywords : []),
+        fallback: Array.isArray(parsed.fallback) ? parsed.fallback : [],
+      };
+    }
+  } catch {
+    // fall through
+  }
+  return { recommended: parseKeywordList(text), fallback: [] };
+}
+
 async function generateKeywords(db, state) {
-  const fallback = dailyKeywords(state);
+  const base = keywordService.fallbackKeywords({
+    ...state,
+    skills: state.parsed?.skills || [],
+  });
+  const history = keywordService.history(db, state.role_uuid).slice(0, 12);
   const ai = await askAI(db, [
-    "你是招聘搜索关键词生成器。根据角色画像，生成 8-12 个中文/英文搜索关键词。",
-    "只输出 JSON 字符串数组，例如 [\"AI项目经理\",\"AI产品经理\"]。",
+    "你是招聘搜索关键词生成器。用户画像和求职意愿权重最高，历史关键词效果只用于调整。",
+    "生成 8-12 个中文/英文搜索关键词，并额外给 3-5 个默认兜底词。",
+    "只输出 JSON：{\"recommended\":[\"...\"],\"fallback\":[\"...\"]}。",
     "关键词要具体，覆盖岗位名、行业/技术方向、同义词；不要把城市、薪资、姓名、电话、邮箱写进关键词。",
+    "如果历史里某个词近期被大量使用、重复率高或失败多，本轮应降低权重或换成新词；保留仍有效的词。",
     `目标岗位：${state.target_roles || ""}`,
     `目标城市：${state.target_city || ""}`,
     `薪资：${state.target_salary || ""}`,
-    `职业期望：${state.career_expectation || ""}`,
+    `职业期望（高权重）：${state.career_expectation || ""}`,
     `画像：${sanitizeProfile(state.profile_md || buildProfile(state))}`,
+    `历史关键词及效果：${JSON.stringify(history)}`,
+    `本地兜底候选：${JSON.stringify(base)}`,
     `简历摘要：${String(state.experience || state.parsed?.experience_summary || "").slice(0, 1500)}`,
   ].join("\n"));
-  const parsed = ai?.text ? parseKeywordList(ai.text) : [];
+  const parsed = ai?.text ? parseKeywordPayload(ai.text) : { recommended: [], fallback: [] };
+  const recent = new Set(history.slice(0, 3).map((item) => String(item.keyword).toLowerCase()));
+  const proposed = parsed.recommended.length ? parsed.recommended : base.recommended;
+  const rotated = proposed.filter((item) => !recent.has(String(item).toLowerCase()));
+  const recommended = uniqueKeywords(rotated.length >= 5 ? rotated : proposed, 12);
+  const fallback = uniqueKeywords([
+    ...parsed.fallback,
+    ...base.fallback,
+  ].filter((item) => !recommended.includes(item)), 8);
+  if (state.role_uuid) {
+    keywordService.save(db, state.role_uuid, { recommended, fallback });
+  }
   return {
-    keywords: (parsed.length ? parsed : fallback).slice(0, 12),
-    aiUsed: Boolean(ai && parsed.length),
+    keywords: recommended,
+    fallbackKeywords: fallback,
+    aiUsed: Boolean(ai && parsed.recommended.length),
     provider: ai?.provider || "",
-    fallback,
+    historyUsed: history.length,
   };
 }
 
@@ -189,6 +230,7 @@ function buildProfile(state) {
     `# ${parsed.name || "候选人"} 角色画像`,
     "",
     `## 基础信息\n- 姓名：${parsed.name || "-"}\n- 学历：${parsed.education || "-"}\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}`,
+    `## 求职诉求\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}\n- 方向/偏好：${state.career_expectation || state.preferences || "未填写"}`,
     `## 职业发展期望\n${state.career_expectation || `希望在${state.target_city || "目标城市"}从事${state.target_roles || "目标岗位"}，薪资${state.target_salary || "面议"}，优先 AI/智能体方向。`}`,
     `## 工作经历\n${state.experience || parsed.experience_summary || "-"}`,
     `## 能力标签\n${skills}`,
@@ -200,7 +242,7 @@ function buildProfile(state) {
 }
 
 function ensureProfileSections(profile, localProfile) {
-  const required = ["## 职业发展期望", "## 风险/需确认"];
+  const required = ["## 求职诉求", "## 职业发展期望", "## 风险/需确认"];
   const missing = required.filter((heading) => !String(profile).includes(heading));
   if (!missing.length) return sanitizeProfile(profile);
   const sections = {};
@@ -367,7 +409,7 @@ async function runTurn(db, sessionId, input = {}) {
   const profileLocal = buildProfile(state);
   const aiProfile = await askAI(db, [
     "请根据以下真实信息生成一份角色画像 Markdown，只输出 Markdown，不要编造事实。",
-    "必须包含这些二级标题：基础信息、职业发展期望、工作经历、能力标签、风险/需确认。",
+    "必须包含这些二级标题：基础信息、求职诉求、职业发展期望、工作经历、能力标签、风险/需确认。",
     "不要在画像中写电话、手机、邮箱、密码、身份证、微信、QQ、联系方式。",
     "不要在画像中写技能关键词、每日搜索关键词、搜索排除词；这些由角色关键词单独维护。",
     `目标岗位：${state.target_roles}`,
@@ -375,7 +417,7 @@ async function runTurn(db, sessionId, input = {}) {
     `薪资：${state.target_salary}`,
     `职业发展期望：${state.career_expectation || "AI/智能体方向"}`,
     `经历：${state.experience}`,
-    `简历：${state.resume_md || ""}`,
+    `简历（已脱敏）：${sanitizeProfile(state.resume_md || "")}`,
   ].join("\n"));
   const profile = aiProfile?.text && aiProfile.text.length > 40
     ? ensureProfileSections(aiProfile.text, profileLocal)
@@ -387,7 +429,9 @@ async function runTurn(db, sessionId, input = {}) {
     action: "profile_ready",
     profile_md: profile,
     keywords: keywordResult.keywords,
+    fallback_keywords: keywordResult.fallbackKeywords,
     keyword_ai_used: keywordResult.aiUsed,
+    keyword_history_used: keywordResult.historyUsed,
     resume_id: state.resume_id || "",
     ai_used: Boolean(aiProfile),
     suggested: {
@@ -398,6 +442,7 @@ async function runTurn(db, sessionId, input = {}) {
       target_salary: state.target_salary,
       career_expectation: state.career_expectation || "",
       role_keywords: keywordResult.keywords,
+      fallback_keywords: keywordResult.fallbackKeywords,
     },
     steps: [
       "parse_resume",

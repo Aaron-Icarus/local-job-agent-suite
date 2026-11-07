@@ -113,6 +113,14 @@
 6. 控制在 8–12 个，后续按采集结果反馈调整；
 7. 角色创建后写入 `role_keywords`，供采集器使用。
 
+## 7. 角色关键词记录
+
+- 表：`role_keyword_entries`；`category=recommended/fallback`，`is_current=1` 表示当前轮；
+- 兼容字段：`roles.role_keywords_json` 供采集器读取；
+- 历史效果：同一角色在 `keyword_tasks` 中的 seen/new/duplicate/failed/最近使用；
+- 生成时用户画像与意愿权重最高，历史效果用于轮换和降权；
+- 角色页“关键词”弹窗显示下一轮推荐、兜底和历史统计。
+
 ## 7. 当前实现与限制
 
 - 群配置、默认群、角色/节点勾选、回复角色、历史详情已实现；

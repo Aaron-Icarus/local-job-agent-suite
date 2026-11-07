@@ -340,6 +340,18 @@
     </div>
   </dialog>
 
+  <dialog id="keywordDialog">
+    <div class="panel dialog-panel" style="max-width:720px">
+      <h2>角色关键词</h2>
+      <p class="hint">推荐词用于下一轮；兜底词在推荐词效果差时使用。画像 MD 不包含关键词。</p>
+      <div id="keywordList" class="list"></div>
+      <div class="toolbar">
+        <button id="btnGenerateRoleKeywords">生成下一轮</button>
+        <button id="btnCloseKeywords" class="ghost">关闭</button>
+      </div>
+    </div>
+  </dialog>
+
   <div id="customTooltip" class="custom-tooltip" role="tooltip" hidden></div>
 
   <script src="/app.js"></script>

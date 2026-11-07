@@ -20,6 +20,7 @@ const chat = require("./chat_service");
 const feishuGroups = require("./feishu_groups");
 const logger = require("./logger");
 const jobRecheck = require("./job_recheck");
+const keywordService = require("./keyword_service");
 const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
 
 function json(res, status, payload) {
@@ -128,8 +129,36 @@ function createAppServer(options = {}) {
         const result = await chat.runTurn(db, chatMessage[1], body);
         return json(res, 200, { ok: true, ...result });
       }
+      const roleKeywords = pathname.match(/^\/api\/roles\/([^/]+)\/keywords$/);
+      if (roleKeywords && req.method === "GET") {
+        return json(res, 200, { ok: true, keywords: keywordService.list(db, roleKeywords[1]) });
+      }
+      const roleKeywordsGenerate = pathname.match(/^\/api\/roles\/([^/]+)\/keywords\/generate$/);
+      if (roleKeywordsGenerate && req.method === "POST") {
+        const role = roles.getRole(db, roleKeywordsGenerate[1]);
+        if (!role) return json(res, 404, { ok: false, error: "角色不存在" });
+        const result = await chat.generateKeywords(db, {
+          role_uuid: role.role_uuid,
+          profile_md: role.profile_md,
+          target_roles: role.target_roles,
+          target_city: role.target_city,
+          target_salary: role.target_salary,
+          career_expectation: role.special_requirements,
+        });
+        return json(res, 200, { ok: true, ...result });
+      }
       if (pathname === "/api/roles" && req.method === "POST") {
-        const result = roles.createRole(db, await readBody(req));
+        const body = await readBody(req);
+        const result = roles.createRole(db, body);
+        if (body.role_keywords?.length) {
+          const fallback = body.fallback_keywords?.length
+            ? body.fallback_keywords
+            : keywordService.fallbackKeywords(body).fallback;
+          keywordService.save(db, result.role.role_uuid, {
+            recommended: body.role_keywords,
+            fallback,
+          });
+        }
         const defaultGroup = feishuGroups.applyDefaultGroup(db, result.role.role_uuid);
         return json(res, 200, { ok: true, ...result, defaultGroup });
       }

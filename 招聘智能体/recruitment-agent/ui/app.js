@@ -23,6 +23,7 @@ const state = {
   editingGroupId: "",
   recheckPolling: false,
   recheckTimer: null,
+  keywordRoleUuid: "",
 };
 
 async function api(path, options = {}) {
@@ -138,6 +139,7 @@ async function refreshRoles() {
           ${["pending_start", "paused"].includes(role.status) ? `<button class="small" data-action="start" data-id="${role.role_uuid}">启动</button>` : ""}
           ${role.status === "running" ? `<button class="small ghost" data-action="pause" data-id="${role.role_uuid}">暂停</button>` : ""}
           <button class="small ghost" data-action="copy" data-id="${role.role_uuid}">复制</button>
+          <button class="small ghost" data-keywords="${role.role_uuid}">关键词</button>
           <button class="small danger" data-action="delete" data-id="${role.role_uuid}">删除</button>
         </div>
       </div>`;
@@ -457,6 +459,26 @@ async function refreshGroups() {
   }
 }
 
+async function openKeywordDialog(roleUuid) {
+  state.keywordRoleUuid = roleUuid;
+  const data = await api(`/api/roles/${roleUuid}/keywords`);
+  const entries = data.keywords || [];
+  const current = entries.filter((item) => item.is_current);
+  const renderGroup = (category, label) => {
+    const rows = current.filter((item) => item.category === category);
+    return `<h2>${label}</h2>${rows.length ? rows.map((item) => `<div class="row"><div><strong>${esc(item.keyword)}</strong><div class="meta">使用 ${item.use_count || 0} 次 · 新增 ${item.new_count || 0} · 重复 ${item.duplicate_count || 0} · 失败 ${item.failed_count || 0}${item.last_used_at ? " · 上次 " + esc(item.last_used_at) : ""}</div></div></div>`).join("") : '<div class="empty">暂无</div>'}`;
+  };
+  document.getElementById("keywordList").innerHTML = renderGroup("recommended", "下一轮推荐") + renderGroup("fallback", "默认兜底");
+  document.getElementById("keywordDialog").showModal();
+}
+
+async function generateRoleKeywords() {
+  if (!state.keywordRoleUuid) return;
+  const result = await api(`/api/roles/${state.keywordRoleUuid}/keywords/generate`, { method: "POST", body: {} });
+  await openKeywordDialog(state.keywordRoleUuid);
+  toast(result.aiUsed ? "AI 已生成下一轮关键词" : "已用本地规则生成关键词");
+}
+
 async function refreshAll() {
   await refreshHealth();
   try {
@@ -542,6 +564,7 @@ function bind() {
           target_city: suggested.target_city,
           target_salary: suggested.target_salary,
           role_keywords: suggested.role_keywords || [],
+          fallback_keywords: suggested.fallback_keywords || [],
         },
       });
       await refreshRoles();
@@ -581,6 +604,10 @@ function bind() {
   document.getElementById("btnGroupHelp").onclick = () => document.getElementById("helpDialog").showModal();
   document.getElementById("btnCloseHelp").onclick = () => document.getElementById("helpDialog").close();
   document.getElementById("btnCloseNotification").onclick = () => document.getElementById("notificationDialog").close();
+  document.getElementById("btnCloseKeywords").onclick = () => document.getElementById("keywordDialog").close();
+  document.getElementById("btnGenerateRoleKeywords").onclick = async () => {
+    try { await generateRoleKeywords(); } catch (error) { alert(error.message); }
+  };
   document.getElementById("messageLog").addEventListener("click", (event) => {
     const row = event.target.closest("[data-notification]");
     if (!row) return;
@@ -781,6 +808,11 @@ function bind() {
   document.getElementById("btnCancelConfirm").onclick = () => document.getElementById("confirmDialog").close();
 
   document.getElementById("roleList").addEventListener("click", async (event) => {
+    const keywordButton = event.target.closest("button[data-keywords]");
+    if (keywordButton) {
+      try { await openKeywordDialog(keywordButton.dataset.keywords); } catch (error) { alert(error.message); }
+      return;
+    }
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const { action, id } = button.dataset;
