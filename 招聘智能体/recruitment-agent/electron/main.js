@@ -5,7 +5,10 @@ const net = require("net");
 const http = require("http");
 const { spawn } = require("child_process");
 
-const logDir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "boss-job-agent");
+const logBase = process.platform === "darwin"
+  ? path.join(os.homedir(), "Library", "Application Support")
+  : (process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"));
+const logDir = path.join(logBase, "boss-job-agent");
 const logFile = path.join(logDir, "startup.log");
 try {
   fs.mkdirSync(logDir, { recursive: true });
