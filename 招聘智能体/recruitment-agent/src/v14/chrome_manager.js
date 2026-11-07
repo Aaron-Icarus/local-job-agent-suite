@@ -154,6 +154,54 @@ async function waitForCdp(port, timeoutMs = 15000) {
   return false;
 }
 
+function cdpCall(wsUrl, method, params = {}, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const timer = setTimeout(() => {
+      try { ws.close(); } catch { /* ignore */ }
+      reject(new Error(`CDP ${method} timeout`));
+    }, timeoutMs);
+    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method, params }));
+    ws.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error(`CDP ${method} connection error`));
+    };
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.id !== 1) return;
+        clearTimeout(timer);
+        ws.close();
+        if (message.error) reject(new Error(message.error.message || method));
+        else resolve(message.result || {});
+      } catch (error) {
+        clearTimeout(timer);
+        reject(error);
+      }
+    };
+  });
+}
+
+async function minimizeChrome(port) {
+  try {
+    const versionResponse = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
+    const version = await versionResponse.json();
+    const listResponse = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1200) });
+    const tabs = await listResponse.json();
+    const target = tabs.find((tab) => tab.type === "page" && tab.webSocketDebuggerUrl);
+    if (!target || !version.webSocketDebuggerUrl) return false;
+    const windowInfo = await cdpCall(version.webSocketDebuggerUrl, "Browser.getWindowForTarget", { targetId: target.id });
+    if (!windowInfo.windowId) return false;
+    await cdpCall(version.webSocketDebuggerUrl, "Browser.setWindowBounds", {
+      windowId: windowInfo.windowId,
+      bounds: { windowState: "minimized" },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureChrome(input = {}) {
   const resolved = await resolveCdpPort(input.port);
   if (resolved.reused || await isCdpReady(resolved.port)) {
@@ -166,6 +214,9 @@ async function ensureChrome(input = {}) {
   if (!ready) {
     try { started.child.kill(); } catch { /* ignore */ }
     throw new Error(`Chrome 已启动但 CDP 端口 ${resolved.port} 未就绪，请检查是否被安全软件拦截`);
+  }
+  if (input.startMinimized !== false) {
+    await minimizeChrome(resolved.port);
   }
   return { ...resolved, chromePath, child: started.child };
 }
@@ -199,6 +250,7 @@ module.exports = {
   isPortFree,
   resolveCdpPort,
   ensureChrome,
+  minimizeChrome,
   startChrome,
   stopChrome,
 };

@@ -39,6 +39,7 @@
         <button id="btnTick" data-tooltip="按当前时间、空闲和 1 小时间隔判断；满足条件才创建采集/入库/评分/日报任务，不保证立即采集。">立即执行一次调度</button>
         <button id="btnPlan" class="ghost" data-tooltip="跳过定时与间隔判断，直接为运行中角色创建一次采集任务；任务进入队列执行，不是同步抓完。">手动生成采集任务</button>
         <button id="btnLoginStatus" class="ghost" title="读取最近一次登录检查记录">刷新登录状态</button>
+        <button id="btnMinimizeChrome" class="ghost" title="把检测/采集用 Chrome 最小化，随时可手动恢复">最小化浏览器</button>
       </div>
       <p class="hint">“立即执行一次调度”= 按当前时间/空闲/间隔判断，满足条件才创建任务（不保证一定采集）；“手动生成采集任务”= 跳过定时判断，直接创建一次采集任务（人工强制）。</p>
       <pre id="dashboardLog" class="log"></pre>
@@ -50,8 +51,10 @@
         <div class="toolbar">
           <select id="chatRoleSelect"></select>
           <button id="btnNewChat" class="ghost">新对话</button>
+          <button id="btnOpenSkills" class="ghost" title="打开本地 Skill 文件夹">Skill 目录</button>
         </div>
       </div>
+      <p id="skillsPath" class="hint"></p>
       <div class="chat-layout">
         <div class="panel chat-sessions">
           <h2>会话</h2>
@@ -59,10 +62,11 @@
         </div>
         <div class="panel chat-main">
           <div id="chatMessages" class="chat-messages">
-            <div class="empty">上传简历或直接提问。例如：“帮我生成角色画像：实施顾问，上海，18-25K，5 年经验”。</div>
+            <div class="empty">上传简历或直接提问。例如：“帮我生成角色画像：实施顾问，上海，18-25K，5 年经验”。支持把 .md/.txt/.docx/.doc/.pdf 拖进本页面。</div>
           </div>
           <div class="chat-compose">
-            <label class="file-line">简历 MD<input id="chatResumeFile" type="file" accept=".md,.markdown,.txt"></label>
+            <label class="file-line">简历文件（支持 MD/TXT/DOCX/DOC/PDF）<input id="chatResumeFile" type="file" accept=".md,.markdown,.txt,.docx,.doc,.pdf"></label>
+            <div id="chatResumeStatus" class="hint">也可以直接把文件拖进本页面；文档优先，图片简历暂不做 OCR。</div>
             <textarea id="chatInput" rows="3" placeholder="继续补充目标岗位、城市、薪资、经历，或问“这个角色最近有哪些岗位”"></textarea>
             <div class="toolbar">
               <button id="btnChatSend">发送</button>
@@ -82,14 +86,15 @@
         <div class="panel">
           <h2>新建角色</h2>
           <label>昵称<input id="roleNickname" placeholder="例如：实施顾问-A"></label>
-          <label>导入简历 MD<input id="resumeFile" type="file" accept=".md,.markdown,.txt"></label>
+          <label>导入简历（MD/TXT/DOCX/DOC/PDF）<input id="resumeFile" type="file" accept=".md,.markdown,.txt,.docx,.doc,.pdf"></label>
           <div id="resumeStatus" class="hint">未选择简历；也可以直接粘贴到下方</div>
           <label>简历/画像<textarea id="roleProfile" rows="6" placeholder="粘贴简历或画像；导入 MD 后会自动填入"></textarea></label>
           <label>目标岗位<input id="roleTargets" placeholder="AI项目经理, AI产品经理"></label>
-          <label>目标城市<input id="roleCity" placeholder="上海"></label>
-          <label>期望薪资<input id="roleSalary" placeholder="18-30K"></label>
+          <label>目标城市（可多个，用“、”分隔）<input id="roleCity" placeholder="江苏省、苏州市、上海市浦东新区"></label>
+          <div id="roleCityPreview" class="hint"></div>
+          <label>期望薪资（千元）<span class="salary-range"><input id="roleSalaryMin" type="number" min="1" step="1" placeholder="18"> 至 <input id="roleSalaryMax" type="number" min="1" step="1" placeholder="30"></span></label>
+          <button id="btnGenerateKeywords" type="button" class="keyword-generate-btn">AI 生成每日关键词</button>
           <label>关键词（用“、”分隔）<input id="roleKeywords" placeholder="AI项目经理、AI产品经理、智能体交付"></label>
-          <button id="btnGenerateKeywords" type="button" class="ghost">AI 生成每日关键词</button>
           <p class="hint">每日关键词单独保存到角色，不写入画像 MD。</p>
           <button id="btnCreateRole">创建角色</button>
           <p class="hint">创建时不选渠道；确认角色时再勾选 BOSS/猎聘。</p>
@@ -205,7 +210,10 @@
       <div class="panel">
         <div class="section-head">
           <h2>本地运行日志</h2>
-          <button id="btnShowLogs" class="ghost">查看最近日志</button>
+          <div class="toolbar">
+            <button id="btnShowLogs" class="ghost">查看最近日志</button>
+            <button id="btnOpenLogs" class="ghost">打开日志文件夹</button>
+          </div>
         </div>
         <p id="localLogStats" class="hint">记录操作、告警和异常；日志总量有上限，超过后自动轮转。</p>
         <pre id="localLogs" class="log"></pre>
@@ -295,7 +303,7 @@
         </div>
         <div class="route-table-wrap">
           <table class="route-table">
-            <thead><tr><th>角色</th><th>登录状态</th><th>操作异常</th><th>每日日报</th></tr></thead>
+            <thead><tr><th>角色</th><th>登录状态</th><th>操作异常</th><th>每日日报</th><th>操作</th></tr></thead>
             <tbody id="routeStageBody"></tbody>
           </table>
         </div>
@@ -374,8 +382,8 @@
       <label>昵称<input id="editRoleNickname"></label>
       <label>简历/画像<textarea id="editRoleProfile" rows="6"></textarea></label>
       <label>目标岗位<input id="editRoleTargets"></label>
-      <label>目标城市<input id="editRoleCity"></label>
-      <label>期望薪资<input id="editRoleSalary"></label>
+      <label>目标城市（可多个，用“、”分隔）<input id="editRoleCity"></label>
+      <label>期望薪资（千元）<span class="salary-range"><input id="editSalaryMin" type="number" min="1" step="1"> 至 <input id="editSalaryMax" type="number" min="1" step="1"></span></label>
       <label>关键词（用“、”分隔）<input id="editRoleKeywords"></label>
       <div class="toolbar">
         <button id="btnSaveRoleEdit">保存修改</button>
@@ -404,12 +412,33 @@
       <h2>飞书机器人与群配置</h2>
       <ol class="help-list">
         <li>打开飞书开发者后台，创建/进入自建应用。</li>
-        <li>在“凭证与基础信息”复制 App ID、App Secret，填入消息页并保存。</li>
+        <li>在“凭证与基础信息”复制 App ID、App Secret，填入消息页“飞书机器人应用”并保存。</li>
         <li>开启机器人能力，把机器人拉进目标群。</li>
         <li>群 Chat ID 以 <code>oc_</code> 开头；可在群设置/开放平台接口中查看，群里发消息后事件里也会带。</li>
         <li>在“事件与回调”选择长连接，订阅 <code>im.message.receive_v1</code>。</li>
-        <li>在“调整配置”里填群名称、Chat ID、角色和通知节点，保存后点“同步群到消息平台”。</li>
-        <li>点“启动消息平台”，然后在群里 @机器人 测试；没有默认群时只记录本地通知。</li>
+        <li>回到客户端“飞书群管理”，点“添加群”，填群名称、Chat ID、Webhook（可选），保存。</li>
+        <li>在群卡片上点“测试”，确认群通道正常；异常群会排在最前面。</li>
+        <li>点“同步群到消息平台”，让独立消息平台读取群配置；必要时重启消息平台。</li>
+        <li>回到客户端点“启动消息平台”，在群里 @机器人 测试。</li>
+        <li>在“默认通知群”和“角色通知群”里选择群并保存；前者是新角色默认，后者按角色/环节发送。</li>
+      </ol>
+      <hr>
+      <h3>群同步与应用配置的区别</h3>
+      <p class="hint">“飞书群管理”负责群本身（增删改查、测试）；“同步群到消息平台”只是把已保存的群写给独立消息平台进程，不新增群；“飞书机器人应用”只负责 App ID/Secret、长连接、Webhook，不负责角色分配。</p>
+      <h3>飞书后台操作顺序</h3>
+      <ol class="help-list">
+        <li>创建自建应用 → 复制 App ID / App Secret。</li>
+        <li>开启机器人能力 → 拉入群 → 获取群 Chat ID。</li>
+        <li>事件与回调 → 长连接 → 订阅 <code>im.message.receive_v1</code>。</li>
+        <li>回到客户端保存应用配置 → 启动消息平台。</li>
+      </ol>
+      <h3>客户端操作顺序</h3>
+      <ol class="help-list">
+        <li>飞书群管理 → 添加群 → 测试。</li>
+        <li>同步群到消息平台（如使用独立平台进程）。</li>
+        <li>默认通知群 → 选群 → 保存。</li>
+        <li>角色通知群 → 每角色选择登录/异常/日报群 → 保存角色路由。</li>
+        <li>在群里 @机器人 验证。</li>
       </ol>
       <div class="toolbar"><button id="btnCloseHelp">知道了</button></div>
     </div>

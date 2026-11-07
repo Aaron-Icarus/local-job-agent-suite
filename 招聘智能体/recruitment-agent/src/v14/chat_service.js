@@ -468,6 +468,10 @@ async function runTurn(db, sessionId, input = {}) {
     fallback_keywords: keywordResult.fallbackKeywords,
     keyword_ai_used: keywordResult.aiUsed,
     keyword_history_used: keywordResult.historyUsed,
+    validation: {
+      ...validateProfileOutput(finalProfile),
+      ...validateKeywordOutput(keywordResult.keywords, keywordResult.fallbackKeywords),
+    },
     resume_id: state.resume_id || "",
     ai_used: Boolean(aiProfile),
     suggested: {
@@ -489,6 +493,26 @@ async function runTurn(db, sessionId, input = {}) {
   });
   updateState(db, sessionId, state);
   return { session: getSession(db, sessionId), reply: { text: "画像已生成", profile_md: finalProfile, keywords: keywordResult.keywords } };
+}
+
+function validateProfileOutput(profile) {
+  const text = String(profile || "");
+  const required = ["## 基础信息", "## 求职诉求", "## 职业发展期望", "## 工作经历", "## 能力标签", "## 技能关键词", "## 求职偏好/避雷", "## 兜底关键词", "## 风险/需确认"];
+  const errors = [];
+  for (const heading of required) if (!text.includes(heading)) errors.push(`缺少 ${heading}`);
+  if (/1[3-9]\d{9}/.test(text) || /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/.test(text)) errors.push("画像包含联系方式");
+  if (/##\s*每日搜索关键词/.test(text)) errors.push("画像包含每日搜索关键词");
+  return { profile_ok: errors.length === 0, profile_errors: errors };
+}
+
+function validateKeywordOutput(keywords, fallback) {
+  const recommended = Array.isArray(keywords) ? keywords : [];
+  const backups = Array.isArray(fallback) ? fallback : [];
+  const errors = [];
+  if (recommended.length < 8 || recommended.length > 12) errors.push("推荐关键词数量应为 8-12");
+  if (backups.length < 3) errors.push("兜底关键词至少 3 个");
+  if (recommended.some((item) => /[省市区县]|K$|^\d+$/.test(String(item)))) errors.push("关键词不应混入城市/薪资/纯数字");
+  return { keyword_ok: errors.length === 0, keyword_errors: errors };
 }
 
 module.exports = {

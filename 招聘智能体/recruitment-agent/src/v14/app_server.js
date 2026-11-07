@@ -1,6 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 const { URL } = require("url");
 const { getSettings, saveSettings } = require("./settings_repo");
 const { planTick, getTaskBoard, createCollectionPlan } = require("./task_service");
@@ -9,7 +10,10 @@ const scores = require("./scores_repo");
 const { listJobs, countJobs } = require("./jobs_repo");
 const { loginStatus, recordCheck } = require("./login_monitor");
 const { checkPlatform } = require("./login_checker");
-const { ensureChrome, resolveCdpPort, isCdpReady } = require("./chrome_manager");
+const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome } = require("./chrome_manager");
+const { extractDocument } = require("./document_text");
+const { normalizeCities, normalizeSalary } = require("./location_service");
+const skillsDir = path.resolve(__dirname, "..", "..", "skills");
 const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
@@ -38,7 +42,7 @@ function readBody(req) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 2 * 1024 * 1024) {
+      if (body.length > 15 * 1024 * 1024) {
         reject(new Error("请求体过大"));
         req.destroy();
       }
@@ -178,6 +182,42 @@ function createAppServer(options = {}) {
         return json(res, 200, { ok: true, ...result });
       }
 
+      if (pathname === "/api/logs/open" && req.method === "POST") {
+        const dir = logger.LOG_DIR;
+        fs.mkdirSync(dir, { recursive: true });
+        const command = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+        const child = spawn(command, [dir], { detached: true, stdio: "ignore" });
+        child.unref();
+        return json(res, 200, { ok: true, path: dir });
+      }
+      if (pathname === "/api/locations/normalize" && req.method === "POST") {
+        const body = await readBody(req);
+        const location = normalizeCities(body.text || body.cities || "");
+        return json(res, 200, { ok: true, ...location });
+      }
+      if (pathname === "/api/skills" && req.method === "GET") {
+        const files = fs.existsSync(skillsDir) ? fs.readdirSync(skillsDir).filter((item) => item.endsWith(".md")) : [];
+        return json(res, 200, { ok: true, path: skillsDir, files });
+      }
+      if (pathname === "/api/skills/open" && req.method === "POST") {
+        if (!fs.existsSync(skillsDir)) return json(res, 404, { ok: false, error: "Skill 文件夹不存在" });
+        const command = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+        const child = spawn(command, [skillsDir], { detached: true, stdio: "ignore" });
+        child.unref();
+        return json(res, 200, { ok: true, path: skillsDir });
+      }
+      if (pathname === "/api/resume/extract" && req.method === "POST") {
+        const body = await readBody(req);
+        const fileName = String(body.fileName || "").trim();
+        const base64 = String(body.contentBase64 || "").replace(/^data:[^;]+;base64,/, "");
+        if (!fileName || !base64) return json(res, 400, { ok: false, error: "缺少文件名或文件内容" });
+        try {
+          const text = await extractDocument(Buffer.from(base64, "base64"), fileName);
+          return json(res, 200, { ok: true, fileName, text, length: text.length });
+        } catch (error) {
+          return json(res, 422, { ok: false, error: error.message });
+        }
+      }
       if (pathname === "/api/resumes" && req.method === "GET") {
         return json(res, 200, { ok: true, resumes: resumes.listResumes(db) });
       }
@@ -233,6 +273,11 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/system/idle" && req.method === "GET") {
         return json(res, 200, { ok: true, ...(await getIdleStatus({ thresholdSeconds: 120 })) });
+      }
+      if (pathname === "/api/chrome/minimize" && req.method === "POST") {
+        const resolved = await resolveCdpPort();
+        const minimized = await minimizeChrome(resolved.port);
+        return json(res, 200, { ok: minimized, port: resolved.port, minimized });
       }
       if (pathname === "/api/chrome/status" && req.method === "GET") {
         const resolved = await resolveCdpPort();

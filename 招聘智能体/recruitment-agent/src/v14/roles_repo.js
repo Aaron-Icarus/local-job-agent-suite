@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { withTransaction } = require("./db");
+const { normalizeCities, normalizeSalary } = require("./location_service");
 
 const MAX_ACTIVE_ROLES = 3;
 const ROLE_NUMBER_SCOPE = "R";
@@ -52,6 +53,7 @@ function rowToRole(row) {
     has_started: Boolean(row.has_started),
     role_keywords: safeJson(row.role_keywords_json, []),
     role_channels: safeJson(row.role_channels_json, []),
+    target_cities: safeJson(row.target_cities_json, []),
   };
 }
 
@@ -111,6 +113,8 @@ function createRole(db, input = {}) {
   const nickname = String(input.nickname || "").trim();
   if (!nickname) throw new Error("角色昵称不能为空");
   if (countActiveRoles(db) >= MAX_ACTIVE_ROLES) throw new Error("最多只能有 3 个角色");
+  const location = normalizeCities(input.target_cities || input.target_city || "");
+  const salary = normalizeSalary(input);
   const now = nowIso();
   const roleUuid = crypto.randomUUID();
   return withTransaction(db, () => {
@@ -118,10 +122,10 @@ function createRole(db, input = {}) {
     db.prepare(
       `INSERT INTO roles(
         role_uuid, role_number, nickname, status, profile_md, resume_id, resume_source, target_roles,
-        target_city, target_salary, special_requirements, role_keywords_json, role_channels_json,
+        target_city, target_salary, target_cities_json, salary_min, salary_max, special_requirements, role_keywords_json, role_channels_json,
         collection_weight, ai_provider_id, report_channel_id, has_started, created_at, updated_at,
         confirmed_at, modified_at, first_started_at, deleted_at
-      ) VALUES (?, ?, ?, 'pending_confirm', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, NULL)`
+      ) VALUES (?, ?, ?, 'pending_confirm', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, NULL)`
     ).run(
       roleUuid,
       roleNumber,
@@ -130,8 +134,11 @@ function createRole(db, input = {}) {
       String(input.resume_id || ""),
       String(input.resume_source || ""),
       String(input.target_roles || ""),
-      String(input.target_city || ""),
-      String(input.target_salary || ""),
+      location.display || String(input.target_city || ""),
+      salary.display || String(input.target_salary || ""),
+      JSON.stringify(location.cities || []),
+      salary.salaryMin,
+      salary.salaryMax,
       String(input.special_requirements || ""),
       JSON.stringify(input.role_keywords || []),
       JSON.stringify(input.role_channels || []),
@@ -151,21 +158,36 @@ function updateRole(db, roleUuid, patch = {}) {
   const role = getRole(db, roleUuid);
   assertWritable(role);
   const now = nowIso();
+  const normalized = { ...patch };
+  if (patch.target_city !== undefined || patch.target_cities !== undefined) {
+    const location = normalizeCities(patch.target_cities || patch.target_city || "");
+    normalized.target_city = location.display;
+    normalized.target_cities_json = JSON.stringify(location.cities);
+  }
+  if (patch.target_salary !== undefined || patch.salary_min !== undefined || patch.salary_max !== undefined) {
+    const salary = normalizeSalary(patch);
+    normalized.target_salary = salary.display;
+    normalized.salary_min = salary.salaryMin;
+    normalized.salary_max = salary.salaryMax;
+  }
   return withTransaction(db, () => {
     const allowed = {
-      nickname: patch.nickname,
-      profile_md: patch.profile_md,
-      resume_id: patch.resume_id,
-      resume_source: patch.resume_source,
-      target_roles: patch.target_roles,
-      target_city: patch.target_city,
-      target_salary: patch.target_salary,
-      special_requirements: patch.special_requirements,
-      role_keywords_json: patch.role_keywords === undefined ? undefined : JSON.stringify(patch.role_keywords),
-      role_channels_json: patch.role_channels === undefined ? undefined : JSON.stringify(patch.role_channels),
-      collection_weight: patch.collection_weight,
-      ai_provider_id: patch.ai_provider_id,
-      report_channel_id: patch.report_channel_id,
+      nickname: normalized.nickname,
+      profile_md: normalized.profile_md,
+      resume_id: normalized.resume_id,
+      resume_source: normalized.resume_source,
+      target_roles: normalized.target_roles,
+      target_city: normalized.target_city,
+      target_salary: normalized.target_salary,
+      target_cities_json: normalized.target_cities_json,
+      salary_min: normalized.salary_min,
+      salary_max: normalized.salary_max,
+      special_requirements: normalized.special_requirements,
+      role_keywords_json: normalized.role_keywords === undefined ? undefined : JSON.stringify(normalized.role_keywords),
+      role_channels_json: normalized.role_channels === undefined ? undefined : JSON.stringify(normalized.role_channels),
+      collection_weight: normalized.collection_weight,
+      ai_provider_id: normalized.ai_provider_id,
+      report_channel_id: normalized.report_channel_id,
     };
     const fields = [];
     const values = [];

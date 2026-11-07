@@ -82,7 +82,7 @@ test("角色生命周期：待确认→待启动→首次启动锁定→暂停/�
   // 确认未启动仍可改，改后回待确认
   const editedAgain = roles.updateRole(db, role.role_uuid, { target_city: "杭州" });
   assert.equal(editedAgain.role.status, "pending_confirm");
-  assert.equal(editedAgain.role.target_city, "杭州");
+  assert.equal(editedAgain.role.target_city, "浙江省-杭州市-全部");
 
   roles.confirmRole(db, role.role_uuid);
   const started = roles.startRole(db, role.role_uuid);

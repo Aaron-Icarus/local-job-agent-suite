@@ -70,6 +70,14 @@ function showLog(id, value) {
   if (el) el.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
+function appendLog(id, message) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  el.textContent = `${el.textContent ? `${el.textContent}\n` : ""}[${time}] ${message}`;
+  el.scrollTop = el.scrollHeight;
+}
+
 function toast(message, bad = false) {
   const el = document.getElementById("healthBadge");
   if (!el) return;
@@ -328,6 +336,61 @@ async function refreshReports() {
     </div>`).join("") : '<div class="empty">还没有日报。</div>';
 }
 
+async function extractResumeFile(file) {
+  const name = String(file.name || "");
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  if ([".md", ".markdown", ".txt"].includes(ext)) return await file.text();
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",").pop());
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.readAsDataURL(file);
+  });
+  const result = await api("/api/resume/extract", {
+    method: "POST",
+    body: { fileName: name, contentBase64: base64 },
+  });
+  return result.text || "";
+}
+
+async function loadResumeFile(file, target = "chat") {
+  const content = await extractResumeFile(file);
+  if (!content.trim()) throw new Error("文件没有解析出文字");
+  if (target === "chat") {
+    state.chatResumeContent = content;
+    state.chatResumeFileName = file.name;
+    const status = document.getElementById("chatResumeStatus");
+    if (status) status.textContent = `已导入：${file.name}（${content.length} 字）`;
+  } else {
+    state.resumeContent = content;
+    state.resumeFileName = file.name;
+    document.getElementById("roleProfile").value = content;
+    document.getElementById("resumeStatus").textContent = `已导入：${file.name}（${content.length} 字）`;
+  }
+  return content;
+}
+
+function bindDropZone(element, fileInputId, target) {
+  if (!element) return;
+  element.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    element.classList.add("drag-over");
+  });
+  element.addEventListener("dragleave", () => element.classList.remove("drag-over"));
+  element.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    element.classList.remove("drag-over");
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    try {
+      await loadResumeFile(file, target);
+      toast(`已读取简历：${file.name}`);
+    } catch (error) {
+      alert(`读取简历失败：${error.message}`);
+    }
+  });
+}
+
 async function refreshMessages() {
   const data = await api("/api/messages");
   const input = document.getElementById("msgWebhook");
@@ -506,9 +569,9 @@ async function refreshRouting() {
       const stage = role.stages?.[stageKey] || {};
       return `<td><select data-route-role="${role.role_uuid}" data-route-stage="${stageKey}">${groupOptions(stage.groupId || "")}</select></td>`;
     }).join("");
-    return `<tr><td>${esc(role.role_number)} ${esc(role.nickname)}</td>${cells}</tr>`;
+    return `<tr><td>${esc(role.role_number)} ${esc(role.nickname)}</td>${cells}<td><button class="small ghost" data-fill-role="${role.role_uuid}">一键配置</button></td></tr>`;
   });
-  body.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="4" class="empty">还没有角色；创建角色后在这里配置。</td></tr>';
+  body.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="5" class="empty">还没有角色；创建角色后在这里配置。</td></tr>';
 }
 
 function openEditRole(roleUuid) {
@@ -519,7 +582,8 @@ function openEditRole(roleUuid) {
   document.getElementById("editRoleProfile").value = role.profile_md || "";
   document.getElementById("editRoleTargets").value = role.target_roles || "";
   document.getElementById("editRoleCity").value = role.target_city || "";
-  document.getElementById("editRoleSalary").value = role.target_salary || "";
+  document.getElementById("editSalaryMin").value = role.salary_min || "";
+  document.getElementById("editSalaryMax").value = role.salary_max || "";
   document.getElementById("editRoleKeywords").value = (role.role_keywords || []).join("、");
   document.getElementById("editRoleDialog").showModal();
 }
@@ -605,14 +669,28 @@ function bind() {
   document.getElementById("chatResumeFile").addEventListener("change", async (event) => {
     const file = event.target.files && event.target.files[0];
     if (!file) return;
-    state.chatResumeContent = await file.text();
-    state.chatResumeFileName = file.name;
-    toast(`已选择简历：${file.name}`);
+    try {
+      await loadResumeFile(file, "chat");
+      toast(`已选择简历：${file.name}`);
+    } catch (error) {
+      alert(`读取简历失败：${error.message}`);
+    }
   });
+  bindDropZone(document.getElementById("tab-chat"), "chatResumeFile", "chat");
+  bindDropZone(document.getElementById("tab-roles"), "resumeFile", "role");
+  document.getElementById("btnOpenSkills").onclick = async () => {
+    try {
+      const result = await api("/api/skills/open", { method: "POST", body: {} });
+      toast(`Skill 目录：${result.path}`);
+    } catch (error) { alert(error.message); }
+  };
+  api("/api/skills").then((result) => {
+    const el = document.getElementById("skillsPath");
+    if (el) el.textContent = `Skill 位置：${result.path}`;
+  }).catch(() => {});
   document.getElementById("btnNewChat").onclick = () => {
     state.chatSessionId = "";
-    state.chatSuggestions = [];
-    renderChat(null);
+    state.chatSuggestions = [];    renderChat(null);
   };
   document.getElementById("btnChatSend").onclick = async () => {
     try { await sendChat(); } catch (error) { alert(error.message); }
@@ -669,6 +747,9 @@ function bind() {
   document.getElementById("btnCloseHelp").onclick = () => document.getElementById("helpDialog").close();
   document.getElementById("btnCloseNotification").onclick = () => document.getElementById("notificationDialog").close();
   document.getElementById("btnCloseKeywords").onclick = () => document.getElementById("keywordDialog").close();
+  document.getElementById("keywordDialog").addEventListener("click", (event) => {
+    if (event.target === document.getElementById("keywordDialog")) document.getElementById("keywordDialog").close();
+  });
   document.getElementById("btnCancelRoleEdit").onclick = () => document.getElementById("editRoleDialog").close();
   document.getElementById("btnSaveRoleEdit").onclick = async () => {
     if (!state.editRoleUuid) return;
@@ -680,7 +761,9 @@ function bind() {
           profile_md: document.getElementById("editRoleProfile").value,
           target_roles: document.getElementById("editRoleTargets").value.trim(),
           target_city: document.getElementById("editRoleCity").value.trim(),
-          target_salary: document.getElementById("editRoleSalary").value.trim(),
+          target_cities: document.getElementById("editRoleCity").value.trim(),
+          salary_min: Number(document.getElementById("editSalaryMin").value || 0) || null,
+          salary_max: Number(document.getElementById("editSalaryMax").value || 0) || null,
           role_keywords: document.getElementById("editRoleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
         },
       });
@@ -813,6 +896,19 @@ function bind() {
       toast("角色通知群已保存");
     } catch (error) { alert(error.message); }
   };
+  document.getElementById("routeStageBody").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-fill-role]");
+    if (!button) return;
+    const groupId = document.getElementById("routingDefaultGroup")?.value || state.feishuGroups[0]?.id || "";
+    if (!groupId) {
+      toast("请先添加飞书群，或在默认通知群选择群", true);
+      return;
+    }
+    document.querySelectorAll(`#routeStageBody select[data-route-role="${button.dataset.fillRole}"]`).forEach((select) => {
+      select.value = groupId;
+    });
+    toast("已填入该角色的三个环节，请点“保存角色路由”");
+  });
 
   document.getElementById("btnRefresh").onclick = refreshAll;
   document.getElementById("btnTick").onclick = doTick;
@@ -830,6 +926,13 @@ function bind() {
       await refreshHealth();
     } catch (error) { showLog("dashboardLog", error.message); }
   };
+  document.getElementById("btnMinimizeChrome").onclick = async () => {
+    try {
+      const result = await api("/api/chrome/minimize", { method: "POST", body: {} });
+      appendLog("dashboardLog", result.minimized ? `Chrome 已最小化（CDP 端口 ${result.port}）` : "当前没有可最小化的 Chrome CDP 窗口");
+      toast(result.minimized ? "浏览器已最小化" : "当前没有运行中的检测浏览器");
+    } catch (error) { toast(error.message, true); }
+  };
 
   document.getElementById("channelCards").addEventListener("click", async (event) => {
     const check = event.target.closest("button[data-channel-check]");
@@ -837,13 +940,14 @@ function bind() {
     try {
       if (check) {
         const platform = check.dataset.channelCheck;
+        appendLog("dashboardLog", `${platform} 检测登录：开始启动/复用 Chrome，后台检测中…`);
         try {
           const result = await api("/api/login/check", { method: "POST", body: { platform } });
-          showLog("dashboardLog", result);
+          appendLog("dashboardLog", `${platform} 检测完成：已登录 · ${fmt(result.saved?.checked_at || new Date().toISOString())}`);
           toast(`${platform} 已登录`);
           await refreshHealth();
         } catch (error) {
-          showLog("dashboardLog", error.message);
+          appendLog("dashboardLog", `${platform} 检测完成：未登录/失败 · ${error.message}`);
           toast(error.message, true);
           await refreshHealth();
         }
@@ -862,11 +966,7 @@ function bind() {
     const file = event.target.files && event.target.files[0];
     if (!file) return;
     try {
-      const content = await file.text();
-      state.resumeContent = content;
-      state.resumeFileName = file.name;
-      document.getElementById("roleProfile").value = content;
-      document.getElementById("resumeStatus").textContent = `已导入：${file.name}（${content.length} 字）`;
+      await loadResumeFile(file, "role");
     } catch (error) {
       alert(`读取简历失败：${error.message}`);
     }
@@ -874,13 +974,15 @@ function bind() {
 
   document.getElementById("btnGenerateKeywords").onclick = async () => {
     try {
+      const min = Number(document.getElementById("roleSalaryMin").value || 0);
+      const max = Number(document.getElementById("roleSalaryMax").value || 0);
       const result = await api("/api/keywords/generate", {
         method: "POST",
         body: {
           profile_md: document.getElementById("roleProfile").value.trim(),
           target_roles: document.getElementById("roleTargets").value.trim(),
           target_city: document.getElementById("roleCity").value.trim(),
-          target_salary: document.getElementById("roleSalary").value.trim(),
+          target_salary: min && max ? `${min}-${max}K` : "",
         },
       });
       document.getElementById("roleKeywords").value = (result.keywords || []).join("、");
@@ -888,8 +990,26 @@ function bind() {
     } catch (error) { alert(error.message); }
   };
 
+  document.getElementById("roleCity").addEventListener("change", async () => {
+    const text = document.getElementById("roleCity").value.trim();
+    const preview = document.getElementById("roleCityPreview");
+    if (!text) { preview.textContent = ""; return; }
+    try {
+      const result = await api("/api/locations/normalize", { method: "POST", body: { text } });
+      preview.textContent = `识别为：${result.display || text}`;
+    } catch (error) {
+      preview.textContent = `识别失败：${error.message}`;
+    }
+  });
   document.getElementById("btnCreateRole").onclick = async () => {
     try {
+      const minText = document.getElementById("roleSalaryMin").value;
+      const maxText = document.getElementById("roleSalaryMax").value;
+      const min = minText === "" ? null : Number(minText);
+      const max = maxText === "" ? null : Number(maxText);
+      if (min != null && (!Number.isInteger(min) || min <= 0)) throw new Error("期望薪资下限必须是正整数（千元）");
+      if (max != null && (!Number.isInteger(max) || max <= 0)) throw new Error("期望薪资上限必须是正整数且不能为 0");
+      if (min != null && max != null && max < min) throw new Error("期望薪资上限不能小于下限");
       const result = await api("/api/roles", {
         method: "POST",
         body: {
@@ -899,8 +1019,11 @@ function bind() {
           resume_file_name: state.resumeFileName,
           target_roles: document.getElementById("roleTargets").value.trim(),
           target_city: document.getElementById("roleCity").value.trim(),
-          target_salary: document.getElementById("roleSalary").value.trim(),
-          role_keywords: document.getElementById("roleKeywords").value.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
+          target_cities: document.getElementById("roleCity").value.trim(),
+          salary_min: min || null,
+          salary_max: max || null,
+          target_salary: min && max ? `${min}-${max}K` : "",
+          role_keywords: document.getElementById("roleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
         },
       });
       if (result.similar?.length) {
@@ -908,7 +1031,7 @@ function bind() {
       }
       state.resumeContent = "";
       state.resumeFileName = "";
-      for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalary", "roleKeywords"]) {
+      for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalaryMin", "roleSalaryMax", "roleKeywords"]) {
         document.getElementById(id).value = "";
       }
       document.getElementById("resumeFile").value = "";
@@ -1050,6 +1173,12 @@ function bind() {
       const data = await api("/api/logs?limit=200");
       document.getElementById("localLogStats").textContent = `目录：${data.stats.dir} · 总量 ${Math.round(data.stats.totalBytes / 1024)} KB / 上限 ${Math.round(data.stats.maxTotalBytes / 1024)} KB`;
       document.getElementById("localLogs").textContent = data.logs.join("\n") || "暂无日志";
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnOpenLogs").onclick = async () => {
+    try {
+      const result = await api("/api/logs/open", { method: "POST", body: {} });
+      toast(`日志目录：${result.path}`);
     } catch (error) { alert(error.message); }
   };
 
@@ -1327,11 +1456,11 @@ bind();
 setupTooltips();
 refreshAll().then(() => refreshRouting()).catch((error) => {
   const table = document.getElementById("routeStageBody");
-  if (table) table.innerHTML = `<tr><td colspan="4" class="empty">角色通知群加载失败：${esc(error.message)}</td></tr>`;
+  if (table) table.innerHTML = `<tr><td colspan="5" class="empty">角色通知群加载失败：${esc(error.message)}</td></tr>`;
 });
 refreshRouting().catch((error) => {
   const table = document.getElementById("routeStageBody");
-  if (table) table.innerHTML = `<tr><td colspan="4" class="empty">角色通知群加载失败：${esc(error.message)}</td></tr>`;
+  if (table) table.innerHTML = `<tr><td colspan="5" class="empty">角色通知群加载失败：${esc(error.message)}</td></tr>`;
 });
 refreshNotificationHistory().catch((error) => {
   const list = document.getElementById("notificationHistoryList");
