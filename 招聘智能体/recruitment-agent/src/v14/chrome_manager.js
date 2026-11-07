@@ -79,6 +79,29 @@ async function isCdpReady(port, timeoutMs = 900) {
   }
 }
 
+function isPortFree(port, host = "127.0.0.1", timeoutMs = 800) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    const timer = setTimeout(() => {
+      server.close(() => resolve(false));
+    }, timeoutMs);
+    server.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+    server.once("listening", () => {
+      clearTimeout(timer);
+      server.close(() => resolve(true));
+    });
+    try {
+      server.listen({ port: Number(port), host, exclusive: true });
+    } catch {
+      clearTimeout(timer);
+      resolve(false);
+    }
+  });
+}
+
 function readSavedPort() {
   try {
     const data = JSON.parse(fs.readFileSync(PORT_STATE_PATH, "utf8"));
@@ -99,7 +122,7 @@ function savePort(port) {
 
 async function findAvailablePort(start = DEFAULT_CDP_PORT) {
   for (let port = Number(start); port <= MAX_CDP_PORT; port += 1) {
-    if (!(await isPortOpen(port))) return port;
+    if (await isPortFree(port)) return port;
   }
   throw new Error(`找不到可用的 Chrome 调试端口（${start}-${MAX_CDP_PORT}）`);
 }
@@ -107,7 +130,7 @@ async function findAvailablePort(start = DEFAULT_CDP_PORT) {
 async function resolveCdpPort(preferred) {
   const requested = Number(preferred || process.env.CDP_PORT || readSavedPort() || DEFAULT_CDP_PORT);
   if (await isCdpReady(requested)) return { port: requested, reused: true, conflict: false };
-  if (await isPortOpen(requested)) {
+  if (!(await isPortFree(requested))) {
     const port = await findAvailablePort(requested + 1);
     savePort(port);
     process.env.CDP_PORT = String(port);
@@ -169,6 +192,7 @@ module.exports = {
   buildChromeArgs,
   isPortOpen,
   isCdpReady,
+  isPortFree,
   resolveCdpPort,
   ensureChrome,
   startChrome,

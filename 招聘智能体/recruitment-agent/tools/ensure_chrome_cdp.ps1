@@ -55,10 +55,22 @@ function Test-CdpHttp {
   }
 }
 
+function Test-PortFree {
+  param([string]$HostName, [int]$Port)
+  try {
+    $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse($HostName), $Port)
+    $listener.Start()
+    $listener.Stop()
+    return $true
+  } catch {
+    return $false
+  }
+}
+
 function Get-FreeCdpPort {
   param([string]$HostName, [int]$StartPort)
   for ($candidate = $StartPort; $candidate -le 9322; $candidate++) {
-    if (-not (Test-CdpPort -HostName $HostName -Port $candidate)) { return $candidate }
+    if (Test-PortFree -HostName $HostName -Port $candidate) { return $candidate }
   }
   throw "找不到可用的 Chrome 调试端口（$StartPort-9322）"
 }
@@ -95,6 +107,10 @@ if (Test-CdpPort -HostName $HostName -Port $Port) {
   }
   $Port = Get-FreeCdpPort -HostName $HostName -StartPort 9223
   Write-Output "Port 9222 is occupied by another service; switching to $Port"
+} elseif (-not (Test-PortFree -HostName $HostName -Port $Port)) {
+  $requestedPort = $Port
+  $Port = Get-FreeCdpPort -HostName $HostName -StartPort 9223
+  Write-Output "Port $requestedPort is reserved/occupied; switching to $Port"
 }
 
 if (-not (Test-Path -LiteralPath $ChromePath)) {
