@@ -30,7 +30,7 @@ function collectKeywords(role) {
   return keywords
     .map((item) => (typeof item === "string" ? { keyword: item, priority: 50 } : item))
     .filter((item) => item && item.keyword)
-    .slice(0, 6);
+    .slice(0, 12);
 }
 
 function createCollectionPlan(db, options = {}) {

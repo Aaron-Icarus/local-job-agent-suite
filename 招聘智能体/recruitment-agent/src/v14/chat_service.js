@@ -138,30 +138,71 @@ function dailyKeywords(state) {
   return [...keywords].slice(0, 12);
 }
 
+function sanitizeProfile(text) {
+  let result = String(text || "");
+  result = result.replace(/\n##\s*(技能关键词|每日搜索关键词|搜索排除词)[\s\S]*?(?=\n##\s|$)/g, "\n");
+  result = result.split(/\r?\n/).filter((line) => {
+    if (/^\s*(电话|手机|手机号|邮箱|e-?mail|密码|身份证|微信|QQ|联系方式)\s*[:：]/i.test(line)) return false;
+    if (/1[3-9]\d{9}/.test(line) || /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/.test(line)) return false;
+    return true;
+  }).join("\n");
+  return result.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function parseKeywordList(text) {
+  const raw = String(text || "").trim();
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((item) => String(item).trim()).filter(Boolean);
+  } catch {
+    // fall through to line parsing
+  }
+  return raw.split(/[,\n，、]/).map((item) => item.replace(/^[-*\d.\s"]+|["\]]+$/g, "").trim()).filter((item) => item && item.length <= 40);
+}
+
+async function generateKeywords(db, state) {
+  const fallback = dailyKeywords(state);
+  const ai = await askAI(db, [
+    "你是招聘搜索关键词生成器。根据角色画像，生成 8-12 个中文/英文搜索关键词。",
+    "只输出 JSON 字符串数组，例如 [\"AI项目经理\",\"AI产品经理\"]。",
+    "关键词要具体，覆盖岗位名、行业/技术方向、同义词；不要把城市、薪资、姓名、电话、邮箱写进关键词。",
+    `目标岗位：${state.target_roles || ""}`,
+    `目标城市：${state.target_city || ""}`,
+    `薪资：${state.target_salary || ""}`,
+    `职业期望：${state.career_expectation || ""}`,
+    `画像：${sanitizeProfile(state.profile_md || buildProfile(state))}`,
+    `简历摘要：${String(state.experience || state.parsed?.experience_summary || "").slice(0, 1500)}`,
+  ].join("\n"));
+  const parsed = ai?.text ? parseKeywordList(ai.text) : [];
+  return {
+    keywords: (parsed.length ? parsed : fallback).slice(0, 12),
+    aiUsed: Boolean(ai && parsed.length),
+    provider: ai?.provider || "",
+    fallback,
+  };
+}
+
 function buildProfile(state) {
   const parsed = state.parsed || {};
-  const keywords = dailyKeywords(state);
   const skills = (parsed.skills || []).join("、") || "-";
-  return [
+  const profile = [
     `# ${parsed.name || "候选人"} 角色画像`,
     "",
     `## 基础信息\n- 姓名：${parsed.name || "-"}\n- 学历：${parsed.education || "-"}\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}`,
     `## 职业发展期望\n${state.career_expectation || `希望在${state.target_city || "目标城市"}从事${state.target_roles || "目标岗位"}，薪资${state.target_salary || "面议"}，优先 AI/智能体方向。`}`,
     `## 工作经历\n${state.experience || parsed.experience_summary || "-"}`,
     `## 能力标签\n${skills}`,
-    `## 技能关键词\n${skills}`,
-    `## 每日搜索关键词\n${keywords.join("、")}`,
-    `## 搜索排除词\n${state.exclude_keywords || "与目标岗位无关的销售、纯外包执行岗位"}`,
     `## 风险/需确认\n${state.preferences || "请人工核对简历事实与期望薪资"}`,
     "",
-    "> 由本地简历解析 + 角色画像 Skill 生成；请人工确认事实后再启用角色。",
+    "> 由本地简历解析 + 角色画像 Skill 生成；请人工确认事实后再启用角色。关键词在角色关键词中单独维护。",
   ].join("\n");
+  return sanitizeProfile(profile);
 }
 
 function ensureProfileSections(profile, localProfile) {
-  const required = ["## 职业发展期望", "## 技能关键词", "## 每日搜索关键词", "## 搜索排除词", "## 风险/需确认"];
+  const required = ["## 职业发展期望", "## 风险/需确认"];
   const missing = required.filter((heading) => !String(profile).includes(heading));
-  if (!missing.length) return profile;
+  if (!missing.length) return sanitizeProfile(profile);
   const sections = {};
   for (const heading of required) {
     const start = localProfile.indexOf(heading);
@@ -169,7 +210,7 @@ function ensureProfileSections(profile, localProfile) {
     const next = localProfile.indexOf("\n## ", start + heading.length);
     sections[heading] = localProfile.slice(start, next < 0 ? localProfile.length : next).trim();
   }
-  return `${profile.trim()}\n\n${missing.map((heading) => sections[heading] || "").filter(Boolean).join("\n\n")}`;
+  return sanitizeProfile(`${profile.trim()}\n\n${missing.map((heading) => sections[heading] || "").filter(Boolean).join("\n\n")}`);
 }
 
 function findJobByText(db, roleUuid, text) {
@@ -326,8 +367,9 @@ async function runTurn(db, sessionId, input = {}) {
   const profileLocal = buildProfile(state);
   const aiProfile = await askAI(db, [
     "请根据以下真实信息生成一份角色画像 Markdown，只输出 Markdown，不要编造事实。",
-    "必须包含这些二级标题：基础信息、职业发展期望、工作经历、能力标签、技能关键词、每日搜索关键词、搜索排除词、风险/需确认。",
-    "每日搜索关键词给 8-12 个，按“岗位名 + 行业/技术方向 + 同义词”组合；不要只写泛化的“项目经理”。",
+    "必须包含这些二级标题：基础信息、职业发展期望、工作经历、能力标签、风险/需确认。",
+    "不要在画像中写电话、手机、邮箱、密码、身份证、微信、QQ、联系方式。",
+    "不要在画像中写技能关键词、每日搜索关键词、搜索排除词；这些由角色关键词单独维护。",
     `目标岗位：${state.target_roles}`,
     `目标城市：${state.target_city}`,
     `薪资：${state.target_salary}`,
@@ -338,10 +380,14 @@ async function runTurn(db, sessionId, input = {}) {
   const profile = aiProfile?.text && aiProfile.text.length > 40
     ? ensureProfileSections(aiProfile.text, profileLocal)
     : profileLocal;
+  const keywordResult = await generateKeywords(db, { ...state, profile_md: profile });
   state.profile_md = profile;
-  appendMessage(db, sessionId, "assistant", `画像信息已齐，生成如下：\n\n${profile}`, {
+  state.daily_keywords = keywordResult.keywords;
+  appendMessage(db, sessionId, "assistant", `画像信息已齐，生成如下：\n\n${profile}\n\n每日搜索关键词（单独保存，不写入画像）：${keywordResult.keywords.join("、")}`, {
     action: "profile_ready",
     profile_md: profile,
+    keywords: keywordResult.keywords,
+    keyword_ai_used: keywordResult.aiUsed,
     resume_id: state.resume_id || "",
     ai_used: Boolean(aiProfile),
     suggested: {
@@ -351,13 +397,17 @@ async function runTurn(db, sessionId, input = {}) {
       target_city: state.target_city,
       target_salary: state.target_salary,
       career_expectation: state.career_expectation || "",
+      role_keywords: keywordResult.keywords,
     },
-    steps: aiProfile
-      ? ["parse_resume", "extract_fields", "ai_generate_profile"]
-      : ["parse_resume", "extract_fields", "generate_profile"],
+    steps: [
+      "parse_resume",
+      "extract_fields",
+      aiProfile ? "ai_generate_profile" : "generate_profile",
+      keywordResult.aiUsed ? "ai_generate_keywords" : "generate_keywords",
+    ],
   });
   updateState(db, sessionId, state);
-  return { session: getSession(db, sessionId), reply: { text: "画像已生成", profile_md: profile } };
+  return { session: getSession(db, sessionId), reply: { text: "画像已生成", profile_md: profile, keywords: keywordResult.keywords } };
 }
 
 module.exports = {
@@ -368,6 +418,8 @@ module.exports = {
   updateState,
   runTurn,
   buildProfile,
+  sanitizeProfile,
+  generateKeywords,
   extractCities,
   extractSalary,
 };
