@@ -152,12 +152,12 @@ async function refreshRoles() {
           <div class="meta">${esc(role.target_roles || "未设置目标岗位")} · 渠道：${esc(channels)} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}</div>
         </div>
         <div class="actions">
+          <button class="small keyword-link" data-keywords="${role.role_uuid}">关键词</button>
           ${role.status === "pending_confirm" ? `<button class="small" data-action="confirm" data-id="${role.role_uuid}">确认渠道</button>` : ""}
           ${role.status === "pending_confirm" ? `<button class="small ghost" data-edit-role="${role.role_uuid}">修改</button>` : ""}
           ${["pending_start", "paused"].includes(role.status) ? `<button class="small" data-action="start" data-id="${role.role_uuid}">启动</button>` : ""}
           ${role.status === "running" ? `<button class="small ghost" data-action="pause" data-id="${role.role_uuid}">暂停</button>` : ""}
           <button class="small ghost" data-action="copy" data-id="${role.role_uuid}">复制</button>
-          <button class="small ghost" data-keywords="${role.role_uuid}">关键词</button>
           <button class="small danger" data-action="delete" data-id="${role.role_uuid}">删除</button>
         </div>
       </div>`;

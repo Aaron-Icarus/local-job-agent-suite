@@ -104,6 +104,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 20px; }
   border: 0;
   border-radius: 8px;
 }
+.keyword-link { font-weight: 700; padding: 7px 12px; }
 .salary-range { display: inline-flex; align-items: center; gap: 6px; }
 .salary-range input { width: 90px; }
 .history-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
