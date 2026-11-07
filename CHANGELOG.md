@@ -40,8 +40,8 @@
 
 ### 已知限制
 
-- 原消息平台飞书 SDK 已安装，但 App ID/Secret/群 ID 未配置，真实长连接未启动。
-- 对话的 AI 画像生成需要配置 AI Provider；无 Key 时使用本地规则。豆包账号当前 `SetLimitExceeded`，需在方舟控制台调整 Safe Experience Mode。
+- 原消息平台飞书 SDK 已安装，App ID/Secret/群 ID 已配置，长连接已启动；群内 @机器人 反向消息待实际发送确认。
+- 对话的 AI 画像生成需要配置 AI Provider；无 Key 时使用本地规则。豆包 `doubao-seed-character-260628` 已联调成功（Provider 测试 200，画像 `ai_used=true`）。
 - 角色级关键词仍未传入旧采集器。
 - macOS 启动器/打包未在真实 Mac 上验证。
 
