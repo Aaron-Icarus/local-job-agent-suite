@@ -386,6 +386,18 @@ function createAppServer(options = {}) {
         });
       }
 
+      if (pathname === "/api/feishu-routing" && req.method === "GET") {
+        return json(res, 200, { ok: true, ...feishuGroups.routing(db) });
+      }
+      if (pathname === "/api/feishu-routing" && req.method === "POST") {
+        const body = await readBody(req);
+        const group = feishuGroups.routeRole(db, body.roleUuid, body.groupId, body);
+        return json(res, 200, { ok: true, group, ...feishuGroups.routing(db) });
+      }
+      if (pathname === "/api/feishu-groups/default" && req.method === "POST") {
+        const body = await readBody(req);
+        return json(res, 200, { ok: true, group: feishuGroups.setDefaultGroup(db, body.groupId) });
+      }
       if (pathname === "/api/feishu-groups" && req.method === "GET") {
         return json(res, 200, { ok: true, groups: feishuGroups.listGroups(db) });
       }

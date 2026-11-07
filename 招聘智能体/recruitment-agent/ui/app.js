@@ -493,6 +493,26 @@ async function generateRoleKeywords() {
   toast(result.aiUsed ? "AI 已生成下一轮关键词" : "已用本地规则生成关键词");
 }
 
+async function refreshRouting() {
+  const table = document.getElementById("roleRoutingTable");
+  if (!table) return;
+  const data = await api("/api/feishu-routing");
+  const groups = data.groups || [];
+  const options = (selected) => `<option value=""${selected ? "" : " selected"}>不发送</option>` + groups.map((group) => `<option value="${group.id}"${selected === group.id ? " selected" : ""}>${esc(group.name)}</option>`).join("");
+  const defaultRow = `<div class="row"><div><strong>默认通知群</strong><div class="meta">新建角色默认加入这个群</div></div><div class="actions"><select id="routingDefaultGroup">${options(data.defaultGroupId)}</select></div></div>`;
+  const roleRows = (data.roles || []).map((role) => `<div class="row"><div><strong>${esc(role.role_number)} ${esc(role.nickname)}</strong><div class="meta">${esc(role.status)}</div></div><div class="actions"><select data-route-role="${role.role_uuid}" data-role-label="${esc(role.role_number)} ${esc(role.nickname)}">${options(role.groupId)}</select></div></div>`).join("");
+  table.innerHTML = defaultRow + (roleRows || '<div class="empty">还没有角色；创建角色后在这里分配群。</div>');
+}
+
+function resetGroupForm() {
+  state.editingGroupId = "";
+  for (const id of ["groupName", "groupChatId", "groupWebhook"]) document.getElementById(id).value = "";
+  document.querySelectorAll('[data-group-role]').forEach((input) => { input.checked = false; });
+  const reply = document.getElementById("groupReplyRole");
+  if (reply) reply.selectedIndex = -1;
+  for (const id of ["groupNotifyLogin", "groupNotifyError", "groupNotifyDaily"]) document.getElementById(id).checked = true;
+}
+
 async function refreshAll() {
   await refreshHealth();
   try {
@@ -504,6 +524,7 @@ async function refreshAll() {
     await refreshReports();
     await refreshMessages();
     await refreshGroups();
+    await refreshRouting();
     await refreshChatSessions();
     showLog("dashboardLog", "就绪：可执行一次调度，或先创建角色并启动任务。");
   } catch (error) {
@@ -595,12 +616,7 @@ function bind() {
       document.getElementById(id).checked = true;
     }
   };
-  document.getElementById("btnResetGroup").onclick = () => {
-    state.editingGroupId = "";
-    for (const id of ["groupName", "groupChatId", "groupWebhook"]) document.getElementById(id).value = "";
-    document.querySelectorAll('[data-group-role]').forEach((input) => { input.checked = false; });
-    for (const id of ["groupNotifyLogin", "groupNotifyError", "groupNotifyDaily"]) document.getElementById(id).checked = true;
-  };
+  document.getElementById("btnResetGroup").onclick = resetGroupForm;
   document.getElementById("btnSyncGroups").onclick = async () => {
     try {
       const result = await api("/api/message-platform/sync-groups", { method: "POST", body: {} });
@@ -609,9 +625,7 @@ function bind() {
     } catch (error) { alert(error.message); }
   };
   document.getElementById("btnGroupConfig").onclick = () => {
-    state.editingGroupId = "";
-    for (const id of ["groupName", "groupChatId", "groupWebhook"]) document.getElementById(id).value = "";
-    document.querySelectorAll('[data-group-role]').forEach((input) => { input.checked = false; });
+    resetGroupForm();
     document.getElementById("groupDialog").showModal();
   };
   document.getElementById("btnCloseGroupDialog").onclick = () => document.getElementById("groupDialog").close();
@@ -636,6 +650,7 @@ function bind() {
       });
       document.getElementById("editRoleDialog").close();
       await refreshRoles();
+      await refreshRouting();
       toast("角色已修改");
     } catch (error) { alert(error.message); }
   };
@@ -672,6 +687,8 @@ function bind() {
       });
       state.editingGroupId = "";
       await refreshGroups();
+      await refreshRouting();
+      resetGroupForm();
       document.getElementById("groupDialog").close();
       toast("飞书群配置已保存");
     } catch (error) { alert(error.message); }
@@ -702,6 +719,7 @@ function bind() {
           },
         });
         await refreshGroups();
+        await refreshRouting();
         toast(`已将「${group.name}」设为默认通知群`);
       }
       if (edit) {
@@ -725,6 +743,29 @@ function bind() {
       if (del) {
         await api(`/api/feishu-groups/${del.dataset.deleteGroup}`, { method: "DELETE" });
         await refreshGroups();
+        await refreshRouting();
+      }
+    } catch (error) { alert(error.message); }
+  });
+
+  document.getElementById("roleRoutingTable").addEventListener("change", async (event) => {
+    const target = event.target;
+    try {
+      if (target.id === "routingDefaultGroup") {
+        await api("/api/feishu-groups/default", { method: "POST", body: { groupId: target.value } });
+        await refreshGroups();
+        await refreshRouting();
+        toast("默认通知群已更新");
+        return;
+      }
+      if (target.matches("select[data-route-role]")) {
+        await api("/api/feishu-routing", {
+          method: "POST",
+          body: { roleUuid: target.dataset.routeRole, groupId: target.value },
+        });
+        await refreshGroups();
+        await refreshRouting();
+        toast("角色发送群已更新");
       }
     } catch (error) { alert(error.message); }
   });
@@ -815,8 +856,13 @@ function bind() {
       }
       state.resumeContent = "";
       state.resumeFileName = "";
+      for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalary", "roleKeywords"]) {
+        document.getElementById(id).value = "";
+      }
+      document.getElementById("resumeFile").value = "";
       document.getElementById("resumeStatus").textContent = "未选择简历；也可以直接粘贴到下方";
       await refreshRoles();
+      await refreshRouting();
       toast("角色已创建");
     } catch (error) { alert(error.message); }
   };
@@ -1000,11 +1046,41 @@ function bind() {
   document.getElementById("aiList").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-ai]");
     if (!button) return;
+    if (button.dataset.ai !== "test") {
+      try {
+        await api(`/api/ai/providers/${button.dataset.id}/${button.dataset.ai}`, { method: "POST", body: {} });
+        await refreshProviders();
+      } catch (error) { alert(error.message); }
+      return;
+    }
+    const dialog = document.getElementById("aiTestDialog");
+    const title = document.getElementById("aiTestTitle");
+    const body = document.getElementById("aiTestBody");
+    title.textContent = "AI 测试中";
+    body.textContent = "正在调用模型，请稍候…";
+    dialog.showModal();
+    button.disabled = true;
     try {
-      await api(`/api/ai/providers/${button.dataset.id}/${button.dataset.ai}`, { method: "POST", body: {} });
+      const result = await api(`/api/ai/providers/${button.dataset.id}/test`, { method: "POST", body: {} });
+      if (result.ok) {
+        title.textContent = "AI 测试成功";
+        body.textContent = `HTTP ${result.status || 200}，模型连接正常。`;
+        setTimeout(() => {
+          if (dialog.open) dialog.close();
+        }, 1000);
+      } else {
+        title.textContent = "AI 测试失败";
+        body.textContent = result.error || "供应商返回失败";
+      }
       await refreshProviders();
-    } catch (error) { alert(error.message); }
+    } catch (error) {
+      title.textContent = "AI 测试失败";
+      body.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
   });
+  document.getElementById("btnCloseAiTest").onclick = () => document.getElementById("aiTestDialog").close();
 
   document.getElementById("btnSaveMp").onclick = async () => {
     try {
@@ -1019,7 +1095,9 @@ function bind() {
         },
       });
       await refreshMessages();
+      for (const id of ["mpAppSecret", "mpVerifyToken", "mpEncryptKey"]) document.getElementById(id).value = "";
       showLog("dashboardLog", "飞书应用配置已保存（.env）");
+      toast("飞书应用配置已保存");
     } catch (error) { alert(error.message); }
   };
   document.getElementById("btnStartMp").onclick = async () => {
@@ -1195,5 +1273,12 @@ function setupTooltips() {
 
 bind();
 setupTooltips();
-refreshAll();
+refreshAll().then(() => refreshRouting()).catch((error) => {
+  const table = document.getElementById("roleRoutingTable");
+  if (table) table.innerHTML = `<div class="empty">角色发送群加载失败：${esc(error.message)}</div>`;
+});
+refreshRouting().catch((error) => {
+  const table = document.getElementById("roleRoutingTable");
+  if (table) table.innerHTML = `<div class="empty">角色发送群加载失败：${esc(error.message)}</div>`;
+});
 setInterval(refreshHealth, 15000);

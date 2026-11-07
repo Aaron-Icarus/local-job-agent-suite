@@ -92,6 +92,54 @@ function applyDefaultGroup(db, roleUuid) {
   return group;
 }
 
+function setDefaultGroup(db, groupId) {
+  db.prepare("UPDATE feishu_groups SET is_default = 0").run();
+  db.prepare("UPDATE feishu_groups SET is_default = 1, updated_at = ? WHERE id = ?").run(nowIso(), groupId);
+  return getGroup(db, groupId);
+}
+
+function routeRole(db, roleUuid, groupId, flags = {}) {
+  db.prepare("DELETE FROM feishu_group_roles WHERE role_uuid = ?").run(roleUuid);
+  if (!groupId) return null;
+  const group = getGroup(db, groupId);
+  if (!group) throw new Error("群不存在");
+  db.prepare(
+    `INSERT INTO feishu_group_roles(group_id, role_uuid, notify_login, notify_error, notify_daily)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(
+    groupId,
+    roleUuid,
+    flags.notifyLogin === false ? 0 : 1,
+    flags.notifyError === false ? 0 : 1,
+    flags.notifyDaily === false ? 0 : 1
+  );
+  return group;
+}
+
+function routing(db) {
+  const roles = db.prepare(
+    "SELECT role_uuid, role_number, nickname, status FROM roles WHERE deleted_at IS NULL ORDER BY role_number"
+  ).all();
+  const groups = listGroups(db);
+  const defaultGroup = groups.find((group) => group.is_default) || null;
+  return {
+    defaultGroupId: defaultGroup?.id || "",
+    roles: roles.map((role) => {
+      const group = groups.find((item) => item.roles.some((r) => r.role_uuid === role.role_uuid));
+      const mapping = group?.roles.find((r) => r.role_uuid === role.role_uuid);
+      return {
+        ...role,
+        groupId: group?.id || "",
+        groupName: group?.name || "",
+        notifyLogin: mapping?.notify_login ?? true,
+        notifyError: mapping?.notify_error ?? true,
+        notifyDaily: mapping?.notify_daily ?? true,
+      };
+    }),
+    groups: groups.map((group) => ({ id: group.id, name: group.name, chatId: group.chat_id })),
+  };
+}
+
 function credentials() {
   const env = messagePlatform.readEnv();
   return {
@@ -143,4 +191,4 @@ async function sendReportToGroups(db, report) {
   return sendToGroups(db, "daily", report.content, report.role_uuid);
 }
 
-module.exports = { MAX_GROUPS, listGroups, getGroup, saveGroup, deleteGroup, applyDefaultGroup, testGroup, sendToGroups, sendReportToGroups };
+module.exports = { MAX_GROUPS, listGroups, getGroup, saveGroup, deleteGroup, applyDefaultGroup, setDefaultGroup, routeRole, routing, testGroup, sendToGroups, sendReportToGroups };
