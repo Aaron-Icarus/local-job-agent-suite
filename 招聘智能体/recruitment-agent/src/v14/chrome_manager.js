@@ -129,7 +129,11 @@ async function findAvailablePort(start = DEFAULT_CDP_PORT) {
 
 async function resolveCdpPort(preferred) {
   const requested = Number(preferred || process.env.CDP_PORT || readSavedPort() || DEFAULT_CDP_PORT);
-  if (await isCdpReady(requested)) return { port: requested, reused: true, conflict: false };
+  const defaultAvailable = await isCdpReady(DEFAULT_CDP_PORT) || await isPortFree(DEFAULT_CDP_PORT);
+  const defaultConflict = !defaultAvailable;
+  if (await isCdpReady(requested)) {
+    return { port: requested, reused: true, conflict: defaultConflict && requested !== DEFAULT_CDP_PORT, occupiedPort: defaultConflict ? DEFAULT_CDP_PORT : 0 };
+  }
   if (!(await isPortFree(requested))) {
     const port = await findAvailablePort(requested + 1);
     savePort(port);
@@ -138,7 +142,7 @@ async function resolveCdpPort(preferred) {
   }
   savePort(requested);
   process.env.CDP_PORT = String(requested);
-  return { port: requested, reused: false, conflict: false };
+  return { port: requested, reused: false, conflict: defaultConflict && requested !== DEFAULT_CDP_PORT, occupiedPort: defaultConflict && requested !== DEFAULT_CDP_PORT ? DEFAULT_CDP_PORT : 0 };
 }
 
 async function waitForCdp(port, timeoutMs = 15000) {

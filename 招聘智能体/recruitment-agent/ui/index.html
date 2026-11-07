@@ -236,34 +236,29 @@
 
     <section id="tab-messages" class="tab-panel">
       <h1>消息与通知</h1>
-      <div class="split">
-        <div class="panel">
-          <h2>飞书机器人应用</h2>
-          <p class="hint">这里只放飞书应用凭证（App ID/Secret）和长连接服务，用于让机器人能收发消息；群的新增/删除和角色路由在上方模块，不在这里。</p>
-          <label>App ID<input id="mpAppId" placeholder="cli_xxx"></label>
-          <label>App Secret<input id="mpAppSecret" type="password" placeholder="只保存在本机 .env"></label>
-          <label>群 ID（Chat ID）<input id="mpChatId" placeholder="oc_xxx"></label>
-          <label>Verification Token<input id="mpVerifyToken" type="password"></label>
-          <label>Encrypt Key（可选）<input id="mpEncryptKey" type="password"></label>
-          <div class="toolbar">
-            <button id="btnSaveMp">保存配置</button>
-            <button id="btnStartMp" class="ghost">启动消息平台</button>
-            <button id="btnStopMp" class="ghost">停止</button>
-          </div>
-          <p id="mpStatus" class="hint">未配置。</p>
-          <pre id="mpLog" class="log" style="max-height:120px"></pre>
-          <h2>简单 Webhook（可选）</h2>
-          <label>群机器人 Webhook<input id="msgWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
-          <div class="toolbar">
-            <button id="btnSaveWebhook">保存 Webhook</button>
-            <button id="btnTestWebhook" class="ghost">发送测试</button>
-          </div>
-          <p id="msgStatus" class="hint">未配置 webhook。</p>
+      <div class="panel" id="feishuAppPanel">
+        <h2>飞书机器人应用</h2>
+        <p class="hint">这里只放飞书应用凭证（App ID/Secret）和长连接服务，用于让机器人能收发消息；群的新增/删除和角色路由在上方模块，不在这里。保存配置后点“启动消息平台”才会开始接收群消息。</p>
+        <p class="hint">App ID / App Secret：机器人应用身份；启动消息平台：开启长连接接收群消息；停止：断开长连接；Webhook：不启用长连接时的备用发消息方式。</p>
+        <label>App ID<input id="mpAppId" placeholder="cli_xxx"></label>
+        <label>App Secret<input id="mpAppSecret" type="password" placeholder="只保存在本机 .env"></label>
+        <label>群 ID（Chat ID）<input id="mpChatId" placeholder="oc_xxx"></label>
+        <label>Verification Token<input id="mpVerifyToken" type="password"></label>
+        <label>Encrypt Key（可选）<input id="mpEncryptKey" type="password"></label>
+        <div class="toolbar">
+          <button id="btnSaveMp">保存配置</button>
+          <button id="btnStartMp" class="ghost">启动消息平台</button>
+          <button id="btnStopMp" class="ghost">停止</button>
         </div>
-        <div class="panel">
-          <h2>最近通知</h2>
-          <div id="messageLog" class="list"></div>
+        <p id="mpStatus" class="hint">未配置。</p>
+        <pre id="mpLog" class="log" style="max-height:120px"></pre>
+        <h2>简单 Webhook（可选）</h2>
+        <label>群机器人 Webhook<input id="msgWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
+        <div class="toolbar">
+          <button id="btnSaveWebhook">保存 Webhook</button>
+          <button id="btnTestWebhook" class="ghost">发送测试</button>
         </div>
+        <p id="msgStatus" class="hint">未配置 webhook。</p>
       </div>
       <div class="panel" id="groupPanel">
         <div class="section-head">
@@ -279,16 +274,28 @@
         <div id="groupCards" class="group-cards"></div>
       </div>
 
+      <div class="panel" id="defaultGroupPanel">
+        <div class="section-head">
+          <div>
+            <h2>默认通知群</h2>
+            <p class="hint">新建角色默认加入这个群；选择后点保存才会生效。</p>
+          </div>
+          <div class="toolbar"><button id="btnSaveDefaultGroup">保存默认群</button></div>
+        </div>
+        <select id="routingDefaultGroup"></select>
+      </div>
+
       <div class="panel" id="routePanel">
         <div class="section-head">
           <div>
-            <h2>默认通知群与角色路由</h2>
-            <p class="hint">第一行是默认通知群；下面按角色、环节分配群。每行最后一键填充，不在这里增删群。</p>
+            <h2>角色通知群</h2>
+            <p class="hint">每个角色一行；每个环节的单元格是一个群下拉菜单。修改后点右上角保存才会生效。</p>
           </div>
+          <div class="toolbar"><button id="btnSaveRouteStages">保存角色路由</button></div>
         </div>
         <div class="route-table-wrap">
           <table class="route-table">
-            <thead><tr><th>角色</th><th>环节</th><th>通知群</th><th>操作</th></tr></thead>
+            <thead><tr><th>角色</th><th>登录状态</th><th>操作异常</th><th>每日日报</th></tr></thead>
             <tbody id="routeStageBody"></tbody>
           </table>
         </div>
@@ -346,18 +353,6 @@
         <div class="toolbar">
           <button id="btnConfirmDeleteGroup" class="danger">确认删除</button>
           <button id="btnCancelDeleteGroup" class="ghost">取消</button>
-        </div>
-      </div>
-    </dialog>
-
-    <dialog id="routeGroupDialog">
-      <div class="panel dialog-panel" style="max-width:520px">
-        <h2>选择通知群</h2>
-        <p id="routeGroupInfo" class="hint"></p>
-        <label>通知群<select id="routeGroupSelect"></select></label>
-        <div class="toolbar">
-          <button id="btnSaveRouteGroup">保存</button>
-          <button id="btnCancelRouteGroup" class="ghost">取消</button>
         </div>
       </div>
     </dialog>

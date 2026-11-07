@@ -26,8 +26,6 @@ const state = {
   keywordRoleUuid: "",
   editRoleUuid: "",
   deleteGroupId: "",
-  routeGroupRole: "",
-  routeGroupStage: "",
   notificationPage: 1,
   notificationPages: 1,
   notificationPageSize: 10,
@@ -57,7 +55,10 @@ function esc(value) {
 
 function fmt(value) {
   if (!value) return "-";
-  return String(value).replace("T", " ").slice(0, 19);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).replace("T", " ").slice(0, 19);
+  const pad = (number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function tag(text, cls = "") {
@@ -495,27 +496,19 @@ async function refreshRouting() {
   const data = await api("/api/feishu-routing");
   const groups = data.groups || [];
   const groupOptions = (selected) => `<option value="">不发送</option>` + groups.map((group) => `<option value="${group.id}"${selected === group.id ? " selected" : ""}>${esc(group.name)}</option>`).join("");
+  const defaultSelect = document.getElementById("routingDefaultGroup");
+  if (defaultSelect) defaultSelect.innerHTML = groupOptions(data.defaultGroupId);
   const body = document.getElementById("routeStageBody");
   if (!body) return;
   const stages = [["login", "登录状态"], ["error", "操作异常"], ["daily", "每日日报"]];
-  const rows = [`<tr class="route-default-row">
-    <td><strong>默认通知群</strong></td>
-    <td>所有新角色</td>
-    <td><select id="routingDefaultGroup">${groupOptions(data.defaultGroupId)}</select></td>
-    <td><span class="hint">自动加入</span></td>
-  </tr>`];
-  for (const role of data.roles || []) {
-    for (const [stageKey, stageLabel] of stages) {
-      const stage = role.stages?.[stageKey] || { groupId: "", groupName: "" };
-      rows.push(`<tr>
-        <td>${esc(role.role_number)} ${esc(role.nickname)}</td>
-        <td>${stageLabel}</td>
-        <td>${stage.groupName ? esc(stage.groupName) : '<span class="hint">不发送</span>'}</td>
-        <td><button class="small ghost" data-route-role="${role.role_uuid}" data-route-stage="${stageKey}" data-route-label="${esc(role.role_number)} ${esc(role.nickname)} / ${stageLabel}">一键填充</button></td>
-      </tr>`);
-    }
-  }
-  body.innerHTML = rows.join("");
+  const rows = (data.roles || []).map((role) => {
+    const cells = stages.map(([stageKey]) => {
+      const stage = role.stages?.[stageKey] || {};
+      return `<td><select data-route-role="${role.role_uuid}" data-route-stage="${stageKey}">${groupOptions(stage.groupId || "")}</select></td>`;
+    }).join("");
+    return `<tr><td>${esc(role.role_number)} ${esc(role.nickname)}</td>${cells}</tr>`;
+  });
+  body.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="4" class="empty">还没有角色；创建角色后在这里配置。</td></tr>';
 }
 
 function openEditRole(roleUuid) {
@@ -703,11 +696,6 @@ function bind() {
     document.getElementById("notificationBody").textContent = `${item.body || ""}\n\n时间：${item.created_at || ""}\n状态：${item.status || ""}`;
     document.getElementById("notificationDialog").showModal();
   };
-  document.getElementById("messageLog").addEventListener("click", (event) => {
-    const row = event.target.closest("[data-notification]");
-    if (!row) return;
-    openNotification((state.notifications || []).find((entry) => String(entry.id) === String(row.dataset.notification)));
-  });
   document.getElementById("notificationHistoryList").addEventListener("click", (event) => {
     const row = event.target.closest("[data-notification]");
     if (!row) return;
@@ -801,39 +789,27 @@ function bind() {
     } catch (error) { alert(error.message); }
   };
   document.getElementById("btnCancelDeleteGroup").onclick = () => document.getElementById("deleteGroupDialog").close();
-  document.getElementById("routeStageBody").addEventListener("change", async (event) => {
-    if (event.target.id !== "routingDefaultGroup") return;
+  document.getElementById("btnSaveDefaultGroup").onclick = async () => {
     try {
-      await api("/api/feishu-groups/default", { method: "POST", body: { groupId: event.target.value } });
+      await api("/api/feishu-groups/default", { method: "POST", body: { groupId: document.getElementById("routingDefaultGroup").value } });
       await refreshGroups();
       await refreshRouting();
-      toast("默认通知群已更新");
-    } catch (error) { alert(error.message); }
-  });
-  document.getElementById("routeStageBody").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-route-role]");
-    if (!button || !state.feishuGroups.length) {
-      if (button && !state.feishuGroups.length) toast("请先添加飞书群", true);
-      return;
-    }
-    state.routeGroupRole = button.dataset.routeRole;
-    state.routeGroupStage = button.dataset.routeStage;
-    document.getElementById("routeGroupInfo").textContent = `为 ${button.dataset.routeLabel} 选择通知群`;
-    document.getElementById("routeGroupSelect").innerHTML = '<option value="">不发送</option>' + state.feishuGroups.map((group) => `<option value="${group.id}">${esc(group.name)}</option>`).join("");
-    document.getElementById("routeGroupDialog").showModal();
-  });
-  document.getElementById("btnSaveRouteGroup").onclick = async () => {
-    try {
-      await api("/api/feishu-routing/stage", {
-        method: "POST",
-        body: { roleUuid: state.routeGroupRole, stage: state.routeGroupStage, groupId: document.getElementById("routeGroupSelect").value },
-      });
-      document.getElementById("routeGroupDialog").close();
-      await refreshRouting();
-      toast("角色通知群已更新");
+      toast("默认通知群已保存");
     } catch (error) { alert(error.message); }
   };
-  document.getElementById("btnCancelRouteGroup").onclick = () => document.getElementById("routeGroupDialog").close();
+  document.getElementById("btnSaveRouteStages").onclick = async () => {
+    try {
+      const selects = [...document.querySelectorAll("#routeStageBody select[data-route-role]")];
+      for (const select of selects) {
+        await api("/api/feishu-routing/stage", {
+          method: "POST",
+          body: { roleUuid: select.dataset.routeRole, stage: select.dataset.routeStage, groupId: select.value },
+        });
+      }
+      await refreshRouting();
+      toast("角色通知群已保存");
+    } catch (error) { alert(error.message); }
+  };
 
   document.getElementById("btnRefresh").onclick = refreshAll;
   document.getElementById("btnTick").onclick = doTick;
@@ -866,6 +842,7 @@ function bind() {
         } catch (error) {
           showLog("dashboardLog", error.message);
           toast(error.message, true);
+          await refreshHealth();
         }
         return;
       }
@@ -1356,6 +1333,10 @@ refreshRouting().catch((error) => {
 refreshNotificationHistory().catch((error) => {
   const list = document.getElementById("notificationHistoryList");
   if (list) list.innerHTML = `<div class="empty">历史通知加载失败：${esc(error.message)}</div>`;
+});
+refreshGroups().catch((error) => {
+  const list = document.getElementById("groupCards");
+  if (list) list.innerHTML = `<div class="empty">飞书群加载失败：${esc(error.message)}</div>`;
 });
 setInterval(refreshHealth, 15000);
 setInterval(() => refreshTasks().catch(() => {}), 4000);

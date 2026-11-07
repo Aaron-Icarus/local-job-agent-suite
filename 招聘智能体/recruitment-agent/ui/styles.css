@@ -45,6 +45,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 20px; }
 #tab-messages.active { display: flex; flex-direction: column; }
 #tab-messages.active > h1 { order: -3; }
 #tab-messages.active > #groupPanel { order: -2; }
+#tab-messages.active > #defaultGroupPanel { order: -2; }
 #tab-messages.active > #routePanel { order: -2; }
 #tab-messages.active > .split { order: -1; }
 #deleteGroupInfo { white-space: pre-line; }
@@ -87,6 +88,8 @@ main { max-width: 1240px; margin: 0 auto; padding: 20px; }
 .route-table th, .route-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .route-table th { position: sticky; top: 0; background: var(--bg); z-index: 1; }
 .route-table td:nth-child(3) { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.route-table select { width: 100%; min-width: 150px; }
+#routingDefaultGroup { max-width: 320px; }
 
 .scroll-list { max-height: 280px; overflow-y: auto; padding-right: 4px; }
 .history-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
