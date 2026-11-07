@@ -15,6 +15,7 @@ function resolveSdkPath() {
     candidates.push(path.join(envVendorRoot, "node_modules", "@larksuiteoapi", "node-sdk"));
   }
   candidates.push(path.join(packageRoot, "快捷启动", "随项目必须的安装包", "message-platform-vendor", "node_modules", "@larksuiteoapi", "node-sdk"));
+  candidates.push(path.join(messageRoot, "node_modules", "@larksuiteoapi", "node-sdk"));
   candidates.push(path.join(messageRoot, "vendor", "node_modules", "@larksuiteoapi", "node-sdk"));
 
   for (const candidate of candidates) {

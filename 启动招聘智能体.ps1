@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $app = Join-Path $root "招聘智能体\recruitment-agent"
 Set-Location -LiteralPath $app
@@ -29,7 +29,7 @@ $electron = Join-Path $app "node_modules\.bin\electron.cmd"
 if (Test-Path -LiteralPath $electron) {
   Write-Host "启动桌面客户端..."
   Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "set ELECTRON_RUN_AS_NODE=&& `"$electron`" . --no-sandbox") -WorkingDirectory $app -WindowStyle Hidden
-  Start-Sleep -Seconds 5
+  Start-Sleep -Seconds 10
   $healthy = $false
   try {
     $health = Invoke-WebRequest -Uri "http://127.0.0.1:4780/api/health" -UseBasicParsing -TimeoutSec 3

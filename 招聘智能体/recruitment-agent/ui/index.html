@@ -36,11 +36,11 @@
       <div id="channelCards" class="channel-grid"></div>
       <div class="cards" id="dashboardCards"></div>
       <div class="toolbar">
-        <button id="btnTick" title="按当前时间、空闲和间隔判断是否执行采集/入库/评分/日报">立即执行一次调度</button>
-        <button id="btnPlan" class="ghost" title="跳过定时判断，直接为运行中角色创建一次采集任务；仍会校验 1 小时间隔">手动生成采集任务</button>
+        <button id="btnTick" title="按当前时间、空闲和间隔判断；满足条件才创建采集/入库/评分/日报任务">立即执行一次调度</button>
+        <button id="btnPlan" class="ghost" title="跳过定时判断，直接为运行中角色创建一次采集任务（人工强制）">手动生成采集任务</button>
         <button id="btnLoginStatus" class="ghost" title="读取最近一次登录检查记录">刷新登录状态</button>
       </div>
-      <p class="hint">“立即执行一次调度”= 让程序按当前时间/空闲策略判断该做什么；“手动生成采集任务”= 不等待定时，直接创建一次采集任务。</p>
+      <p class="hint">“立即执行一次调度”= 按当前时间/空闲/间隔判断，满足条件才创建任务（不保证一定采集）；“手动生成采集任务”= 跳过定时判断，直接创建一次采集任务（人工强制）。</p>
       <pre id="dashboardLog" class="log"></pre>
     </section>
 
