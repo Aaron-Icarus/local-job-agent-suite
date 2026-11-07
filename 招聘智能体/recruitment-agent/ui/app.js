@@ -587,6 +587,9 @@ function activateTab(tab) {
   const name = tab || "dashboard";
   document.querySelectorAll(".tabs button").forEach((item) => item.classList.toggle("active", item.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${name}`));
+  if (name === "messages") {
+    refreshRouting().catch(() => {});
+  }
 }
 
 function bind() {
