@@ -153,7 +153,9 @@ function createAppServer(options = {}) {
         if (body.role_keywords?.length) {
           const fallback = body.fallback_keywords?.length
             ? body.fallback_keywords
-            : keywordService.fallbackKeywords(body).fallback;
+            : (keywordService.extractFallbackFromProfile(body.profile_md).length
+              ? keywordService.extractFallbackFromProfile(body.profile_md)
+              : keywordService.fallbackKeywords(body).fallback);
           keywordService.save(db, result.role.role_uuid, {
             recommended: body.role_keywords,
             fallback,

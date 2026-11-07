@@ -141,7 +141,7 @@ function dailyKeywords(state) {
 
 function sanitizeProfile(text) {
   let result = String(text || "");
-  result = result.replace(/\n##\s*(技能关键词|每日搜索关键词|搜索排除词)[\s\S]*?(?=\n##\s|$)/g, "\n");
+  result = result.replace(/\n##\s*每日搜索关键词[\s\S]*?(?=\n##\s|$)/g, "\n");
   result = result.split(/\r?\n/).filter((line) => {
     if (/^\s*(电话|手机|手机号|邮箱|e-?mail|密码|身份证|微信|QQ|联系方式)\s*[:：]/i.test(line)) return false;
     if (/1[3-9]\d{9}/.test(line) || /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/.test(line)) return false;
@@ -226,23 +226,31 @@ async function generateKeywords(db, state) {
 function buildProfile(state) {
   const parsed = state.parsed || {};
   const skills = (parsed.skills || []).join("、") || "-";
+  const fallbackKeywords = uniqueKeywords(
+    state.fallback_keywords || keywordService.fallbackKeywords({ ...state, skills: parsed.skills || [] }).fallback,
+    8
+  );
+  const preferences = state.preferences || "希望岗位方向与目标一致；不希望长期出差或纯外包执行；具体偏好待确认。";
   const profile = [
     `# ${parsed.name || "候选人"} 角色画像`,
     "",
     `## 基础信息\n- 姓名：${parsed.name || "-"}\n- 学历：${parsed.education || "-"}\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}`,
-    `## 求职诉求\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}\n- 方向/偏好：${state.career_expectation || state.preferences || "未填写"}`,
+    `## 求职诉求\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}\n- 方向/偏好：${state.career_expectation || preferences}`,
     `## 职业发展期望\n${state.career_expectation || `希望在${state.target_city || "目标城市"}从事${state.target_roles || "目标岗位"}，薪资${state.target_salary || "面议"}，优先 AI/智能体方向。`}`,
     `## 工作经历\n${state.experience || parsed.experience_summary || "-"}`,
     `## 能力标签\n${skills}`,
-    `## 风险/需确认\n${state.preferences || "请人工核对简历事实与期望薪资"}`,
+    `## 技能关键词\n${skills}`,
+    `## 求职偏好/避雷\n${preferences}`,
+    `## 兜底关键词\n${fallbackKeywords.join("、")}`,
+    `## 风险/需确认\n${state.risk || "请人工核对简历事实与期望薪资"}`,
     "",
-    "> 由本地简历解析 + 角色画像 Skill 生成；请人工确认事实后再启用角色。关键词在角色关键词中单独维护。",
+    "> 由本地简历解析 + 角色画像 Skill 生成；请人工确认事实后再启用角色；下一轮搜索关键词在角色关键词中单独维护。",
   ].join("\n");
   return sanitizeProfile(profile);
 }
 
 function ensureProfileSections(profile, localProfile) {
-  const required = ["## 求职诉求", "## 职业发展期望", "## 风险/需确认"];
+  const required = ["## 求职诉求", "## 职业发展期望", "## 技能关键词", "## 求职偏好/避雷", "## 兜底关键词", "## 风险/需确认"];
   const missing = required.filter((heading) => !String(profile).includes(heading));
   if (!missing.length) return sanitizeProfile(profile);
   const sections = {};
@@ -253,6 +261,18 @@ function ensureProfileSections(profile, localProfile) {
     sections[heading] = localProfile.slice(start, next < 0 ? localProfile.length : next).trim();
   }
   return sanitizeProfile(`${profile.trim()}\n\n${missing.map((heading) => sections[heading] || "").filter(Boolean).join("\n\n")}`);
+}
+
+function replaceFallbackSection(profile, fallback = []) {
+  const keywords = uniqueKeywords(fallback, 8);
+  if (!keywords.length) return profile;
+  const section = `## 兜底关键词\n${keywords.join("、")}`;
+  if (/##\s*兜底关键词/.test(profile)) {
+    return profile.replace(/\n##\s*兜底关键词[\s\S]*?(?=\n##\s|$)/, `\n${section}`);
+  }
+  const risk = profile.indexOf("## 风险/需确认");
+  if (risk < 0) return `${profile.trim()}\n\n${section}`;
+  return `${profile.slice(0, risk).trim()}\n\n${section}\n\n${profile.slice(risk).trim()}`;
 }
 
 function findJobByText(db, roleUuid, text) {
@@ -409,9 +429,9 @@ async function runTurn(db, sessionId, input = {}) {
   const profileLocal = buildProfile(state);
   const aiProfile = await askAI(db, [
     "请根据以下真实信息生成一份角色画像 Markdown，只输出 Markdown，不要编造事实。",
-    "必须包含这些二级标题：基础信息、求职诉求、职业发展期望、工作经历、能力标签、风险/需确认。",
-    "不要在画像中写电话、手机、邮箱、密码、身份证、微信、QQ、联系方式。",
-    "不要在画像中写技能关键词、每日搜索关键词、搜索排除词；这些由角色关键词单独维护。",
+    "必须包含这些二级标题：基础信息、求职诉求、职业发展期望、工作经历、能力标签、技能关键词、求职偏好/避雷、兜底关键词、风险/需确认。",
+    "画像可以写技能关键词、个人偏好/避雷的描述、兜底关键词；兜底关键词可人工调整。",
+    "不要在画像中写每日搜索关键词（下一轮搜索用词），这些由独立关键词模块生成。",
     `目标岗位：${state.target_roles}`,
     `目标城市：${state.target_city}`,
     `薪资：${state.target_salary}`,
@@ -423,11 +443,12 @@ async function runTurn(db, sessionId, input = {}) {
     ? ensureProfileSections(aiProfile.text, profileLocal)
     : profileLocal;
   const keywordResult = await generateKeywords(db, { ...state, profile_md: profile });
-  state.profile_md = profile;
+  const finalProfile = replaceFallbackSection(profile, keywordResult.fallbackKeywords);
+  state.profile_md = finalProfile;
   state.daily_keywords = keywordResult.keywords;
-  appendMessage(db, sessionId, "assistant", `画像信息已齐，生成如下：\n\n${profile}\n\n每日搜索关键词（单独保存，不写入画像）：${keywordResult.keywords.join("、")}`, {
+  appendMessage(db, sessionId, "assistant", `画像信息已齐，生成如下：\n\n${finalProfile}\n\n每日搜索关键词（单独保存，不写入画像）：${keywordResult.keywords.join("、")}`, {
     action: "profile_ready",
-    profile_md: profile,
+    profile_md: finalProfile,
     keywords: keywordResult.keywords,
     fallback_keywords: keywordResult.fallbackKeywords,
     keyword_ai_used: keywordResult.aiUsed,
@@ -436,7 +457,7 @@ async function runTurn(db, sessionId, input = {}) {
     ai_used: Boolean(aiProfile),
     suggested: {
       nickname: state.parsed?.name || "新角色",
-      profile_md: profile,
+      profile_md: finalProfile,
       target_roles: state.target_roles,
       target_city: state.target_city,
       target_salary: state.target_salary,
@@ -452,7 +473,7 @@ async function runTurn(db, sessionId, input = {}) {
     ],
   });
   updateState(db, sessionId, state);
-  return { session: getSession(db, sessionId), reply: { text: "画像已生成", profile_md: profile, keywords: keywordResult.keywords } };
+  return { session: getSession(db, sessionId), reply: { text: "画像已生成", profile_md: finalProfile, keywords: keywordResult.keywords } };
 }
 
 module.exports = {

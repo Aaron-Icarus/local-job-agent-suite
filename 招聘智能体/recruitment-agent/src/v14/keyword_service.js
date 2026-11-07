@@ -85,6 +85,13 @@ function history(db, roleUuid) {
   }));
 }
 
+function extractFallbackFromProfile(profileMd) {
+  const text = String(profileMd || "");
+  const match = text.match(/##\s*兜底关键词\s*([\s\S]*?)(?=\n##\s|$)/);
+  if (!match) return [];
+  return unique(match[1].split(/[\n,，、]/).map((item) => item.replace(/^[-*\d.\s]+/, "").trim()), 8);
+}
+
 function save(db, roleUuid, result = {}) {
   if (!roleUuid) return null;
   const recommended = unique(result.recommended || result.keywords || [], 12);
@@ -124,4 +131,4 @@ function list(db, roleUuid) {
   ).all(roleUuid).map((row) => ({ ...row, is_current: Boolean(row.is_current) }));
 }
 
-module.exports = { fallbackKeywords, history, save, list, splitTargets, unique };
+module.exports = { fallbackKeywords, extractFallbackFromProfile, history, save, list, splitTargets, unique };
