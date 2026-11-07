@@ -3,6 +3,12 @@ const { runCollectionEvent } = require("./collection_runner");
 const { processRawQueue } = require("./ingest_service");
 const { buildReport } = require("./report_service");
 const { runningRoles } = require("./task_service");
+const { ensureChrome } = require("./chrome_manager");
+const { getIdleStatus } = require("./system_idle");
+
+function idleThreshold() {
+  return Math.max(0, Number(process.env.V14_IDLE_THRESHOLD_SECONDS || 120));
+}
 
 function pickTask(db) {
   const rows = listTasks(db, { limit: 20 });
@@ -15,7 +21,17 @@ async function runTask(db, task) {
       failTask(db, task.id, "采集任务缺少 eventId", { retry: false });
       return;
     }
+    const manual = String(task.payload.forceReason || "").toLowerCase() === "manual";
+    if (!manual && process.env.V14_DEFER_COLLECT_ON_ACTIVE !== "false") {
+      const idle = await getIdleStatus({ thresholdSeconds: idleThreshold() });
+      if (idle.available && idle.active) return;
+    }
     startTask(db, task.id, { eventId: task.payload.eventId });
+    const chrome = await ensureChrome({ startMinimized: true, startUrl: "about:blank" });
+    if (!chrome || !chrome.port) {
+      failTask(db, task.id, "Chrome CDP 未就绪，无法采集", { retry: false });
+      return;
+    }
     await runCollectionEvent(db, task.payload.eventId, { taskId: task.id });
     return;
   }

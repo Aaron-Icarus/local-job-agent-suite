@@ -1,8 +1,9 @@
 const { loadEnv } = require("../../core/load_env");
-const { cdpBaseUrl, getJson, sleep, openWsForTab, evaluate, findOrCreateCollectTab } = require("../../core/cdp_common");
+const { cdpBaseUrl, getJson, sleep, openWsForTab, evaluate, findOrCreateCollectTab, closeCollectTabs } = require("../../core/cdp_common");
 
 loadEnv();
 
+const LOGIN_TAB_PURPOSE = "login_boss";
 const targetUrl = process.env.BOSS_LOGIN_CHECK_URL || "https://www.zhipin.com/web/geek/jobs";
 const args = new Set(process.argv.slice(2));
 const useNewTab = args.has("--new");
@@ -181,7 +182,10 @@ async function retryProbe(base, initialTab, probe) {
 
 async function main() {
   const base = cdpBaseUrl();
-  let tab = await findOrCreateTab(base);
+  let tab = await findOrCreateCollectTab(LOGIN_TAB_PURPOSE, targetUrl, {
+    force: useNewTab,
+    isUsable: (item) => Boolean(item.webSocketDebuggerUrl),
+  });
   await sleep(useNewTab ? 8000 : 3000);
   tab = await findCurrentBossTab(base, tab.id) || tab;
 
@@ -208,6 +212,9 @@ async function main() {
   const apiHasSalary = apiValue && apiValue.hasSalary === true;
   const loginStatus = combineStatus(domStatus, apiStatus, apiHasSalary);
   console.log(JSON.stringify({ loginStatus, domStatus, apiStatus, apiHasSalary, tabScore: bossTabScore(tab), tabId: tab.id, ...value, apiProbe: apiValue }, null, 2));
+  if (loginStatus === "logged_in") {
+    await closeCollectTabs([LOGIN_TAB_PURPOSE]).catch(() => {});
+  }
   if (loginStatus !== "logged_in") process.exitCode = 2;
 }
 

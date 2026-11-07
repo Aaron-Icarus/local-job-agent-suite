@@ -1,8 +1,9 @@
 const { loadEnv } = require("../../core/load_env");
-const { cdpBaseUrl, findOrCreateTab, findOrCreateCollectTab, getJson, openWsForTab, navigate, sleep, evaluate } = require("../../core/cdp_common");
+const { cdpBaseUrl, findOrCreateTab, findOrCreateCollectTab, getJson, openWsForTab, navigate, sleep, evaluate, closeCollectTabs } = require("../../core/cdp_common");
 
 loadEnv();
 
+const LOGIN_TAB_PURPOSE = "login_liepin";
 const targetUrl = process.env.LIEPIN_LOGIN_CHECK_URL || "https://c.liepin.com/";
 const args = new Set(process.argv.slice(2));
 
@@ -23,7 +24,7 @@ function classify(value) {
 async function main() {
   const base = cdpBaseUrl();
   // 标签隔离：只复用采集自己创建的标签，不复用用户手动打开的标签。
-  let tab = await findOrCreateCollectTab("liepin", targetUrl, { force: args.has("--new"), isUsable: (t) => Boolean(t.webSocketDebuggerUrl) });
+  let tab = await findOrCreateCollectTab(LOGIN_TAB_PURPOSE, targetUrl, { force: args.has("--new"), isUsable: (t) => Boolean(t.webSocketDebuggerUrl) });
 
   const deadline = Date.now() + 25000;
   let value = null;
@@ -61,6 +62,9 @@ async function main() {
   }
   const loginStatus = classify(value);
   console.log(JSON.stringify({ loginStatus, tabId: tab.id, ...value }, null, 2));
+  if (loginStatus === "logged_in") {
+    await closeCollectTabs([LOGIN_TAB_PURPOSE]).catch(() => {});
+  }
   if (loginStatus !== "logged_in") process.exitCode = 2;
 }
 

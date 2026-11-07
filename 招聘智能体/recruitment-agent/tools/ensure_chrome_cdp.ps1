@@ -1,4 +1,4 @@
-﻿param(
+param(
   [string]$HostName = $env:CDP_HOST,
   [int]$Port = $(if ($env:CDP_PORT) { [int]$env:CDP_PORT } else { 9222 }),
   [string]$ChromePath = $env:CHROME_PATH,
@@ -45,6 +45,31 @@ function Test-CdpPort {
   }
 }
 
+function Test-CdpHttp {
+  param([string]$HostName, [int]$Port)
+  try {
+    $null = Invoke-RestMethod -Uri "http://$HostName`:$Port/json/version" -TimeoutSec 2
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Get-FreeCdpPort {
+  param([string]$HostName, [int]$StartPort)
+  for ($candidate = $StartPort; $candidate -le 9322; $candidate++) {
+    if (-not (Test-CdpPort -HostName $HostName -Port $candidate)) { return $candidate }
+  }
+  throw "找不到可用的 Chrome 调试端口（$StartPort-9322）"
+}
+
+function Save-CdpPort {
+  param([int]$Port)
+  $dataDir = Join-Path $root "data"
+  New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+  @{ port = $Port; updated_at = (Get-Date).ToString("o") } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dataDir "cdp.json") -Encoding UTF8
+}
+
 if ($Restart) {
   # 进程枚举在受限/精简 PowerShell 环境可能被拒绝（Access denied）。
   # 绝不能让清理步骤阻断 Chrome 启动。
@@ -63,8 +88,13 @@ if ($Restart) {
 }
 
 if (Test-CdpPort -HostName $HostName -Port $Port) {
-  Write-Output "CDP already listening on $HostName`:$Port"
-  exit 0
+  if (Test-CdpHttp -HostName $HostName -Port $Port) {
+    Save-CdpPort -Port $Port
+    Write-Output "CDP already listening on $HostName`:$Port"
+    exit 0
+  }
+  $Port = Get-FreeCdpPort -HostName $HostName -StartPort 9223
+  Write-Output "Port 9222 is occupied by another service; switching to $Port"
 }
 
 if (-not (Test-Path -LiteralPath $ChromePath)) {
@@ -94,6 +124,7 @@ $deadline = (Get-Date).AddSeconds(25)
 while ((Get-Date) -lt $deadline) {
   Start-Sleep -Milliseconds 500
   if (Test-CdpPort -HostName $HostName -Port $Port) {
+    Save-CdpPort -Port $Port
     Write-Output "Started Chrome CDP on $HostName`:$Port"
     Write-Output "Profile: $ProfileDir"
     exit 0

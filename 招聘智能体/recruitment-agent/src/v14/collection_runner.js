@@ -17,7 +17,12 @@ function collectorScript(platform) {
 function defaultRunSubtask(context) {
   return new Promise((resolve) => {
     const script = collectorScript(context.platform);
-    const child = spawn(process.execPath, [script], {
+    const keywordSpec = (context.keywords || [])
+      .map((keyword) => `未分级::${keyword}`)
+      .join(",");
+    const args = [script, "stage1", "10", "50"];
+    if (keywordSpec) args.push(keywordSpec);
+    const child = spawn(process.execPath, args, {
       cwd: path.join(__dirname, "..", ".."),
       env: {
         ...process.env,

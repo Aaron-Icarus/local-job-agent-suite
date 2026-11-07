@@ -9,7 +9,7 @@ const scores = require("./scores_repo");
 const { listJobs, countJobs } = require("./jobs_repo");
 const { loginStatus, recordCheck } = require("./login_monitor");
 const { checkPlatform } = require("./login_checker");
-const { startChrome } = require("./chrome_manager");
+const { ensureChrome, resolveCdpPort, isCdpReady } = require("./chrome_manager");
 const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
@@ -21,6 +21,7 @@ const feishuGroups = require("./feishu_groups");
 const logger = require("./logger");
 const jobRecheck = require("./job_recheck");
 const keywordService = require("./keyword_service");
+const { getIdleStatus } = require("./system_idle");
 const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
 
 function json(res, status, payload) {
@@ -214,8 +215,34 @@ function createAppServer(options = {}) {
         const body = await readBody(req);
         const platform = String(body.platform || "");
         const url = platform === "猎聘" ? "https://c.liepin.com/" : "https://www.zhipin.com/web/geek/jobs";
-        const child = startChrome({ startUrl: url, port: Number(body.port || 9222), startMinimized: false });
-        return json(res, 200, { ok: true, platform, url, message: "Chrome 已打开登录页", pid: child.child.pid });
+        const chrome = await ensureChrome({
+          startUrl: url,
+          startMinimized: false,
+          port: Number(body.port || 0) || undefined,
+        });
+        return json(res, 200, {
+          ok: true,
+          platform,
+          url,
+          port: chrome.port,
+          reused: Boolean(chrome.reused),
+          conflict: Boolean(chrome.conflict),
+          message: `Chrome CDP 已就绪：127.0.0.1:${chrome.port}`,
+          pid: chrome.child?.pid || null,
+        });
+      }
+      if (pathname === "/api/system/idle" && req.method === "GET") {
+        return json(res, 200, { ok: true, ...(await getIdleStatus({ thresholdSeconds: 120 })) });
+      }
+      if (pathname === "/api/chrome/status" && req.method === "GET") {
+        const resolved = await resolveCdpPort();
+        return json(res, 200, {
+          ok: true,
+          port: resolved.port,
+          ready: await isCdpReady(resolved.port),
+          reused: resolved.reused,
+          conflict: Boolean(resolved.conflict),
+        });
       }
 
       const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update)$/);
@@ -237,7 +264,7 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/tasks/tick" && req.method === "POST") {
         const body = await readBody(req);
-        return json(res, 200, { ok: true, ...planTick(db, { idleAllowed: Boolean(body.idleAllowed) }) });
+        return json(res, 200, { ok: true, ...planTick(db, { idleAllowed: Boolean(body.idleAllowed), forceReason: body.forceReason || "" }) });
       }
       if (pathname === "/api/tasks" && req.method === "GET") {
         return json(res, 200, { ok: true, tasks: listTasks(db, { limit: 100 }) });

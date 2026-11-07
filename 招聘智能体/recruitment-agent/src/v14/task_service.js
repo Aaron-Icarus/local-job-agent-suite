@@ -98,7 +98,7 @@ function planTick(db, options = {}) {
   if (decision.shouldCollect && !hasRunningCollection(db)) {
     const plan = createCollectionPlan(db, {
       now,
-      forceReason: decision.forceReason,
+      forceReason: options.forceReason || decision.forceReason,
       platforms: options.platforms,
     });
     if (plan) actions.push({ type: "collect", eventId: plan.event.id, taskId: plan.task.id });

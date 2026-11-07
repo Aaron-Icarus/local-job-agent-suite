@@ -162,6 +162,8 @@ async function refreshTasks() {
   const data = await api("/api/tasks/board");
   state.tasks = data.tasks || [];
   state.events = data.collectionEvents || [];
+  let idle = { available: false };
+  try { idle = await api("/api/system/idle"); } catch { /* 忽略空闲检测失败 */ }
   const summary = document.getElementById("taskSummary");
   const running = state.tasks.filter((task) => task.status === "running").length;
   const queued = state.tasks.filter((task) => ["queued", "retrying"].includes(task.status)).length;
@@ -170,6 +172,7 @@ async function refreshTasks() {
     <div class="card"><div class="num">${queued}</div><div class="label">排队/重试</div></div>
     <div class="card"><div class="num">${state.events.length}</div><div class="label">采集事件</div></div>
     <div class="card"><div class="num">${data.runningCollection ? "是" : "否"}</div><div class="label">采集运行中</div></div>
+    <div class="card"><div class="num">${idle.available ? (idle.active ? "使用中" : "空闲") : "未知"}</div><div class="label">电脑状态</div></div>
   `;
   const list = document.getElementById("taskList");
   list.innerHTML = state.tasks.length ? state.tasks.map((task) => `
@@ -807,8 +810,8 @@ function bind() {
       if (open) {
         const platform = open.dataset.channelOpen;
         const result = await api("/api/chrome/open", { method: "POST", body: { platform } });
-        showLog("dashboardLog", `已打开 ${platform} 登录页：${result.url}`);
-        toast(`已打开 ${platform} 登录页`);
+        showLog("dashboardLog", `已打开 ${platform} 登录页：${result.url}（CDP 端口 ${result.port}${result.conflict ? "，9222 被占用已自动切换" : ""}）`);
+        toast(`Chrome CDP：127.0.0.1:${result.port}`);
       }
     } catch (error) { showLog("dashboardLog", error.message); }
   });
@@ -1166,7 +1169,7 @@ function bind() {
 
 async function doTick() {
   try {
-    const result = await api("/api/tasks/tick", { method: "POST", body: { idleAllowed: true } });
+    const result = await api("/api/tasks/tick", { method: "POST", body: { idleAllowed: true, forceReason: "manual" } });
     showLog("dashboardLog", result);
     await refreshTasks();
     await refreshJobs();
