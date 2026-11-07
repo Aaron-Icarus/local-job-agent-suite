@@ -541,6 +541,7 @@ function bind() {
           target_roles: suggested.target_roles,
           target_city: suggested.target_city,
           target_salary: suggested.target_salary,
+          role_keywords: suggested.role_keywords || [],
         },
       });
       await refreshRoles();
@@ -717,6 +718,22 @@ function bind() {
     }
   });
 
+  document.getElementById("btnGenerateKeywords").onclick = async () => {
+    try {
+      const result = await api("/api/keywords/generate", {
+        method: "POST",
+        body: {
+          profile_md: document.getElementById("roleProfile").value.trim(),
+          target_roles: document.getElementById("roleTargets").value.trim(),
+          target_city: document.getElementById("roleCity").value.trim(),
+          target_salary: document.getElementById("roleSalary").value.trim(),
+        },
+      });
+      document.getElementById("roleKeywords").value = (result.keywords || []).join(", ");
+      toast(result.aiUsed ? "AI 已生成每日关键词" : "已用本地规则生成关键词");
+    } catch (error) { alert(error.message); }
+  };
+
   document.getElementById("btnCreateRole").onclick = async () => {
     try {
       const result = await api("/api/roles", {
@@ -727,6 +744,8 @@ function bind() {
           resume_md: state.resumeContent,
           resume_file_name: state.resumeFileName,
           target_roles: document.getElementById("roleTargets").value.trim(),
+          target_city: document.getElementById("roleCity").value.trim(),
+          target_salary: document.getElementById("roleSalary").value.trim(),
           role_keywords: document.getElementById("roleKeywords").value.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
         },
       });
