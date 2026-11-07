@@ -1,9 +1,9 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0启动招聘智能体.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-recruitment-agent.ps1"
 if errorlevel 1 (
   echo.
-  echo 启动失败，请查看上方错误。
+  echo Startup failed. See messages above.
   pause
 )

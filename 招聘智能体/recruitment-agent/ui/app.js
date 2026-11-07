@@ -957,6 +957,52 @@ async function doTick() {
   } catch (error) { showLog("dashboardLog", error.message); }
 }
 
+function setupTooltips() {
+  const tooltip = document.getElementById("customTooltip");
+  if (!tooltip) return;
+  let timer = null;
+  let active = null;
+  const hide = () => {
+    clearTimeout(timer);
+    active = null;
+    tooltip.hidden = true;
+  };
+  const show = (target) => {
+    const text = target.dataset.tooltip;
+    if (!text) return;
+    tooltip.textContent = text;
+    tooltip.hidden = false;
+    const rect = target.getBoundingClientRect();
+    const gap = 8;
+    let left = rect.left;
+    let top = rect.bottom + gap;
+    const width = tooltip.offsetWidth;
+    const height = tooltip.offsetHeight;
+    if (left + width > window.innerWidth - 12) left = window.innerWidth - width - 12;
+    if (top + height > window.innerHeight - 12) top = rect.top - height - gap;
+    tooltip.style.left = `${Math.max(12, left)}px`;
+    tooltip.style.top = `${Math.max(12, top)}px`;
+  };
+  document.querySelectorAll("[data-tooltip]").forEach((target) => {
+    target.addEventListener("mouseenter", () => {
+      clearTimeout(timer);
+      active = target;
+      timer = setTimeout(() => {
+        if (active === target) show(target);
+      }, 500);
+    });
+    target.addEventListener("mouseleave", hide);
+    target.addEventListener("focus", () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => show(target), 500);
+    });
+    target.addEventListener("blur", hide);
+  });
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("resize", hide);
+}
+
 bind();
+setupTooltips();
 refreshAll();
 setInterval(refreshHealth, 15000);
