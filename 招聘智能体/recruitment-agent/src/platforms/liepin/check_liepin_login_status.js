@@ -1,8 +1,9 @@
 const { loadEnv } = require("../../core/load_env");
-const { cdpBaseUrl, findOrCreateTab, findOrCreateCollectTab, getJson, openWsForTab, navigate, sleep, evaluate } = require("../../core/cdp_common");
+const { cdpBaseUrl, findOrCreateTab, findOrCreateCollectTab, getJson, openWsForTab, navigate, sleep, evaluate, closeCollectTabs } = require("../../core/cdp_common");
 
 loadEnv();
 
+const LOGIN_TAB_PURPOSE = "login_liepin";
 const targetUrl = process.env.LIEPIN_LOGIN_CHECK_URL || "https://c.liepin.com/";
 const args = new Set(process.argv.slice(2));
 
@@ -23,7 +24,7 @@ function classify(value) {
 async function main() {
   const base = cdpBaseUrl();
   // 标签隔离：只复用采集自己创建的标签，不复用用户手动打开的标签。
-  let tab = await findOrCreateCollectTab("liepin", targetUrl, { force: args.has("--new"), isUsable: (t) => Boolean(t.webSocketDebuggerUrl) });
+  let tab = await findOrCreateCollectTab(LOGIN_TAB_PURPOSE, targetUrl, { force: args.has("--new"), isUsable: (t) => Boolean(t.webSocketDebuggerUrl) });
 
   const deadline = Date.now() + 25000;
   let value = null;
@@ -41,26 +42,39 @@ async function main() {
     try {
       value = await evaluate(ws, `(() => {
       const text = document.body ? document.body.innerText : "";
+      const hasUserArea = /我的投递|我的收藏|简历完整度|谁看过我|编辑简历|退出登录|账号设置/.test(text)
+        || Boolean(document.querySelector('a[href*="resume"], a[href*="my"], [class*="avatar"], [class*="user-info"], [class*="userInfo"]'));
+      const hasLoginText = /登录\\/注册|扫码登录|密码登录|验证码登录|请登录/.test(text) && !hasUserArea;
+      const hasSecurityText = /安全验证|滑块|环境异常|访问异常|verify|captcha/i.test(text + location.href);
+      // 猎聘常见弹窗广告/引导层会遮住正文，先尝试关闭；只点关闭按钮，不误点“登录”。
+      document.querySelectorAll('[class*="close"],[class*="Close"],.ant-modal-close,.close-btn,[aria-label*="关闭"],[aria-label*="close"]').forEach((el) => {
+        try { el.click(); } catch { /* ignore */ }
+      });
+      try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape' })); } catch { /* ignore */ }
       return {
         title: document.title,
         href: location.href,
         textLength: text.length,
-        hasUserArea: /我的投递|我的收藏|简历完整度|谁看过我|编辑简历/.test(text),
-        hasLoginText: /登录\\/注册|扫码登录|密码登录|验证码登录|请登录/.test(text),
-        hasSecurityText: /安全验证|滑块|环境异常|访问异常|verify|captcha/i.test(text + location.href),
-        sample: text.slice(0, 500)
+        hasUserArea,
+        hasLoginText,
+        hasSecurityText,
+        sample: text.slice(0, 1000)
       };
     })()`);
     } finally {
       ws.close();
     }
-    if (value && value.href && value.href !== "about:blank") break;
+    if (value && value.hasSecurityText) break;
+    if (value && value.hasUserArea && value.href && value.href !== "about:blank") break;
   }
   if (!value) {
     value = { title: tab.title || "", href: tab.url || "", textLength: 0, hasUserArea: false, hasLoginText: false, hasSecurityText: false, sample: "" };
   }
   const loginStatus = classify(value);
   console.log(JSON.stringify({ loginStatus, tabId: tab.id, ...value }, null, 2));
+  if (loginStatus === "logged_in") {
+    await closeCollectTabs([LOGIN_TAB_PURPOSE]).catch(() => {});
+  }
   if (loginStatus !== "logged_in") process.exitCode = 2;
 }
 

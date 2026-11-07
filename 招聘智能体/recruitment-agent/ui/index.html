@@ -39,6 +39,7 @@
         <button id="btnTick" data-tooltip="按当前时间、空闲和 1 小时间隔判断；满足条件才创建采集/入库/评分/日报任务，不保证立即采集。">立即执行一次调度</button>
         <button id="btnPlan" class="ghost" data-tooltip="跳过定时与间隔判断，直接为运行中角色创建一次采集任务；任务进入队列执行，不是同步抓完。">手动生成采集任务</button>
         <button id="btnLoginStatus" class="ghost" title="读取最近一次登录检查记录">刷新登录状态</button>
+        <button id="btnMinimizeChrome" class="ghost" title="把检测/采集用 Chrome 最小化，随时可手动恢复">最小化浏览器</button>
       </div>
       <p class="hint">“立即执行一次调度”= 按当前时间/空闲/间隔判断，满足条件才创建任务（不保证一定采集）；“手动生成采集任务”= 跳过定时判断，直接创建一次采集任务（人工强制）。</p>
       <pre id="dashboardLog" class="log"></pre>
@@ -50,8 +51,10 @@
         <div class="toolbar">
           <select id="chatRoleSelect"></select>
           <button id="btnNewChat" class="ghost">新对话</button>
+          <button id="btnOpenSkills" class="ghost" title="打开本地 Skill 文件夹">Skill 目录</button>
         </div>
       </div>
+      <p id="skillsPath" class="hint"></p>
       <div class="chat-layout">
         <div class="panel chat-sessions">
           <h2>会话</h2>
@@ -59,10 +62,11 @@
         </div>
         <div class="panel chat-main">
           <div id="chatMessages" class="chat-messages">
-            <div class="empty">上传简历或直接提问。例如：“帮我生成角色画像：实施顾问，上海，18-25K，5 年经验”。</div>
+            <div class="empty">上传简历或直接提问。例如：“帮我生成角色画像：实施顾问，上海，18-25K，5 年经验”。支持把 .md/.txt/.docx/.doc/.pdf 拖进本页面。</div>
           </div>
           <div class="chat-compose">
-            <label class="file-line">简历 MD<input id="chatResumeFile" type="file" accept=".md,.markdown,.txt"></label>
+            <label class="file-line">简历文件（支持 MD/TXT/DOCX/DOC/PDF）<input id="chatResumeFile" type="file" accept=".md,.markdown,.txt,.docx,.doc,.pdf"></label>
+            <div id="chatResumeStatus" class="hint">也可以直接把文件拖进本页面；文档优先，图片简历暂不做 OCR。</div>
             <textarea id="chatInput" rows="3" placeholder="继续补充目标岗位、城市、薪资、经历，或问“这个角色最近有哪些岗位”"></textarea>
             <div class="toolbar">
               <button id="btnChatSend">发送</button>
@@ -82,11 +86,16 @@
         <div class="panel">
           <h2>新建角色</h2>
           <label>昵称<input id="roleNickname" placeholder="例如：实施顾问-A"></label>
-          <label>导入简历 MD<input id="resumeFile" type="file" accept=".md,.markdown,.txt"></label>
+          <label>导入简历（MD/TXT/DOCX/DOC/PDF）<input id="resumeFile" type="file" accept=".md,.markdown,.txt,.docx,.doc,.pdf"></label>
           <div id="resumeStatus" class="hint">未选择简历；也可以直接粘贴到下方</div>
           <label>简历/画像<textarea id="roleProfile" rows="6" placeholder="粘贴简历或画像；导入 MD 后会自动填入"></textarea></label>
-          <label>目标岗位<input id="roleTargets" placeholder="实施顾问, 交付专员"></label>
-          <label>关键词（逗号分隔）<input id="roleKeywords" placeholder="实施顾问, 交付专员"></label>
+          <label>目标岗位<input id="roleTargets" placeholder="AI项目经理, AI产品经理"></label>
+          <label>目标城市（可多个，用“、”分隔）<input id="roleCity" placeholder="江苏省、苏州市、上海市浦东新区"></label>
+          <div id="roleCityPreview" class="hint"></div>
+          <label>期望薪资（千元）<span class="salary-range"><input id="roleSalaryMin" type="number" min="1" step="1" placeholder="18"> 至 <input id="roleSalaryMax" type="number" min="1" step="1" placeholder="30"></span></label>
+          <button id="btnGenerateKeywords" type="button" class="keyword-generate-btn">AI 生成每日关键词</button>
+          <label>关键词（用“、”分隔）<input id="roleKeywords" placeholder="AI项目经理、AI产品经理、智能体交付"></label>
+          <p class="hint">每日关键词单独保存到角色，不写入画像 MD。</p>
           <button id="btnCreateRole">创建角色</button>
           <p class="hint">创建时不选渠道；确认角色时再勾选 BOSS/猎聘。</p>
         </div>
@@ -104,12 +113,26 @@
       </div>
       <div id="taskSummary" class="cards"></div>
       <div class="panel">
-        <h2>任务列表</h2>
+        <h2>待处理任务</h2>
         <div id="taskList" class="list"></div>
       </div>
       <div class="panel">
-        <h2>采集事件</h2>
+        <h2>进行中的采集事件</h2>
         <div id="eventList" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2>历史任务与采集事件</h2>
+        <p class="hint">已完成/失败/取消的任务和历史采集事件在这里；窗口内部滚动查看。</p>
+        <div class="history-grid">
+          <div>
+            <h3>历史任务</h3>
+            <div id="historyTaskList" class="scroll-list"></div>
+          </div>
+          <div>
+            <h3>历史采集事件</h3>
+            <div id="historyEventList" class="scroll-list"></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -187,7 +210,10 @@
       <div class="panel">
         <div class="section-head">
           <h2>本地运行日志</h2>
-          <button id="btnShowLogs" class="ghost">查看最近日志</button>
+          <div class="toolbar">
+            <button id="btnShowLogs" class="ghost">查看最近日志</button>
+            <button id="btnOpenLogs" class="ghost">打开日志文件夹</button>
+          </div>
         </div>
         <p id="localLogStats" class="hint">记录操作、告警和异常；日志总量有上限，超过后自动轮转。</p>
         <pre id="localLogs" class="log"></pre>
@@ -218,71 +244,123 @@
 
     <section id="tab-messages" class="tab-panel">
       <h1>消息与通知</h1>
-      <div class="split">
-        <div class="panel">
-          <h2>飞书机器人应用</h2>
-          <label>App ID<input id="mpAppId" placeholder="cli_xxx"></label>
-          <label>App Secret<input id="mpAppSecret" type="password" placeholder="只保存在本机 .env"></label>
-          <label>群 ID（Chat ID）<input id="mpChatId" placeholder="oc_xxx"></label>
-          <label>Verification Token<input id="mpVerifyToken" type="password"></label>
-          <label>Encrypt Key（可选）<input id="mpEncryptKey" type="password"></label>
-          <div class="toolbar">
-            <button id="btnSaveMp">保存配置</button>
-            <button id="btnStartMp" class="ghost">启动消息平台</button>
-            <button id="btnStopMp" class="ghost">停止</button>
-          </div>
-          <p id="mpStatus" class="hint">未配置。</p>
-          <pre id="mpLog" class="log" style="max-height:120px"></pre>
-          <h2>简单 Webhook（可选）</h2>
-          <label>群机器人 Webhook<input id="msgWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
-          <div class="toolbar">
-            <button id="btnSaveWebhook">保存 Webhook</button>
-            <button id="btnTestWebhook" class="ghost">发送测试</button>
-          </div>
-          <p id="msgStatus" class="hint">未配置 webhook。</p>
+      <div class="panel" id="feishuAppPanel">
+        <h2>飞书机器人应用</h2>
+        <p class="hint">这里只放飞书应用凭证（App ID/Secret）和长连接服务，用于让机器人能收发消息；群的新增/删除和角色路由在上方模块，不在这里。保存配置后点“启动消息平台”才会开始接收群消息。</p>
+        <p class="hint">App ID / App Secret：机器人应用身份；启动消息平台：开启长连接接收群消息；停止：断开长连接；Webhook：不启用长连接时的备用发消息方式。</p>
+        <label>App ID<input id="mpAppId" placeholder="cli_xxx"></label>
+        <label>App Secret<input id="mpAppSecret" type="password" placeholder="只保存在本机 .env"></label>
+        <label>群 ID（Chat ID）<input id="mpChatId" placeholder="oc_xxx"></label>
+        <label>Verification Token<input id="mpVerifyToken" type="password"></label>
+        <label>Encrypt Key（可选）<input id="mpEncryptKey" type="password"></label>
+        <div class="toolbar">
+          <button id="btnSaveMp">保存配置</button>
+          <button id="btnStartMp" class="ghost">启动消息平台</button>
+          <button id="btnStopMp" class="ghost">停止</button>
         </div>
-        <div class="panel">
-          <h2>最近通知</h2>
-          <div id="messageLog" class="list"></div>
+        <p id="mpStatus" class="hint">未配置。</p>
+        <pre id="mpLog" class="log" style="max-height:120px"></pre>
+        <h2>简单 Webhook（可选）</h2>
+        <label>群机器人 Webhook<input id="msgWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
+        <div class="toolbar">
+          <button id="btnSaveWebhook">保存 Webhook</button>
+          <button id="btnTestWebhook" class="ghost">发送测试</button>
         </div>
+        <p id="msgStatus" class="hint">未配置 webhook。</p>
       </div>
-      <div class="panel">
+      <div class="panel" id="groupPanel">
         <div class="section-head">
           <div>
-            <h2>飞书群与角色路由（最多 10 个群）</h2>
-            <p class="hint">这里只显示已保存的配置。新增/修改请点“调整配置”。没有默认群时只记录本地通知。</p>
+            <h2>飞书群管理</h2>
+            <p class="hint">只在这里添加、测试、重命名或删除群；群不直接分配给角色。最多 10 个群。</p>
           </div>
           <div class="toolbar">
-            <button id="btnGroupConfig">调整配置</button>
+            <button id="btnAddGroup">添加群</button>
             <button id="btnGroupHelp" class="ghost" title="飞书机器人和群怎么配置">?</button>
           </div>
         </div>
-        <div id="groupList" class="list"></div>
+        <div id="groupCards" class="group-cards"></div>
+      </div>
+
+      <div class="panel" id="defaultGroupPanel">
+        <div class="section-head">
+          <div>
+            <h2>默认通知群</h2>
+            <p class="hint">新建角色默认加入这个群；选择后点保存才会生效。</p>
+          </div>
+          <div class="toolbar"><button id="btnSaveDefaultGroup">保存默认群</button></div>
+        </div>
+        <select id="routingDefaultGroup"></select>
+      </div>
+
+      <div class="panel" id="routePanel">
+        <div class="section-head">
+          <div>
+            <h2>角色通知群</h2>
+            <p class="hint">每个角色一行；每个环节的单元格是一个群下拉菜单。修改后点右上角保存才会生效。</p>
+          </div>
+          <div class="toolbar"><button id="btnSaveRouteStages">保存角色路由</button></div>
+        </div>
+        <div class="route-table-wrap">
+          <table class="route-table">
+            <thead><tr><th>角色</th><th>登录状态</th><th>操作异常</th><th>每日日报</th><th>操作</th></tr></thead>
+            <tbody id="routeStageBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" id="notificationHistoryPanel">
+        <div class="section-head">
+          <div>
+            <h2>历史通知</h2>
+            <p class="hint">按关键词、日期筛选；每页条数可调；列表内部滚动，查看详情点一行。</p>
+          </div>
+        </div>
+        <div class="toolbar notification-filters">
+          <input id="notificationSearch" placeholder="搜索标题/内容/类型">
+          <input id="notificationFrom" type="date" title="开始日期">
+          <span>至</span>
+          <input id="notificationTo" type="date" title="结束日期">
+          <select id="notificationPageSize">
+            <option value="10">每页 10 条</option>
+            <option value="20">每页 20 条</option>
+            <option value="50">每页 50 条</option>
+          </select>
+          <button id="btnSearchNotifications">搜索</button>
+        </div>
+        <div id="notificationHistoryList" class="scroll-list history-list"></div>
+        <div class="toolbar pager">
+          <button id="btnNotificationPrev" class="ghost">上一页</button>
+          <span id="notificationPageInfo">第 1 / 1 页</span>
+          <button id="btnNotificationNext" class="ghost">下一页</button>
+        </div>
       </div>
     </section>
 
     <dialog id="groupDialog">
-      <div class="panel dialog-panel" style="max-width:760px">
-        <h2>调整飞书群配置</h2>
-        <p class="hint">保存前请确认：群 ID、角色、通知节点。保存后点“关闭”返回列表；默认群用于新角色。</p>
+      <div class="panel dialog-panel" style="max-width:680px">
+        <h2 id="groupDialogTitle">添加飞书群</h2>
+        <p class="hint">这里只维护群本身；角色用哪个群在“默认通知群与角色路由”里配置。保存后请在卡片上点“测试”。</p>
         <label>群名称<input id="groupName" placeholder="例如：求职日报群"></label>
         <label>群 Chat ID<input id="groupChatId" placeholder="oc_xxx"></label>
         <label>群 Webhook（可选）<input id="groupWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
-        <label>群回复角色（@机器人 时使用）
-          <select id="groupReplyRole"></select>
-        </label>
-        <div class="checks" id="groupRoleChecks"></div>
-        <div class="checks">
-          <label><input id="groupNotifyLogin" type="checkbox" checked> 登录状态</label>
-          <label><input id="groupNotifyError" type="checkbox" checked> 操作异常</label>
-          <label><input id="groupNotifyDaily" type="checkbox" checked> 每日日报</label>
-        </div>
         <div class="toolbar">
-          <button id="btnFillGroup">一键填充运行中角色</button>
-          <button id="btnSaveGroup">保存并确认</button>
+          <button id="btnSaveGroup">保存群</button>
           <button id="btnSyncGroups" class="ghost">同步群到消息平台</button>
           <button id="btnResetGroup" class="ghost">清空</button>
           <button id="btnCloseGroupDialog" class="ghost">关闭</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="deleteGroupDialog">
+      <div class="panel dialog-panel" style="max-width:560px">
+        <h2>确认删除群</h2>
+        <div id="deleteGroupInfo" class="hint"></div>
+        <p class="hint">删除后该群的角色路由会一并移除；此操作需要二次确认。</p>
+        <div class="toolbar">
+          <button id="btnConfirmDeleteGroup" class="danger">确认删除</button>
+          <button id="btnCancelDeleteGroup" class="ghost">取消</button>
         </div>
       </div>
     </dialog>
@@ -296,6 +374,23 @@
       <div id="reportList" class="list"></div>
     </section>
   </main>
+
+  <dialog id="editRoleDialog">
+    <div class="panel dialog-panel" style="max-width:760px">
+      <h2>修改角色</h2>
+      <p class="hint">确认前可以修改昵称、画像、目标条件、关键词；保存后回到待确认。</p>
+      <label>昵称<input id="editRoleNickname"></label>
+      <label>简历/画像<textarea id="editRoleProfile" rows="6"></textarea></label>
+      <label>目标岗位<input id="editRoleTargets"></label>
+      <label>目标城市（可多个，用“、”分隔）<input id="editRoleCity"></label>
+      <label>期望薪资（千元）<span class="salary-range"><input id="editSalaryMin" type="number" min="1" step="1"> 至 <input id="editSalaryMax" type="number" min="1" step="1"></span></label>
+      <label>关键词（用“、”分隔）<input id="editRoleKeywords"></label>
+      <div class="toolbar">
+        <button id="btnSaveRoleEdit">保存修改</button>
+        <button id="btnCancelRoleEdit" class="ghost">取消</button>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="confirmDialog">
     <form method="dialog" class="panel dialog-panel">
@@ -317,12 +412,33 @@
       <h2>飞书机器人与群配置</h2>
       <ol class="help-list">
         <li>打开飞书开发者后台，创建/进入自建应用。</li>
-        <li>在“凭证与基础信息”复制 App ID、App Secret，填入消息页并保存。</li>
+        <li>在“凭证与基础信息”复制 App ID、App Secret，填入消息页“飞书机器人应用”并保存。</li>
         <li>开启机器人能力，把机器人拉进目标群。</li>
         <li>群 Chat ID 以 <code>oc_</code> 开头；可在群设置/开放平台接口中查看，群里发消息后事件里也会带。</li>
         <li>在“事件与回调”选择长连接，订阅 <code>im.message.receive_v1</code>。</li>
-        <li>在“调整配置”里填群名称、Chat ID、角色和通知节点，保存后点“同步群到消息平台”。</li>
-        <li>点“启动消息平台”，然后在群里 @机器人 测试；没有默认群时只记录本地通知。</li>
+        <li>回到客户端“飞书群管理”，点“添加群”，填群名称、Chat ID、Webhook（可选），保存。</li>
+        <li>在群卡片上点“测试”，确认群通道正常；异常群会排在最前面。</li>
+        <li>点“同步群到消息平台”，让独立消息平台读取群配置；必要时重启消息平台。</li>
+        <li>回到客户端点“启动消息平台”，在群里 @机器人 测试。</li>
+        <li>在“默认通知群”和“角色通知群”里选择群并保存；前者是新角色默认，后者按角色/环节发送。</li>
+      </ol>
+      <hr>
+      <h3>群同步与应用配置的区别</h3>
+      <p class="hint">“飞书群管理”负责群本身（增删改查、测试）；“同步群到消息平台”只是把已保存的群写给独立消息平台进程，不新增群；“飞书机器人应用”只负责 App ID/Secret、长连接、Webhook，不负责角色分配。</p>
+      <h3>飞书后台操作顺序</h3>
+      <ol class="help-list">
+        <li>创建自建应用 → 复制 App ID / App Secret。</li>
+        <li>开启机器人能力 → 拉入群 → 获取群 Chat ID。</li>
+        <li>事件与回调 → 长连接 → 订阅 <code>im.message.receive_v1</code>。</li>
+        <li>回到客户端保存应用配置 → 启动消息平台。</li>
+      </ol>
+      <h3>客户端操作顺序</h3>
+      <ol class="help-list">
+        <li>飞书群管理 → 添加群 → 测试。</li>
+        <li>同步群到消息平台（如使用独立平台进程）。</li>
+        <li>默认通知群 → 选群 → 保存。</li>
+        <li>角色通知群 → 每角色选择登录/异常/日报群 → 保存角色路由。</li>
+        <li>在群里 @机器人 验证。</li>
       </ol>
       <div class="toolbar"><button id="btnCloseHelp">知道了</button></div>
     </div>
@@ -336,8 +452,28 @@
     </div>
   </dialog>
 
+  <dialog id="aiTestDialog">
+    <div class="panel dialog-panel" style="max-width:520px">
+      <h2 id="aiTestTitle">AI 测试</h2>
+      <p id="aiTestBody" class="hint"></p>
+      <div class="toolbar"><button id="btnCloseAiTest" class="ghost">关闭</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="keywordDialog">
+    <div class="panel dialog-panel" style="max-width:720px">
+      <h2>角色关键词</h2>
+      <p class="hint">推荐词用于下一轮；兜底词在推荐词效果差时使用。画像 MD 不包含关键词。</p>
+      <div id="keywordList" class="list"></div>
+      <div class="toolbar">
+        <button id="btnGenerateRoleKeywords">生成下一轮</button>
+        <button id="btnCloseKeywords" class="ghost">关闭</button>
+      </div>
+    </div>
+  </dialog>
+
   <div id="customTooltip" class="custom-tooltip" role="tooltip" hidden></div>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=1.5.2"></script>
 </body>
 </html>

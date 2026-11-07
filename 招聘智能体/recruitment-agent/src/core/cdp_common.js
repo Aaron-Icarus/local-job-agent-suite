@@ -34,7 +34,16 @@ async function getJson(url, options = {}) {
 
 function cdpBaseUrl() {
   const host = process.env.CDP_HOST || "127.0.0.1";
-  const port = process.env.CDP_PORT || "9222";
+  let port = process.env.CDP_PORT;
+  if (!port) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "..", "data", "cdp.json"), "utf8"));
+      port = saved.port;
+    } catch {
+      // fall through
+    }
+  }
+  port = port || "9222";
   return process.env.CDP_BASE_URL || `http://${host}:${port}`;
 }
 

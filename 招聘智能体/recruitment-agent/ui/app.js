@@ -23,6 +23,13 @@ const state = {
   editingGroupId: "",
   recheckPolling: false,
   recheckTimer: null,
+  keywordRoleUuid: "",
+  editRoleUuid: "",
+  deleteGroupId: "",
+  notificationPage: 1,
+  notificationPages: 1,
+  notificationPageSize: 10,
+  historyNotifications: [],
 };
 
 async function api(path, options = {}) {
@@ -48,7 +55,10 @@ function esc(value) {
 
 function fmt(value) {
   if (!value) return "-";
-  return String(value).replace("T", " ").slice(0, 19);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).replace("T", " ").slice(0, 19);
+  const pad = (number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function tag(text, cls = "") {
@@ -58,6 +68,14 @@ function tag(text, cls = "") {
 function showLog(id, value) {
   const el = document.getElementById(id);
   if (el) el.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function appendLog(id, message) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  el.textContent = `${el.textContent ? `${el.textContent}\n` : ""}[${time}] ${message}`;
+  el.scrollTop = el.scrollHeight;
 }
 
 function toast(message, bad = false) {
@@ -134,7 +152,9 @@ async function refreshRoles() {
           <div class="meta">${esc(role.target_roles || "未设置目标岗位")} · 渠道：${esc(channels)} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}</div>
         </div>
         <div class="actions">
+          <button class="small keyword-link" data-keywords="${role.role_uuid}">关键词</button>
           ${role.status === "pending_confirm" ? `<button class="small" data-action="confirm" data-id="${role.role_uuid}">确认渠道</button>` : ""}
+          ${role.status === "pending_confirm" ? `<button class="small ghost" data-edit-role="${role.role_uuid}">修改</button>` : ""}
           ${["pending_start", "paused"].includes(role.status) ? `<button class="small" data-action="start" data-id="${role.role_uuid}">启动</button>` : ""}
           ${role.status === "running" ? `<button class="small ghost" data-action="pause" data-id="${role.role_uuid}">暂停</button>` : ""}
           <button class="small ghost" data-action="copy" data-id="${role.role_uuid}">复制</button>
@@ -158,6 +178,8 @@ async function refreshTasks() {
   const data = await api("/api/tasks/board");
   state.tasks = data.tasks || [];
   state.events = data.collectionEvents || [];
+  let idle = { available: false };
+  try { idle = await api("/api/system/idle"); } catch { /* 忽略空闲检测失败 */ }
   const summary = document.getElementById("taskSummary");
   const running = state.tasks.filter((task) => task.status === "running").length;
   const queued = state.tasks.filter((task) => ["queued", "retrying"].includes(task.status)).length;
@@ -166,9 +188,12 @@ async function refreshTasks() {
     <div class="card"><div class="num">${queued}</div><div class="label">排队/重试</div></div>
     <div class="card"><div class="num">${state.events.length}</div><div class="label">采集事件</div></div>
     <div class="card"><div class="num">${data.runningCollection ? "是" : "否"}</div><div class="label">采集运行中</div></div>
+    <div class="card"><div class="num">${idle.available ? (idle.active ? "使用中" : "空闲") : "未知"}</div><div class="label">电脑状态</div></div>
   `;
   const list = document.getElementById("taskList");
-  list.innerHTML = state.tasks.length ? state.tasks.map((task) => `
+  const pendingTasks = state.tasks.filter((task) => ["queued", "running", "paused", "retrying", "stalled"].includes(task.status));
+  const historyTasks = state.tasks.filter((task) => !["queued", "running", "paused", "retrying", "stalled"].includes(task.status));
+  list.innerHTML = pendingTasks.length ? pendingTasks.map((task) => `
     <div class="row">
       <div>
         <strong>#${task.id} ${esc(task.type)}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : task.status === "failed" ? "bad" : "warn")}
@@ -179,15 +204,21 @@ async function refreshTasks() {
         ${task.status === "paused" ? `<button class="small" data-task="resume" data-id="${task.id}">继续</button>` : ""}
         ${["queued", "running", "paused"].includes(task.status) ? `<button class="small danger" data-task="cancel" data-id="${task.id}">关闭</button>` : ""}
       </div>
-    </div>`).join("") : '<div class="empty">暂无任务</div>';
-  const events = document.getElementById("eventList");
-  events.innerHTML = state.events.length ? state.events.map((event) => `
+    </div>`).join("") : '<div class="empty">暂无待处理任务</div>';
+  const historyList = document.getElementById("historyTaskList");
+  historyList.innerHTML = historyTasks.length ? historyTasks.map((task) => `
     <div class="row">
       <div>
-        <strong>事件 #${event.id}</strong> ${tag(event.status, event.status === "success" ? "ok" : event.status === "failed" ? "bad" : "warn")}
-        <div class="meta">${esc(event.event_date)} · 子任务成功 ${event.success_subtasks} / 失败 ${event.failed_subtasks} · ${esc(event.force_reason || "常规")}</div>
+        <strong>#${task.id} ${esc(task.type)}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : "bad")}
+        <div class="meta">${esc(fmt(task.updated_at))}${task.last_error ? " · " + esc(task.last_error) : ""}</div>
       </div>
-    </div>`).join("") : '<div class="empty">暂无采集事件</div>';
+    </div>`).join("") : '<div class="empty">暂无历史任务</div>';
+  const events = document.getElementById("eventList");
+  const activeEvents = state.events.filter((event) => ["queued", "running"].includes(event.status));
+  const historyEvents = state.events.filter((event) => !["queued", "running"].includes(event.status));
+  const renderEvent = (event) => `<div class="row"><div><strong>事件 #${event.id}</strong> ${tag(event.status, event.status === "success" ? "ok" : event.status === "failed" ? "bad" : "warn")}<div class="meta">${esc(event.event_date)} · 子任务成功 ${event.success_subtasks} / 失败 ${event.failed_subtasks} · ${esc(event.force_reason || "常规")}</div></div></div>`;
+  events.innerHTML = activeEvents.length ? activeEvents.map(renderEvent).join("") : '<div class="empty">暂无进行中的采集事件</div>';
+  document.getElementById("historyEventList").innerHTML = historyEvents.length ? historyEvents.map(renderEvent).join("") : '<div class="empty">暂无历史采集事件</div>';
 }
 
 async function refreshJobs() {
@@ -305,6 +336,61 @@ async function refreshReports() {
     </div>`).join("") : '<div class="empty">还没有日报。</div>';
 }
 
+async function extractResumeFile(file) {
+  const name = String(file.name || "");
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  if ([".md", ".markdown", ".txt"].includes(ext)) return await file.text();
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",").pop());
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.readAsDataURL(file);
+  });
+  const result = await api("/api/resume/extract", {
+    method: "POST",
+    body: { fileName: name, contentBase64: base64 },
+  });
+  return result.text || "";
+}
+
+async function loadResumeFile(file, target = "chat") {
+  const content = await extractResumeFile(file);
+  if (!content.trim()) throw new Error("文件没有解析出文字");
+  if (target === "chat") {
+    state.chatResumeContent = content;
+    state.chatResumeFileName = file.name;
+    const status = document.getElementById("chatResumeStatus");
+    if (status) status.textContent = `已导入：${file.name}（${content.length} 字）`;
+  } else {
+    state.resumeContent = content;
+    state.resumeFileName = file.name;
+    document.getElementById("roleProfile").value = content;
+    document.getElementById("resumeStatus").textContent = `已导入：${file.name}（${content.length} 字）`;
+  }
+  return content;
+}
+
+function bindDropZone(element, fileInputId, target) {
+  if (!element) return;
+  element.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    element.classList.add("drag-over");
+  });
+  element.addEventListener("dragleave", () => element.classList.remove("drag-over"));
+  element.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    element.classList.remove("drag-over");
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    try {
+      await loadResumeFile(file, target);
+      toast(`已读取简历：${file.name}`);
+    } catch (error) {
+      alert(`读取简历失败：${error.message}`);
+    }
+  });
+}
+
 async function refreshMessages() {
   const data = await api("/api/messages");
   const input = document.getElementById("msgWebhook");
@@ -338,6 +424,31 @@ async function refreshMessages() {
     const chatInput = document.getElementById("mpChatId");
     if (chatInput && mp.chatId) chatInput.value = mp.chatId;
   }
+}
+
+async function refreshNotificationHistory() {
+  const q = document.getElementById("notificationSearch")?.value.trim() || "";
+  const from = document.getElementById("notificationFrom")?.value || "";
+  const to = document.getElementById("notificationTo")?.value || "";
+  const pageSize = Number(document.getElementById("notificationPageSize")?.value || state.notificationPageSize || 10);
+  const data = await api(`/api/notifications?q=${encodeURIComponent(q)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&page=${state.notificationPage}&page_size=${pageSize}`);
+  state.historyNotifications = data.notifications || [];
+  state.notificationPage = data.page || 1;
+  state.notificationPages = data.pages || 1;
+  state.notificationPageSize = data.pageSize || pageSize;
+  const list = document.getElementById("notificationHistoryList");
+  if (list) {
+    list.innerHTML = state.historyNotifications.length ? state.historyNotifications.map((item) => `
+      <div class="row" data-notification="${item.id}" style="cursor:pointer">
+        <div>
+          <strong>${esc(item.title || item.type)}</strong> ${tag(item.status, item.status === "sent" ? "ok" : item.status === "failed" ? "bad" : "warn")}
+          <div class="meta">${esc(item.type)} · ${esc(fmt(item.created_at))} ${item.body ? "· " + esc(item.body).slice(0, 180) : ""}</div>
+        </div>
+      </div>`).join("") : '<div class="empty">没有匹配的历史通知。</div>';
+  }
+  document.getElementById("notificationPageInfo").textContent = `第 ${state.notificationPage} / ${state.notificationPages} 页 · 共 ${data.total || 0} 条`;
+  document.getElementById("btnNotificationPrev").disabled = state.notificationPage <= 1;
+  document.getElementById("btnNotificationNext").disabled = state.notificationPage >= state.notificationPages;
 }
 
 async function refreshChatSessions() {
@@ -422,39 +533,88 @@ async function sendChat() {
 async function refreshGroups() {
   const data = await api("/api/feishu-groups");
   state.feishuGroups = data.groups || [];
-  const checks = document.getElementById("groupRoleChecks");
-  if (checks) {
-    checks.innerHTML = state.roles.map((role) => `<label><input type="checkbox" data-group-role="${role.role_uuid}"> ${esc(role.role_number)} ${esc(role.nickname)} ${role.status === "running" ? "（运行中）" : ""}</label>`).join("");
+  const list = document.getElementById("groupCards");
+  if (!list) return;
+  const statusLabel = { normal: "正常", error: "异常", disabled: "停用", untested: "未测试" };
+  list.innerHTML = state.feishuGroups.length ? state.feishuGroups.map((group) => {
+    const status = group.status || (group.enabled ? "untested" : "disabled");
+    return `<div class="group-card status-${status}">
+      <div class="group-card-head">
+        <strong>${esc(group.name)}</strong>
+        <span class="tag ${status === "normal" ? "ok" : status === "error" ? "bad" : "warn"}">${statusLabel[status] || status}</span>
+        ${group.is_default ? '<span class="tag ok">默认</span>' : ""}
+      </div>
+      <div class="meta">Chat ID：${esc(group.chat_id)}</div>
+      <div class="meta">${group.last_test_at ? `最近测试：${esc(fmt(group.last_test_at))}` : "尚未测试"}</div>
+      <div class="group-card-actions">
+        <button class="small ghost" data-test-group="${group.id}">测试</button>
+        <button class="small ghost" data-edit-group="${group.id}">重命名</button>
+        <button class="small danger" data-delete-group="${group.id}">删除</button>
+      </div>
+    </div>`;
+  }).join("") : '<div class="empty">还没有飞书群。点击“添加群”开始注册。</div>';
+}
+
+async function refreshRouting() {
+  const data = await api("/api/feishu-routing");
+  const groups = data.groups || [];
+  const groupOptions = (selected) => `<option value="">不发送</option>` + groups.map((group) => `<option value="${group.id}"${selected === group.id ? " selected" : ""}>${esc(group.name)}</option>`).join("");
+  const defaultSelect = document.getElementById("routingDefaultGroup");
+  if (defaultSelect) defaultSelect.innerHTML = groupOptions(data.defaultGroupId);
+  const body = document.getElementById("routeStageBody");
+  if (!body) return;
+  const stages = [["login", "登录状态"], ["error", "操作异常"], ["daily", "每日日报"]];
+  const rows = (data.roles || []).map((role) => {
+    const cells = stages.map(([stageKey]) => {
+      const stage = role.stages?.[stageKey] || {};
+      return `<td><select data-route-role="${role.role_uuid}" data-route-stage="${stageKey}">${groupOptions(stage.groupId || "")}</select></td>`;
+    }).join("");
+    return `<tr><td>${esc(role.role_number)} ${esc(role.nickname)}</td>${cells}<td><button class="small ghost" data-fill-role="${role.role_uuid}">一键配置</button></td></tr>`;
+  });
+  body.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="5" class="empty">还没有角色；创建角色后在这里配置。</td></tr>';
+}
+
+function openEditRole(roleUuid) {
+  const role = state.roles.find((item) => item.role_uuid === roleUuid);
+  if (!role) return;
+  state.editRoleUuid = roleUuid;
+  document.getElementById("editRoleNickname").value = role.nickname || "";
+  document.getElementById("editRoleProfile").value = role.profile_md || "";
+  document.getElementById("editRoleTargets").value = role.target_roles || "";
+  document.getElementById("editRoleCity").value = role.target_city || "";
+  document.getElementById("editSalaryMin").value = role.salary_min || "";
+  document.getElementById("editSalaryMax").value = role.salary_max || "";
+  document.getElementById("editRoleKeywords").value = (role.role_keywords || []).join("、");
+  document.getElementById("editRoleDialog").showModal();
+}
+
+async function openKeywordDialog(roleUuid) {  state.keywordRoleUuid = roleUuid;
+  const data = await api(`/api/roles/${roleUuid}/keywords`);
+  const entries = data.keywords || [];
+  const current = entries.filter((item) => item.is_current);
+  const renderGroup = (category, label) => {
+    const rows = current.filter((item) => item.category === category);
+    return `<h2>${label}</h2>${rows.length ? rows.map((item) => `<div class="row"><div><strong>${esc(item.keyword)}</strong><div class="meta">使用 ${item.use_count || 0} 次 · 新增 ${item.new_count || 0} · 重复 ${item.duplicate_count || 0} · 失败 ${item.failed_count || 0}${item.last_used_at ? " · 上次 " + esc(item.last_used_at) : ""}</div></div></div>`).join("") : '<div class="empty">暂无</div>'}`;
+  };
+  document.getElementById("keywordList").innerHTML = renderGroup("recommended", "下一轮推荐") + renderGroup("fallback", "默认兜底");
+  document.getElementById("keywordDialog").showModal();
+}
+
+async function generateRoleKeywords() {
+  if (!state.keywordRoleUuid) return;
+  const result = await api(`/api/roles/${state.keywordRoleUuid}/keywords/generate`, { method: "POST", body: {} });
+  await openKeywordDialog(state.keywordRoleUuid);
+  toast(result.aiUsed ? "AI 已生成下一轮关键词" : "已用本地规则生成关键词");
+}
+
+function resetGroupForm() {
+  state.editingGroupId = "";
+  for (const id of ["groupName", "groupChatId", "groupWebhook"]) {
+    const input = document.getElementById(id);
+    if (input) input.value = "";
   }
-  const replySelect = document.getElementById("groupReplyRole");
-  if (replySelect) {
-    const current = replySelect.value;
-    replySelect.innerHTML = state.roles.map((role) => `<option value="${role.role_uuid}">${esc(role.role_number)} ${esc(role.nickname)}</option>`).join("");
-    if (current) replySelect.value = current;
-  }
-  const list = document.getElementById("groupList");
-  if (list) {
-    list.innerHTML = state.feishuGroups.length ? state.feishuGroups.map((group) => {
-      const roles = group.roles.map((item) => state.roles.find((role) => role.role_uuid === item.role_uuid)?.nickname || item.role_uuid.slice(0, 6)).join("、");
-      const nodes = [
-        group.roles.some((item) => item.notify_login) ? "登录" : "",
-        group.roles.some((item) => item.notify_error) ? "异常" : "",
-        group.roles.some((item) => item.notify_daily) ? "日报" : "",
-      ].filter(Boolean).join("/");
-      return `<div class="row">
-        <div>
-          <strong>${esc(group.name)}</strong> ${group.is_default ? tag("默认", "ok") : ""} ${tag(group.enabled ? "启用" : "关闭", group.enabled ? "ok" : "")}
-          <div class="meta">Chat ID: ${esc(group.chat_id)} · 角色：${esc(roles || "未选")} · 节点：${esc(nodes || "无")}${group.webhook ? " · webhook" : ""}</div>
-        </div>
-        <div class="actions">
-          ${group.is_default ? "" : `<button class="small ghost" data-default-group="${group.id}">设为默认</button>`}
-          <button class="small ghost" data-test-group="${group.id}">测试</button>
-          <button class="small ghost" data-edit-group="${group.id}">修改</button>
-          <button class="small danger" data-delete-group="${group.id}">删除</button>
-        </div>
-      </div>`;
-    }).join("") : '<div class="empty">还没有配置飞书群。</div>';
-  }
+  const title = document.getElementById("groupDialogTitle");
+  if (title) title.textContent = "添加飞书群";
 }
 
 async function refreshAll() {
@@ -467,7 +627,9 @@ async function refreshAll() {
     await refreshProviders();
     await refreshReports();
     await refreshMessages();
+    await refreshNotificationHistory().catch(() => {});
     await refreshGroups();
+    await refreshRouting();
     await refreshChatSessions();
     showLog("dashboardLog", "就绪：可执行一次调度，或先创建角色并启动任务。");
   } catch (error) {
@@ -489,6 +651,9 @@ function activateTab(tab) {
   const name = tab || "dashboard";
   document.querySelectorAll(".tabs button").forEach((item) => item.classList.toggle("active", item.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${name}`));
+  if (name === "messages") {
+    refreshRouting().catch(() => {});
+  }
 }
 
 function bind() {
@@ -504,14 +669,28 @@ function bind() {
   document.getElementById("chatResumeFile").addEventListener("change", async (event) => {
     const file = event.target.files && event.target.files[0];
     if (!file) return;
-    state.chatResumeContent = await file.text();
-    state.chatResumeFileName = file.name;
-    toast(`已选择简历：${file.name}`);
+    try {
+      await loadResumeFile(file, "chat");
+      toast(`已选择简历：${file.name}`);
+    } catch (error) {
+      alert(`读取简历失败：${error.message}`);
+    }
   });
+  bindDropZone(document.getElementById("tab-chat"), "chatResumeFile", "chat");
+  bindDropZone(document.getElementById("tab-roles"), "resumeFile", "role");
+  document.getElementById("btnOpenSkills").onclick = async () => {
+    try {
+      const result = await api("/api/skills/open", { method: "POST", body: {} });
+      toast(`Skill 目录：${result.path}`);
+    } catch (error) { alert(error.message); }
+  };
+  api("/api/skills").then((result) => {
+    const el = document.getElementById("skillsPath");
+    if (el) el.textContent = `Skill 位置：${result.path}`;
+  }).catch(() => {});
   document.getElementById("btnNewChat").onclick = () => {
     state.chatSessionId = "";
-    state.chatSuggestions = [];
-    renderChat(null);
+    state.chatSuggestions = [];    renderChat(null);
   };
   document.getElementById("btnChatSend").onclick = async () => {
     try { await sendChat(); } catch (error) { alert(error.message); }
@@ -541,6 +720,8 @@ function bind() {
           target_roles: suggested.target_roles,
           target_city: suggested.target_city,
           target_salary: suggested.target_salary,
+          role_keywords: suggested.role_keywords || [],
+          fallback_keywords: suggested.fallback_keywords || [],
         },
       });
       await refreshRoles();
@@ -548,21 +729,7 @@ function bind() {
     } catch (error) { alert(error.message); }
   });
 
-  document.getElementById("btnFillGroup").onclick = () => {
-    document.querySelectorAll('[data-group-role]').forEach((input) => {
-      const role = state.roles.find((item) => item.role_uuid === input.dataset.groupRole);
-      input.checked = Boolean(role && role.status === "running");
-    });
-    for (const id of ["groupNotifyLogin", "groupNotifyError", "groupNotifyDaily"]) {
-      document.getElementById(id).checked = true;
-    }
-  };
-  document.getElementById("btnResetGroup").onclick = () => {
-    state.editingGroupId = "";
-    for (const id of ["groupName", "groupChatId", "groupWebhook"]) document.getElementById(id).value = "";
-    document.querySelectorAll('[data-group-role]').forEach((input) => { input.checked = false; });
-    for (const id of ["groupNotifyLogin", "groupNotifyError", "groupNotifyDaily"]) document.getElementById(id).checked = true;
-  };
+  document.getElementById("btnResetGroup").onclick = resetGroupForm;
   document.getElementById("btnSyncGroups").onclick = async () => {
     try {
       const result = await api("/api/message-platform/sync-groups", { method: "POST", body: {} });
@@ -570,32 +737,78 @@ function bind() {
       toast(`已同步 ${result.groups} 个群到消息平台，重启服务生效`);
     } catch (error) { alert(error.message); }
   };
-  document.getElementById("btnGroupConfig").onclick = () => {
-    state.editingGroupId = "";
-    for (const id of ["groupName", "groupChatId", "groupWebhook"]) document.getElementById(id).value = "";
-    document.querySelectorAll('[data-group-role]').forEach((input) => { input.checked = false; });
+  document.getElementById("btnAddGroup").onclick = () => {
+    resetGroupForm();
+    document.getElementById("groupDialogTitle").textContent = "添加飞书群";
     document.getElementById("groupDialog").showModal();
   };
   document.getElementById("btnCloseGroupDialog").onclick = () => document.getElementById("groupDialog").close();
   document.getElementById("btnGroupHelp").onclick = () => document.getElementById("helpDialog").showModal();
   document.getElementById("btnCloseHelp").onclick = () => document.getElementById("helpDialog").close();
   document.getElementById("btnCloseNotification").onclick = () => document.getElementById("notificationDialog").close();
-  document.getElementById("messageLog").addEventListener("click", (event) => {
-    const row = event.target.closest("[data-notification]");
-    if (!row) return;
-    const item = (state.notifications || []).find((entry) => String(entry.id) === String(row.dataset.notification));
+  document.getElementById("btnCloseKeywords").onclick = () => document.getElementById("keywordDialog").close();
+  document.getElementById("keywordDialog").addEventListener("click", (event) => {
+    if (event.target === document.getElementById("keywordDialog")) document.getElementById("keywordDialog").close();
+  });
+  document.getElementById("btnCancelRoleEdit").onclick = () => document.getElementById("editRoleDialog").close();
+  document.getElementById("btnSaveRoleEdit").onclick = async () => {
+    if (!state.editRoleUuid) return;
+    try {
+      await api(`/api/roles/${state.editRoleUuid}`, {
+        method: "PATCH",
+        body: {
+          nickname: document.getElementById("editRoleNickname").value.trim(),
+          profile_md: document.getElementById("editRoleProfile").value,
+          target_roles: document.getElementById("editRoleTargets").value.trim(),
+          target_city: document.getElementById("editRoleCity").value.trim(),
+          target_cities: document.getElementById("editRoleCity").value.trim(),
+          salary_min: Number(document.getElementById("editSalaryMin").value || 0) || null,
+          salary_max: Number(document.getElementById("editSalaryMax").value || 0) || null,
+          role_keywords: document.getElementById("editRoleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+        },
+      });
+      document.getElementById("editRoleDialog").close();
+      await refreshRoles();
+      await refreshRouting();
+      toast("角色已修改");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnGenerateRoleKeywords").onclick = async () => {
+    try { await generateRoleKeywords(); } catch (error) { alert(error.message); }
+  };
+  const openNotification = (item) => {
     if (!item) return;
     document.getElementById("notificationTitle").textContent = item.title || item.type;
     document.getElementById("notificationBody").textContent = `${item.body || ""}\n\n时间：${item.created_at || ""}\n状态：${item.status || ""}`;
     document.getElementById("notificationDialog").showModal();
+  };
+  document.getElementById("notificationHistoryList").addEventListener("click", (event) => {
+    const row = event.target.closest("[data-notification]");
+    if (!row) return;
+    openNotification((state.historyNotifications || []).find((entry) => String(entry.id) === String(row.dataset.notification)));
   });
+  document.getElementById("btnSearchNotifications").onclick = async () => {
+    state.notificationPage = 1;
+    try { await refreshNotificationHistory(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("notificationSearch").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") document.getElementById("btnSearchNotifications").click();
+  });
+  document.getElementById("notificationPageSize").onchange = async () => {
+    state.notificationPage = 1;
+    try { await refreshNotificationHistory(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnNotificationPrev").onclick = async () => {
+    if (state.notificationPage <= 1) return;
+    state.notificationPage -= 1;
+    try { await refreshNotificationHistory(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnNotificationNext").onclick = async () => {
+    if (state.notificationPage >= state.notificationPages) return;
+    state.notificationPage += 1;
+    try { await refreshNotificationHistory(); } catch (error) { alert(error.message); }
+  };
   document.getElementById("btnSaveGroup").onclick = async () => {
-    const roles = [...document.querySelectorAll('[data-group-role]:checked')].map((input) => ({
-      role_uuid: input.dataset.groupRole,
-      notify_login: document.getElementById("groupNotifyLogin").checked,
-      notify_error: document.getElementById("groupNotifyError").checked,
-      notify_daily: document.getElementById("groupNotifyDaily").checked,
-    }));
     try {
       await api("/api/feishu-groups", {
         method: "POST",
@@ -604,67 +817,97 @@ function bind() {
           name: document.getElementById("groupName").value.trim(),
           chatId: document.getElementById("groupChatId").value.trim(),
           webhook: document.getElementById("groupWebhook").value.trim(),
-          replyRoleUuid: document.getElementById("groupReplyRole").value,
-          roles,
         },
       });
       state.editingGroupId = "";
       await refreshGroups();
+      await refreshRouting();
+      resetGroupForm();
       document.getElementById("groupDialog").close();
-      toast("飞书群配置已保存");
+      toast("飞书群已保存，请在卡片上点“测试”确认连通");
     } catch (error) { alert(error.message); }
   };
-  document.getElementById("groupList").addEventListener("click", async (event) => {
+  document.getElementById("groupCards").addEventListener("click", async (event) => {
+    const testGroup = event.target.closest("button[data-test-group]");
     const edit = event.target.closest("button[data-edit-group]");
     const del = event.target.closest("button[data-delete-group]");
-    const setDefault = event.target.closest("button[data-default-group]");
-    const testGroup = event.target.closest("button[data-test-group]");
     try {
       if (testGroup) {
-        const result = await api(`/api/feishu-groups/${testGroup.dataset.testGroup}/test`, { method: "POST", body: {} });
-        toast(`群测试已发送${result.result?.mode ? `（${result.result.mode}）` : ""}`);
-      }
-      if (setDefault) {
-        const group = state.feishuGroups.find((item) => item.id === setDefault.dataset.defaultGroup);
-        if (!group) return;
-        await api("/api/feishu-groups", {
-          method: "POST",
-          body: {
-            id: group.id,
-            name: group.name,
-            chatId: group.chat_id,
-            webhook: group.webhook || "",
-            isDefault: true,
-            replyRoleUuid: group.reply_role_uuid || "",
-            roles: group.roles,
-          },
-        });
+        try {
+          const result = await api(`/api/feishu-groups/${testGroup.dataset.testGroup}/test`, { method: "POST", body: {} });
+          toast(`群测试已发送${result.result?.mode ? `（${result.result.mode}）` : ""}`);
+        } catch (error) {
+          toast(`群测试失败：${error.message}`, true);
+        }
         await refreshGroups();
-        toast(`已将「${group.name}」设为默认通知群`);
+        return;
       }
       if (edit) {
         const group = state.feishuGroups.find((item) => item.id === edit.dataset.editGroup);
         if (!group) return;
         state.editingGroupId = group.id;
+        document.getElementById("groupDialogTitle").textContent = "重命名 / 修改群";
         document.getElementById("groupName").value = group.name;
         document.getElementById("groupChatId").value = group.chat_id;
         document.getElementById("groupWebhook").value = group.webhook || "";
-        if (group.reply_role_uuid) document.getElementById("groupReplyRole").value = group.reply_role_uuid;
-        document.querySelectorAll('[data-group-role]').forEach((input) => {
-          const match = group.roles.find((item) => item.role_uuid === input.dataset.groupRole);
-          input.checked = Boolean(match);
-        });
-        const first = group.roles[0];
-        document.getElementById("groupNotifyLogin").checked = first ? first.notify_login : true;
-        document.getElementById("groupNotifyError").checked = first ? first.notify_error : true;
-        document.getElementById("groupNotifyDaily").checked = first ? first.notify_daily : true;
         document.getElementById("groupDialog").showModal();
+        return;
       }
       if (del) {
-        await api(`/api/feishu-groups/${del.dataset.deleteGroup}`, { method: "DELETE" });
-        await refreshGroups();
+        const group = state.feishuGroups.find((item) => item.id === del.dataset.deleteGroup);
+        if (!group) return;
+        state.deleteGroupId = group.id;
+        const roleNames = group.roles.map((item) => state.roles.find((role) => role.role_uuid === item.role_uuid)?.nickname || item.role_uuid.slice(0, 6));
+        document.getElementById("deleteGroupInfo").textContent = `群名称：${group.name}\nChat ID：${group.chat_id}\n状态：${group.status}\n正在使用：${roleNames.length ? roleNames.join("、") : "无角色"}`;
+        document.getElementById("deleteGroupDialog").showModal();
       }
     } catch (error) { alert(error.message); }
+  });
+  document.getElementById("btnConfirmDeleteGroup").onclick = async () => {
+    if (!state.deleteGroupId) return;
+    try {
+      await api(`/api/feishu-groups/${state.deleteGroupId}`, { method: "DELETE" });
+      state.deleteGroupId = "";
+      document.getElementById("deleteGroupDialog").close();
+      await refreshGroups();
+      await refreshRouting();
+      toast("群已删除");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnCancelDeleteGroup").onclick = () => document.getElementById("deleteGroupDialog").close();
+  document.getElementById("btnSaveDefaultGroup").onclick = async () => {
+    try {
+      await api("/api/feishu-groups/default", { method: "POST", body: { groupId: document.getElementById("routingDefaultGroup").value } });
+      await refreshGroups();
+      await refreshRouting();
+      toast("默认通知群已保存");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnSaveRouteStages").onclick = async () => {
+    try {
+      const selects = [...document.querySelectorAll("#routeStageBody select[data-route-role]")];
+      for (const select of selects) {
+        await api("/api/feishu-routing/stage", {
+          method: "POST",
+          body: { roleUuid: select.dataset.routeRole, stage: select.dataset.routeStage, groupId: select.value },
+        });
+      }
+      await refreshRouting();
+      toast("角色通知群已保存");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("routeStageBody").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-fill-role]");
+    if (!button) return;
+    const groupId = document.getElementById("routingDefaultGroup")?.value || state.feishuGroups[0]?.id || "";
+    if (!groupId) {
+      toast("请先添加飞书群，或在默认通知群选择群", true);
+      return;
+    }
+    document.querySelectorAll(`#routeStageBody select[data-route-role="${button.dataset.fillRole}"]`).forEach((select) => {
+      select.value = groupId;
+    });
+    toast("已填入该角色的三个环节，请点“保存角色路由”");
   });
 
   document.getElementById("btnRefresh").onclick = refreshAll;
@@ -683,6 +926,13 @@ function bind() {
       await refreshHealth();
     } catch (error) { showLog("dashboardLog", error.message); }
   };
+  document.getElementById("btnMinimizeChrome").onclick = async () => {
+    try {
+      const result = await api("/api/chrome/minimize", { method: "POST", body: {} });
+      appendLog("dashboardLog", result.minimized ? `Chrome 已最小化（CDP 端口 ${result.port}）` : "当前没有可最小化的 Chrome CDP 窗口");
+      toast(result.minimized ? "浏览器已最小化" : "当前没有运行中的检测浏览器");
+    } catch (error) { toast(error.message, true); }
+  };
 
   document.getElementById("channelCards").addEventListener("click", async (event) => {
     const check = event.target.closest("button[data-channel-check]");
@@ -690,15 +940,24 @@ function bind() {
     try {
       if (check) {
         const platform = check.dataset.channelCheck;
-        const result = await api("/api/login/check", { method: "POST", body: { platform } });
-        showLog("dashboardLog", result);
-        await refreshHealth();
+        appendLog("dashboardLog", `${platform} 检测登录：开始启动/复用 Chrome，后台检测中…`);
+        try {
+          const result = await api("/api/login/check", { method: "POST", body: { platform } });
+          appendLog("dashboardLog", `${platform} 检测完成：已登录 · ${fmt(result.saved?.checked_at || new Date().toISOString())}`);
+          toast(`${platform} 已登录`);
+          await refreshHealth();
+        } catch (error) {
+          appendLog("dashboardLog", `${platform} 检测完成：未登录/失败 · ${error.message}`);
+          toast(error.message, true);
+          await refreshHealth();
+        }
+        return;
       }
       if (open) {
         const platform = open.dataset.channelOpen;
         const result = await api("/api/chrome/open", { method: "POST", body: { platform } });
-        showLog("dashboardLog", `已打开 ${platform} 登录页：${result.url}`);
-        toast(`已打开 ${platform} 登录页`);
+        showLog("dashboardLog", `已打开 ${platform} 登录页：${result.url}（CDP 端口 ${result.port}${result.conflict ? "，9222 被占用已自动切换" : ""}）`);
+        toast(`Chrome CDP：127.0.0.1:${result.port}`);
       }
     } catch (error) { showLog("dashboardLog", error.message); }
   });
@@ -707,18 +966,50 @@ function bind() {
     const file = event.target.files && event.target.files[0];
     if (!file) return;
     try {
-      const content = await file.text();
-      state.resumeContent = content;
-      state.resumeFileName = file.name;
-      document.getElementById("roleProfile").value = content;
-      document.getElementById("resumeStatus").textContent = `已导入：${file.name}（${content.length} 字）`;
+      await loadResumeFile(file, "role");
     } catch (error) {
       alert(`读取简历失败：${error.message}`);
     }
   });
 
+  document.getElementById("btnGenerateKeywords").onclick = async () => {
+    try {
+      const min = Number(document.getElementById("roleSalaryMin").value || 0);
+      const max = Number(document.getElementById("roleSalaryMax").value || 0);
+      const result = await api("/api/keywords/generate", {
+        method: "POST",
+        body: {
+          profile_md: document.getElementById("roleProfile").value.trim(),
+          target_roles: document.getElementById("roleTargets").value.trim(),
+          target_city: document.getElementById("roleCity").value.trim(),
+          target_salary: min && max ? `${min}-${max}K` : "",
+        },
+      });
+      document.getElementById("roleKeywords").value = (result.keywords || []).join("、");
+      toast(result.aiUsed ? "AI 已生成每日关键词" : "已用本地规则生成关键词");
+    } catch (error) { alert(error.message); }
+  };
+
+  document.getElementById("roleCity").addEventListener("change", async () => {
+    const text = document.getElementById("roleCity").value.trim();
+    const preview = document.getElementById("roleCityPreview");
+    if (!text) { preview.textContent = ""; return; }
+    try {
+      const result = await api("/api/locations/normalize", { method: "POST", body: { text } });
+      preview.textContent = `识别为：${result.display || text}`;
+    } catch (error) {
+      preview.textContent = `识别失败：${error.message}`;
+    }
+  });
   document.getElementById("btnCreateRole").onclick = async () => {
     try {
+      const minText = document.getElementById("roleSalaryMin").value;
+      const maxText = document.getElementById("roleSalaryMax").value;
+      const min = minText === "" ? null : Number(minText);
+      const max = maxText === "" ? null : Number(maxText);
+      if (min != null && (!Number.isInteger(min) || min <= 0)) throw new Error("期望薪资下限必须是正整数（千元）");
+      if (max != null && (!Number.isInteger(max) || max <= 0)) throw new Error("期望薪资上限必须是正整数且不能为 0");
+      if (min != null && max != null && max < min) throw new Error("期望薪资上限不能小于下限");
       const result = await api("/api/roles", {
         method: "POST",
         body: {
@@ -727,7 +1018,12 @@ function bind() {
           resume_md: state.resumeContent,
           resume_file_name: state.resumeFileName,
           target_roles: document.getElementById("roleTargets").value.trim(),
-          role_keywords: document.getElementById("roleKeywords").value.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
+          target_city: document.getElementById("roleCity").value.trim(),
+          target_cities: document.getElementById("roleCity").value.trim(),
+          salary_min: min || null,
+          salary_max: max || null,
+          target_salary: min && max ? `${min}-${max}K` : "",
+          role_keywords: document.getElementById("roleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
         },
       });
       if (result.similar?.length) {
@@ -735,8 +1031,13 @@ function bind() {
       }
       state.resumeContent = "";
       state.resumeFileName = "";
+      for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalaryMin", "roleSalaryMax", "roleKeywords"]) {
+        document.getElementById(id).value = "";
+      }
+      document.getElementById("resumeFile").value = "";
       document.getElementById("resumeStatus").textContent = "未选择简历；也可以直接粘贴到下方";
       await refreshRoles();
+      await refreshRouting();
       toast("角色已创建");
     } catch (error) { alert(error.message); }
   };
@@ -762,6 +1063,16 @@ function bind() {
   document.getElementById("btnCancelConfirm").onclick = () => document.getElementById("confirmDialog").close();
 
   document.getElementById("roleList").addEventListener("click", async (event) => {
+    const editButton = event.target.closest("button[data-edit-role]");
+    if (editButton) {
+      openEditRole(editButton.dataset.editRole);
+      return;
+    }
+    const keywordButton = event.target.closest("button[data-keywords]");
+    if (keywordButton) {
+      try { await openKeywordDialog(keywordButton.dataset.keywords); } catch (error) { alert(error.message); }
+      return;
+    }
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const { action, id } = button.dataset;
@@ -864,6 +1175,12 @@ function bind() {
       document.getElementById("localLogs").textContent = data.logs.join("\n") || "暂无日志";
     } catch (error) { alert(error.message); }
   };
+  document.getElementById("btnOpenLogs").onclick = async () => {
+    try {
+      const result = await api("/api/logs/open", { method: "POST", body: {} });
+      toast(`日志目录：${result.path}`);
+    } catch (error) { alert(error.message); }
+  };
 
   document.getElementById("settingsForm").onsubmit = async (event) => {
     event.preventDefault();
@@ -910,11 +1227,41 @@ function bind() {
   document.getElementById("aiList").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-ai]");
     if (!button) return;
+    if (button.dataset.ai !== "test") {
+      try {
+        await api(`/api/ai/providers/${button.dataset.id}/${button.dataset.ai}`, { method: "POST", body: {} });
+        await refreshProviders();
+      } catch (error) { alert(error.message); }
+      return;
+    }
+    const dialog = document.getElementById("aiTestDialog");
+    const title = document.getElementById("aiTestTitle");
+    const body = document.getElementById("aiTestBody");
+    title.textContent = "AI 测试中";
+    body.textContent = "正在调用模型，请稍候…";
+    dialog.showModal();
+    button.disabled = true;
     try {
-      await api(`/api/ai/providers/${button.dataset.id}/${button.dataset.ai}`, { method: "POST", body: {} });
+      const result = await api(`/api/ai/providers/${button.dataset.id}/test`, { method: "POST", body: {} });
+      if (result.ok) {
+        title.textContent = "AI 测试成功";
+        body.textContent = `HTTP ${result.status || 200}，模型连接正常。`;
+        setTimeout(() => {
+          if (dialog.open) dialog.close();
+        }, 1000);
+      } else {
+        title.textContent = "AI 测试失败";
+        body.textContent = result.error || "供应商返回失败";
+      }
       await refreshProviders();
-    } catch (error) { alert(error.message); }
+    } catch (error) {
+      title.textContent = "AI 测试失败";
+      body.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
   });
+  document.getElementById("btnCloseAiTest").onclick = () => document.getElementById("aiTestDialog").close();
 
   document.getElementById("btnSaveMp").onclick = async () => {
     try {
@@ -929,7 +1276,9 @@ function bind() {
         },
       });
       await refreshMessages();
+      for (const id of ["mpAppSecret", "mpVerifyToken", "mpEncryptKey"]) document.getElementById(id).value = "";
       showLog("dashboardLog", "飞书应用配置已保存（.env）");
+      toast("飞书应用配置已保存");
     } catch (error) { alert(error.message); }
   };
   document.getElementById("btnStartMp").onclick = async () => {
@@ -991,7 +1340,7 @@ function bind() {
 
 async function doTick() {
   try {
-    const result = await api("/api/tasks/tick", { method: "POST", body: { idleAllowed: true } });
+    const result = await api("/api/tasks/tick", { method: "POST", body: { idleAllowed: true, forceReason: "manual" } });
     showLog("dashboardLog", result);
     await refreshTasks();
     await refreshJobs();
@@ -1105,5 +1454,21 @@ function setupTooltips() {
 
 bind();
 setupTooltips();
-refreshAll();
+refreshAll().then(() => refreshRouting()).catch((error) => {
+  const table = document.getElementById("routeStageBody");
+  if (table) table.innerHTML = `<tr><td colspan="5" class="empty">角色通知群加载失败：${esc(error.message)}</td></tr>`;
+});
+refreshRouting().catch((error) => {
+  const table = document.getElementById("routeStageBody");
+  if (table) table.innerHTML = `<tr><td colspan="5" class="empty">角色通知群加载失败：${esc(error.message)}</td></tr>`;
+});
+refreshNotificationHistory().catch((error) => {
+  const list = document.getElementById("notificationHistoryList");
+  if (list) list.innerHTML = `<div class="empty">历史通知加载失败：${esc(error.message)}</div>`;
+});
+refreshGroups().catch((error) => {
+  const list = document.getElementById("groupCards");
+  if (list) list.innerHTML = `<div class="empty">飞书群加载失败：${esc(error.message)}</div>`;
+});
 setInterval(refreshHealth, 15000);
+setInterval(() => refreshTasks().catch(() => {}), 4000);

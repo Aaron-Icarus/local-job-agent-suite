@@ -116,6 +116,9 @@ CREATE TABLE IF NOT EXISTS roles (
   target_roles TEXT NOT NULL DEFAULT '',
   target_city TEXT NOT NULL DEFAULT '',
   target_salary TEXT NOT NULL DEFAULT '',
+  target_cities_json TEXT NOT NULL DEFAULT '[]',
+  salary_min INTEGER,
+  salary_max INTEGER,
   special_requirements TEXT NOT NULL DEFAULT '',
   role_keywords_json TEXT NOT NULL DEFAULT '[]',
   role_channels_json TEXT NOT NULL DEFAULT '[]',
@@ -384,6 +387,24 @@ CREATE TABLE IF NOT EXISTS job_recheck_batches (
   closed_count INTEGER NOT NULL DEFAULT 0,
   skipped_count INTEGER NOT NULL DEFAULT 0,
   error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS role_keyword_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_uuid TEXT NOT NULL,
+  keyword TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'recommended',
+  is_current INTEGER NOT NULL DEFAULT 1,
+  priority INTEGER NOT NULL DEFAULT 50,
+  last_used_at TEXT,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  seen_count INTEGER NOT NULL DEFAULT 0,
+  new_count INTEGER NOT NULL DEFAULT 0,
+  duplicate_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(role_uuid, keyword, category)
 );
 
 

@@ -1,6 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 const { URL } = require("url");
 const { getSettings, saveSettings } = require("./settings_repo");
 const { planTick, getTaskBoard, createCollectionPlan } = require("./task_service");
@@ -9,17 +10,22 @@ const scores = require("./scores_repo");
 const { listJobs, countJobs } = require("./jobs_repo");
 const { loginStatus, recordCheck } = require("./login_monitor");
 const { checkPlatform } = require("./login_checker");
-const { startChrome } = require("./chrome_manager");
+const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome } = require("./chrome_manager");
+const { extractDocument } = require("./document_text");
+const { normalizeCities, normalizeSalary } = require("./location_service");
+const skillsDir = path.resolve(__dirname, "..", "..", "skills");
 const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
 const { buildExcelHtml } = require("./export_service");
-const { listNotifications, createNotification } = require("./notifier");
+const { listNotifications, createNotification, queryNotifications } = require("./notifier");
 const messagePlatform = require("./message_platform_service");
 const chat = require("./chat_service");
 const feishuGroups = require("./feishu_groups");
 const logger = require("./logger");
 const jobRecheck = require("./job_recheck");
+const keywordService = require("./keyword_service");
+const { getIdleStatus } = require("./system_idle");
 const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
 
 function json(res, status, payload) {
@@ -36,7 +42,7 @@ function readBody(req) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 2 * 1024 * 1024) {
+      if (body.length > 15 * 1024 * 1024) {
         reject(new Error("请求体过大"));
         req.destroy();
       }
@@ -101,6 +107,11 @@ function createAppServer(options = {}) {
         return json(res, 200, { ok: true, ...result });
       }
 
+      if (pathname === "/api/keywords/generate" && req.method === "POST") {
+        const body = await readBody(req);
+        const result = await chat.generateKeywords(db, body);
+        return json(res, 200, { ok: true, ...result });
+      }
       if (pathname === "/api/roles" && req.method === "GET") {
         return json(res, 200, { ok: true, roles: roles.listRoles(db) });
       }
@@ -123,12 +134,90 @@ function createAppServer(options = {}) {
         const result = await chat.runTurn(db, chatMessage[1], body);
         return json(res, 200, { ok: true, ...result });
       }
+      const roleKeywords = pathname.match(/^\/api\/roles\/([^/]+)\/keywords$/);
+      if (roleKeywords && req.method === "GET") {
+        return json(res, 200, { ok: true, keywords: keywordService.list(db, roleKeywords[1]) });
+      }
+      const roleKeywordsGenerate = pathname.match(/^\/api\/roles\/([^/]+)\/keywords\/generate$/);
+      if (roleKeywordsGenerate && req.method === "POST") {
+        const role = roles.getRole(db, roleKeywordsGenerate[1]);
+        if (!role) return json(res, 404, { ok: false, error: "角色不存在" });
+        const result = await chat.generateKeywords(db, {
+          role_uuid: role.role_uuid,
+          profile_md: role.profile_md,
+          target_roles: role.target_roles,
+          target_city: role.target_city,
+          target_salary: role.target_salary,
+          career_expectation: role.special_requirements,
+        });
+        return json(res, 200, { ok: true, ...result });
+      }
       if (pathname === "/api/roles" && req.method === "POST") {
-        const result = roles.createRole(db, await readBody(req));
+        const body = await readBody(req);
+        const result = roles.createRole(db, body);
+        if (body.role_keywords?.length) {
+          const fallback = body.fallback_keywords?.length
+            ? body.fallback_keywords
+            : (keywordService.extractFallbackFromProfile(body.profile_md).length
+              ? keywordService.extractFallbackFromProfile(body.profile_md)
+              : keywordService.fallbackKeywords(body).fallback);
+          keywordService.save(db, result.role.role_uuid, {
+            recommended: body.role_keywords,
+            fallback,
+          });
+        }
         const defaultGroup = feishuGroups.applyDefaultGroup(db, result.role.role_uuid);
         return json(res, 200, { ok: true, ...result, defaultGroup });
       }
+      const roleEdit = pathname.match(/^\/api\/roles\/([^/]+)$/);
+      if (roleEdit && ["PATCH", "PUT"].includes(req.method)) {
+        const body = await readBody(req);
+        const result = roles.updateRole(db, roleEdit[1], body);
+        if (Array.isArray(body.role_keywords)) {
+          keywordService.save(db, roleEdit[1], {
+            recommended: body.role_keywords,
+            fallback: body.fallback_keywords || keywordService.extractFallbackFromProfile(body.profile_md),
+          });
+        }
+        return json(res, 200, { ok: true, ...result });
+      }
 
+      if (pathname === "/api/logs/open" && req.method === "POST") {
+        const dir = logger.LOG_DIR;
+        fs.mkdirSync(dir, { recursive: true });
+        const command = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+        const child = spawn(command, [dir], { detached: true, stdio: "ignore" });
+        child.unref();
+        return json(res, 200, { ok: true, path: dir });
+      }
+      if (pathname === "/api/locations/normalize" && req.method === "POST") {
+        const body = await readBody(req);
+        const location = normalizeCities(body.text || body.cities || "");
+        return json(res, 200, { ok: true, ...location });
+      }
+      if (pathname === "/api/skills" && req.method === "GET") {
+        const files = fs.existsSync(skillsDir) ? fs.readdirSync(skillsDir).filter((item) => item.endsWith(".md")) : [];
+        return json(res, 200, { ok: true, path: skillsDir, files });
+      }
+      if (pathname === "/api/skills/open" && req.method === "POST") {
+        if (!fs.existsSync(skillsDir)) return json(res, 404, { ok: false, error: "Skill 文件夹不存在" });
+        const command = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+        const child = spawn(command, [skillsDir], { detached: true, stdio: "ignore" });
+        child.unref();
+        return json(res, 200, { ok: true, path: skillsDir });
+      }
+      if (pathname === "/api/resume/extract" && req.method === "POST") {
+        const body = await readBody(req);
+        const fileName = String(body.fileName || "").trim();
+        const base64 = String(body.contentBase64 || "").replace(/^data:[^;]+;base64,/, "");
+        if (!fileName || !base64) return json(res, 400, { ok: false, error: "缺少文件名或文件内容" });
+        try {
+          const text = await extractDocument(Buffer.from(base64, "base64"), fileName);
+          return json(res, 200, { ok: true, fileName, text, length: text.length });
+        } catch (error) {
+          return json(res, 422, { ok: false, error: error.message });
+        }
+      }
       if (pathname === "/api/resumes" && req.method === "GET") {
         return json(res, 200, { ok: true, resumes: resumes.listResumes(db) });
       }
@@ -151,15 +240,54 @@ function createAppServer(options = {}) {
         if (!result.ok) {
           await feishuGroups.sendToGroups(db, "login", `【登录异常】${platform}：${status}，请打开客户端检查登录。`);
         }
-        return json(res, 200, { ok: result.ok, platform, result, saved });
+        const error = result.ok
+          ? ""
+          : result.status === "login_required"
+            ? `${platform} 未登录，请在打开的登录页完成登录后再检查`
+            : result.status === "security_check"
+              ? `${platform} 出现安全验证，请人工完成验证`
+              : `${platform} 登录状态未知，请确认 Chrome 已启动并打开登录页`;
+        const httpStatus = result.ok ? 200 : result.status === "login_required" ? 401 : 409;
+        return json(res, httpStatus, { ok: result.ok, error, platform, result, saved });
       }
 
       if (pathname === "/api/chrome/open" && req.method === "POST") {
         const body = await readBody(req);
         const platform = String(body.platform || "");
         const url = platform === "猎聘" ? "https://c.liepin.com/" : "https://www.zhipin.com/web/geek/jobs";
-        const child = startChrome({ startUrl: url, port: Number(body.port || 9222), startMinimized: false });
-        return json(res, 200, { ok: true, platform, url, message: "Chrome 已打开登录页", pid: child.child.pid });
+        const chrome = await ensureChrome({
+          startUrl: url,
+          startMinimized: false,
+          port: Number(body.port || 0) || undefined,
+        });
+        return json(res, 200, {
+          ok: true,
+          platform,
+          url,
+          port: chrome.port,
+          reused: Boolean(chrome.reused),
+          conflict: Boolean(chrome.conflict),
+          message: `Chrome CDP 已就绪：127.0.0.1:${chrome.port}`,
+          pid: chrome.child?.pid || null,
+        });
+      }
+      if (pathname === "/api/system/idle" && req.method === "GET") {
+        return json(res, 200, { ok: true, ...(await getIdleStatus({ thresholdSeconds: 120 })) });
+      }
+      if (pathname === "/api/chrome/minimize" && req.method === "POST") {
+        const resolved = await resolveCdpPort();
+        const minimized = await minimizeChrome(resolved.port);
+        return json(res, 200, { ok: minimized, port: resolved.port, minimized });
+      }
+      if (pathname === "/api/chrome/status" && req.method === "GET") {
+        const resolved = await resolveCdpPort();
+        return json(res, 200, {
+          ok: true,
+          port: resolved.port,
+          ready: await isCdpReady(resolved.port),
+          reused: resolved.reused,
+          conflict: Boolean(resolved.conflict),
+        });
       }
 
       const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update)$/);
@@ -181,7 +309,7 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/tasks/tick" && req.method === "POST") {
         const body = await readBody(req);
-        return json(res, 200, { ok: true, ...planTick(db, { idleAllowed: Boolean(body.idleAllowed) }) });
+        return json(res, 200, { ok: true, ...planTick(db, { idleAllowed: Boolean(body.idleAllowed), forceReason: body.forceReason || "" }) });
       }
       if (pathname === "/api/tasks" && req.method === "GET") {
         return json(res, 200, { ok: true, tasks: listTasks(db, { limit: 100 }) });
@@ -296,7 +424,15 @@ function createAppServer(options = {}) {
       }
 
       if (pathname === "/api/notifications") {
-        return json(res, 200, { ok: true, notifications: listNotifications(db) });
+        const url = new URL(req.url, "http://127.0.0.1");
+        const result = queryNotifications(db, {
+          q: url.searchParams.get("q") || "",
+          from: url.searchParams.get("from") || "",
+          to: url.searchParams.get("to") || "",
+          page: url.searchParams.get("page") || 1,
+          pageSize: url.searchParams.get("page_size") || 10,
+        });
+        return json(res, 200, { ok: true, notifications: result.items, total: result.total, page: result.page, pageSize: result.pageSize, pages: result.pages });
       }
 
       if (pathname === "/api/messages" && req.method === "GET") {
@@ -338,6 +474,22 @@ function createAppServer(options = {}) {
         });
       }
 
+      if (pathname === "/api/feishu-routing/stage" && req.method === "POST") {
+        const body = await readBody(req);
+        return json(res, 200, { ok: true, ...feishuGroups.setRoleStageGroup(db, body.roleUuid, body.stage, body.groupId || "") });
+      }
+      if (pathname === "/api/feishu-routing" && req.method === "GET") {
+        return json(res, 200, { ok: true, ...feishuGroups.routing(db) });
+      }
+      if (pathname === "/api/feishu-routing" && req.method === "POST") {
+        const body = await readBody(req);
+        const group = feishuGroups.routeRole(db, body.roleUuid, body.groupId, body);
+        return json(res, 200, { ok: true, group, ...feishuGroups.routing(db) });
+      }
+      if (pathname === "/api/feishu-groups/default" && req.method === "POST") {
+        const body = await readBody(req);
+        return json(res, 200, { ok: true, group: feishuGroups.setDefaultGroup(db, body.groupId) });
+      }
       if (pathname === "/api/feishu-groups" && req.method === "GET") {
         return json(res, 200, { ok: true, groups: feishuGroups.listGroups(db) });
       }

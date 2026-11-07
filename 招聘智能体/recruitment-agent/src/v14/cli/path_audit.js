@@ -4,7 +4,7 @@ const path = require("path");
 const root = path.resolve(__dirname, "..", "..", "..", "..", "..");
 const files = [];
 const extensions = new Set([".js", ".json", ".ps1", ".cmd", ".command", ".sh", ".html", ".css", ".yaml", ".yml"]);
-const skipDirs = new Set(["node_modules", ".git", "data", "logs", "dist", "release", "build"]);
+const skipDirs = new Set(["node_modules", ".git", "data", "logs", "outputs", "dist", "release", "build"]);
 
 function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

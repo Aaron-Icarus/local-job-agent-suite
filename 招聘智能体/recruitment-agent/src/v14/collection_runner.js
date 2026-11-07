@@ -17,7 +17,12 @@ function collectorScript(platform) {
 function defaultRunSubtask(context) {
   return new Promise((resolve) => {
     const script = collectorScript(context.platform);
-    const child = spawn(process.execPath, [script], {
+    const keywordSpec = (context.keywords || [])
+      .map((keyword) => `未分级::${keyword}`)
+      .join(",");
+    const args = [script, "stage1", "10", "50"];
+    if (keywordSpec) args.push(keywordSpec);
+    const child = spawn(process.execPath, args, {
       cwd: path.join(__dirname, "..", ".."),
       env: {
         ...process.env,
@@ -90,7 +95,11 @@ async function runCollectionEvent(db, eventId, options = {}) {
   if (options.taskId) {
     const { finishTask, failTask } = require("./tasks_repo");
     if (finished.status === "failed") {
-      failTask(db, options.taskId, "collection_failed", { retry: false });
+      const reasons = finished.subtasks
+        .filter((item) => item.status === "failed")
+        .map((item) => `${item.platform}:${item.stop_reason || "unknown"}`)
+        .join("；");
+      failTask(db, options.taskId, `collection_failed${reasons ? `（${reasons}）` : ""}`, { retry: false });
     } else {
       finishTask(db, options.taskId, {
         progress: {

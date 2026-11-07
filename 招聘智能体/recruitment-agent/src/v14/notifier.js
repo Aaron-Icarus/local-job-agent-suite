@@ -55,4 +55,33 @@ function listNotifications(db, options = {}) {
   return db.prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?").all(limit);
 }
 
-module.exports = { createNotification, sendNotification, listNotifications };
+function queryNotifications(db, options = {}) {
+  const clauses = [];
+  const params = [];
+  const q = String(options.q || "").trim();
+  if (q) {
+    clauses.push("(title LIKE ? OR body LIKE ? OR type LIKE ?)");
+    const like = `%${q}%`;
+    params.push(like, like, like);
+  }
+  if (options.from) {
+    clauses.push("created_at >= ?");
+    params.push(`${String(options.from).slice(0, 10)}T00:00:00`);
+  }
+  if (options.to) {
+    clauses.push("created_at <= ?");
+    params.push(`${String(options.to).slice(0, 10)}T23:59:59`);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const pageSize = Math.max(1, Math.min(100, Number(options.pageSize || 10)));
+  const page = Math.max(1, Number(options.page || 1));
+  const total = Number(db.prepare(`SELECT COUNT(*) AS count FROM notifications ${where}`).get(...params).count || 0);
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(page, pages);
+  const items = db.prepare(
+    `SELECT * FROM notifications ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+  ).all(...params, pageSize, (current - 1) * pageSize);
+  return { items, total, page: current, pageSize, pages };
+}
+
+module.exports = { createNotification, sendNotification, listNotifications, queryNotifications };

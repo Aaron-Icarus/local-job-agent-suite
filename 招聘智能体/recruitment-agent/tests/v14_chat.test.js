@@ -39,6 +39,30 @@ test("对话：缺信息先追问，补全后生成画像", async (t) => {
   assert.ok(last.metadata.resume_id);
 });
 
+test("画像脱敏且关键词与画像分离", async (t) => {
+  const db = setup(t);
+  const session = chat.createSession(db, { title: "脱敏测试" });
+  const resume = `# 张三
+电话：13800138000
+邮箱：zhangsan@example.com
+密码：secret123
+## 目标岗位
+AI项目经理
+## 工作经历
+5 年 AI 项目交付经验，做过智能体平台。
+`;
+  await chat.runTurn(db, session.id, { text: "看看简历", resume_md: resume });
+  const result = await chat.runTurn(db, session.id, { text: "城市：上海；薪资：18-30K" });
+  const last = result.session.messages.at(-1);
+  assert.equal(last.metadata.action, "profile_ready");
+  assert.doesNotMatch(last.metadata.profile_md, /13800138000/);
+  assert.doesNotMatch(last.metadata.profile_md, /zhangsan@example\.com/);
+  assert.doesNotMatch(last.metadata.profile_md, /secret123/);
+  assert.doesNotMatch(last.metadata.profile_md, /每日搜索关键词/);
+  assert.ok(Array.isArray(last.metadata.keywords));
+  assert.ok(last.metadata.keywords.length > 0);
+});
+
 test("对话：按角色查询岗位编号", async (t) => {
   const db = setup(t);
   const session = chat.createSession(db, { title: "岗位对话" });

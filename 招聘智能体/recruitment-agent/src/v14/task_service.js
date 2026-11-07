@@ -30,7 +30,7 @@ function collectKeywords(role) {
   return keywords
     .map((item) => (typeof item === "string" ? { keyword: item, priority: 50 } : item))
     .filter((item) => item && item.keyword)
-    .slice(0, 6);
+    .slice(0, 12);
 }
 
 function createCollectionPlan(db, options = {}) {
@@ -98,7 +98,7 @@ function planTick(db, options = {}) {
   if (decision.shouldCollect && !hasRunningCollection(db)) {
     const plan = createCollectionPlan(db, {
       now,
-      forceReason: decision.forceReason,
+      forceReason: options.forceReason || decision.forceReason,
       platforms: options.platforms,
     });
     if (plan) actions.push({ type: "collect", eventId: plan.event.id, taskId: plan.task.id });

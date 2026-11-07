@@ -16,6 +16,9 @@ function applySchema(db) {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
   db.exec(schema);
   ensureColumn(db, "roles", "resume_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "roles", "target_cities_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "roles", "salary_min", "INTEGER");
+  ensureColumn(db, "roles", "salary_max", "INTEGER");
   ensureColumn(db, "chat_sessions", "external_key", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "feishu_groups", "is_default", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "feishu_groups", "reply_role_uuid", "TEXT NOT NULL DEFAULT ''");

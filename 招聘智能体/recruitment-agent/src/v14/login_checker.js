@@ -1,5 +1,6 @@
 const path = require("path");
 const { spawn } = require("child_process");
+const { ensureChrome } = require("./chrome_manager");
 
 const SCRIPTS = {
   BOSS: path.join(__dirname, "..", "platforms", "boss", "check_boss_login_status.js"),
@@ -18,10 +19,29 @@ function parseLastJson(text) {
   return null;
 }
 
-function checkPlatform(platform, options = {}) {
+async function closeChromeIfDetectionOnly(chrome) {
+  if (!chrome || !chrome.child || chrome.reused) return;
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  try {
+    const response = await fetch(`http://127.0.0.1:${chrome.port}/json/list`, { signal: AbortSignal.timeout(1200) });
+    const tabs = await response.json();
+    const realPages = tabs.filter((tab) => tab.type === "page" && tab.url && tab.url !== "about:blank");
+    if (!realPages.length) chrome.child.kill();
+  } catch {
+    // 清理失败不影响登录结果
+  }
+}
+
+async function checkPlatform(platform, options = {}) {
   const script = SCRIPTS[platform];
-  if (!script) return Promise.resolve({ ok: false, status: "unknown", error: "未知平台" });
-  return new Promise((resolve) => {
+  if (!script) return { ok: false, status: "unknown", error: "未知平台" };
+  let chrome = null;
+  try {
+    chrome = await ensureChrome({ startMinimized: true, startUrl: "about:blank" });
+  } catch (error) {
+    return { ok: false, status: "browser_error", error: `无法启动 Chrome：${error.message}` };
+  }
+  const result = await new Promise((resolve) => {
     const child = spawn(process.execPath, [script], {
       cwd: path.join(__dirname, "..", ".."),
       env: process.env,
@@ -42,17 +62,19 @@ function checkPlatform(platform, options = {}) {
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      const result = parseLastJson(stdout);
-      const status = result?.loginStatus || "unknown";
+      const parsed = parseLastJson(stdout);
+      const status = parsed?.loginStatus || "unknown";
       resolve({
         ok: status === "logged_in",
         status,
         code,
         stderr: stderr.slice(-1000),
-        detail: result || null,
+        detail: parsed || null,
       });
     });
   });
+  if (result.ok) await closeChromeIfDetectionOnly(chrome);
+  return result;
 }
 
 module.exports = { SCRIPTS, parseLastJson, checkPlatform };
