@@ -2,6 +2,7 @@
 const path = require("path");
 const { openDatabase } = require("../db");
 const { startServer } = require("../app_server");
+const { startTaskWorker } = require("../task_runner");
 
 function argValue(name, fallback = "") {
   const prefix = `--${name}=`;
@@ -14,8 +15,10 @@ async function main() {
   const port = Number(argValue("port", process.env.V14_PORT || "0"));
   const { db, path: resolved } = openDatabase(dbPath);
   const server = await startServer(db, { port });
-  console.log(JSON.stringify({ ok: true, url: server.url, db: resolved }, null, 2));
+  const worker = startTaskWorker(db);
+  console.log(JSON.stringify({ ok: true, url: server.url, db: resolved, taskWorker: true }, null, 2));
   const shutdown = async () => {
+    worker.stop();
     await server.close();
     db.close();
     process.exit(0);

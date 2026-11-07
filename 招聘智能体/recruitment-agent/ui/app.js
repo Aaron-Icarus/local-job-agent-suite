@@ -793,9 +793,16 @@ function bind() {
     try {
       if (check) {
         const platform = check.dataset.channelCheck;
-        const result = await api("/api/login/check", { method: "POST", body: { platform } });
-        showLog("dashboardLog", result);
-        await refreshHealth();
+        try {
+          const result = await api("/api/login/check", { method: "POST", body: { platform } });
+          showLog("dashboardLog", result);
+          toast(`${platform} 已登录`);
+          await refreshHealth();
+        } catch (error) {
+          showLog("dashboardLog", error.message);
+          toast(error.message, true);
+        }
+        return;
       }
       if (open) {
         const platform = open.dataset.channelOpen;
@@ -1282,3 +1289,4 @@ refreshRouting().catch((error) => {
   if (table) table.innerHTML = `<div class="empty">角色发送群加载失败：${esc(error.message)}</div>`;
 });
 setInterval(refreshHealth, 15000);
+setInterval(() => refreshTasks().catch(() => {}), 4000);

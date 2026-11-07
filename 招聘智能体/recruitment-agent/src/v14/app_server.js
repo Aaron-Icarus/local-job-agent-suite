@@ -199,7 +199,15 @@ function createAppServer(options = {}) {
         if (!result.ok) {
           await feishuGroups.sendToGroups(db, "login", `【登录异常】${platform}：${status}，请打开客户端检查登录。`);
         }
-        return json(res, 200, { ok: result.ok, platform, result, saved });
+        const error = result.ok
+          ? ""
+          : result.status === "login_required"
+            ? `${platform} 未登录，请在打开的登录页完成登录后再检查`
+            : result.status === "security_check"
+              ? `${platform} 出现安全验证，请人工完成验证`
+              : `${platform} 登录状态未知，请确认 Chrome 已启动并打开登录页`;
+        const httpStatus = result.ok ? 200 : result.status === "login_required" ? 401 : 409;
+        return json(res, httpStatus, { ok: result.ok, error, platform, result, saved });
       }
 
       if (pathname === "/api/chrome/open" && req.method === "POST") {

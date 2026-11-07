@@ -90,7 +90,11 @@ async function runCollectionEvent(db, eventId, options = {}) {
   if (options.taskId) {
     const { finishTask, failTask } = require("./tasks_repo");
     if (finished.status === "failed") {
-      failTask(db, options.taskId, "collection_failed", { retry: false });
+      const reasons = finished.subtasks
+        .filter((item) => item.status === "failed")
+        .map((item) => `${item.platform}:${item.stop_reason || "unknown"}`)
+        .join("；");
+      failTask(db, options.taskId, `collection_failed${reasons ? `（${reasons}）` : ""}`, { retry: false });
     } else {
       finishTask(db, options.taskId, {
         progress: {
