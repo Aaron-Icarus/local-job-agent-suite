@@ -85,8 +85,12 @@
           <label>导入简历 MD<input id="resumeFile" type="file" accept=".md,.markdown,.txt"></label>
           <div id="resumeStatus" class="hint">未选择简历；也可以直接粘贴到下方</div>
           <label>简历/画像<textarea id="roleProfile" rows="6" placeholder="粘贴简历或画像；导入 MD 后会自动填入"></textarea></label>
-          <label>目标岗位<input id="roleTargets" placeholder="实施顾问, 交付专员"></label>
-          <label>关键词（逗号分隔）<input id="roleKeywords" placeholder="实施顾问, 交付专员"></label>
+          <label>目标岗位<input id="roleTargets" placeholder="AI项目经理, AI产品经理"></label>
+          <label>目标城市<input id="roleCity" placeholder="上海"></label>
+          <label>期望薪资<input id="roleSalary" placeholder="18-30K"></label>
+          <label>关键词（逗号分隔）<input id="roleKeywords" placeholder="AI项目经理, AI产品经理, 智能体交付"></label>
+          <button id="btnGenerateKeywords" type="button" class="ghost">AI 生成每日关键词</button>
+          <p class="hint">每日关键词单独保存到角色，不写入画像 MD。</p>
           <button id="btnCreateRole">创建角色</button>
           <p class="hint">创建时不选渠道；确认角色时再勾选 BOSS/猎聘。</p>
         </div>

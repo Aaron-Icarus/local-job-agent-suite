@@ -101,6 +101,11 @@ function createAppServer(options = {}) {
         return json(res, 200, { ok: true, ...result });
       }
 
+      if (pathname === "/api/keywords/generate" && req.method === "POST") {
+        const body = await readBody(req);
+        const result = await chat.generateKeywords(db, body);
+        return json(res, 200, { ok: true, ...result });
+      }
       if (pathname === "/api/roles" && req.method === "GET") {
         return json(res, 200, { ok: true, roles: roles.listRoles(db) });
       }
