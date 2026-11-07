@@ -25,6 +25,13 @@ const state = {
   recheckTimer: null,
   keywordRoleUuid: "",
   editRoleUuid: "",
+  deleteGroupId: "",
+  routeGroupRole: "",
+  routeGroupStage: "",
+  notificationPage: 1,
+  notificationPages: 1,
+  notificationPageSize: 10,
+  historyNotifications: [],
 };
 
 async function api(path, options = {}) {
@@ -175,7 +182,9 @@ async function refreshTasks() {
     <div class="card"><div class="num">${idle.available ? (idle.active ? "使用中" : "空闲") : "未知"}</div><div class="label">电脑状态</div></div>
   `;
   const list = document.getElementById("taskList");
-  list.innerHTML = state.tasks.length ? state.tasks.map((task) => `
+  const pendingTasks = state.tasks.filter((task) => ["queued", "running", "paused", "retrying", "stalled"].includes(task.status));
+  const historyTasks = state.tasks.filter((task) => !["queued", "running", "paused", "retrying", "stalled"].includes(task.status));
+  list.innerHTML = pendingTasks.length ? pendingTasks.map((task) => `
     <div class="row">
       <div>
         <strong>#${task.id} ${esc(task.type)}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : task.status === "failed" ? "bad" : "warn")}
@@ -186,15 +195,21 @@ async function refreshTasks() {
         ${task.status === "paused" ? `<button class="small" data-task="resume" data-id="${task.id}">继续</button>` : ""}
         ${["queued", "running", "paused"].includes(task.status) ? `<button class="small danger" data-task="cancel" data-id="${task.id}">关闭</button>` : ""}
       </div>
-    </div>`).join("") : '<div class="empty">暂无任务</div>';
-  const events = document.getElementById("eventList");
-  events.innerHTML = state.events.length ? state.events.map((event) => `
+    </div>`).join("") : '<div class="empty">暂无待处理任务</div>';
+  const historyList = document.getElementById("historyTaskList");
+  historyList.innerHTML = historyTasks.length ? historyTasks.map((task) => `
     <div class="row">
       <div>
-        <strong>事件 #${event.id}</strong> ${tag(event.status, event.status === "success" ? "ok" : event.status === "failed" ? "bad" : "warn")}
-        <div class="meta">${esc(event.event_date)} · 子任务成功 ${event.success_subtasks} / 失败 ${event.failed_subtasks} · ${esc(event.force_reason || "常规")}</div>
+        <strong>#${task.id} ${esc(task.type)}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : "bad")}
+        <div class="meta">${esc(fmt(task.updated_at))}${task.last_error ? " · " + esc(task.last_error) : ""}</div>
       </div>
-    </div>`).join("") : '<div class="empty">暂无采集事件</div>';
+    </div>`).join("") : '<div class="empty">暂无历史任务</div>';
+  const events = document.getElementById("eventList");
+  const activeEvents = state.events.filter((event) => ["queued", "running"].includes(event.status));
+  const historyEvents = state.events.filter((event) => !["queued", "running"].includes(event.status));
+  const renderEvent = (event) => `<div class="row"><div><strong>事件 #${event.id}</strong> ${tag(event.status, event.status === "success" ? "ok" : event.status === "failed" ? "bad" : "warn")}<div class="meta">${esc(event.event_date)} · 子任务成功 ${event.success_subtasks} / 失败 ${event.failed_subtasks} · ${esc(event.force_reason || "常规")}</div></div></div>`;
+  events.innerHTML = activeEvents.length ? activeEvents.map(renderEvent).join("") : '<div class="empty">暂无进行中的采集事件</div>';
+  document.getElementById("historyEventList").innerHTML = historyEvents.length ? historyEvents.map(renderEvent).join("") : '<div class="empty">暂无历史采集事件</div>';
 }
 
 async function refreshJobs() {
@@ -347,6 +362,31 @@ async function refreshMessages() {
   }
 }
 
+async function refreshNotificationHistory() {
+  const q = document.getElementById("notificationSearch")?.value.trim() || "";
+  const from = document.getElementById("notificationFrom")?.value || "";
+  const to = document.getElementById("notificationTo")?.value || "";
+  const pageSize = Number(document.getElementById("notificationPageSize")?.value || state.notificationPageSize || 10);
+  const data = await api(`/api/notifications?q=${encodeURIComponent(q)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&page=${state.notificationPage}&page_size=${pageSize}`);
+  state.historyNotifications = data.notifications || [];
+  state.notificationPage = data.page || 1;
+  state.notificationPages = data.pages || 1;
+  state.notificationPageSize = data.pageSize || pageSize;
+  const list = document.getElementById("notificationHistoryList");
+  if (list) {
+    list.innerHTML = state.historyNotifications.length ? state.historyNotifications.map((item) => `
+      <div class="row" data-notification="${item.id}" style="cursor:pointer">
+        <div>
+          <strong>${esc(item.title || item.type)}</strong> ${tag(item.status, item.status === "sent" ? "ok" : item.status === "failed" ? "bad" : "warn")}
+          <div class="meta">${esc(item.type)} · ${esc(fmt(item.created_at))} ${item.body ? "· " + esc(item.body).slice(0, 180) : ""}</div>
+        </div>
+      </div>`).join("") : '<div class="empty">没有匹配的历史通知。</div>';
+  }
+  document.getElementById("notificationPageInfo").textContent = `第 ${state.notificationPage} / ${state.notificationPages} 页 · 共 ${data.total || 0} 条`;
+  document.getElementById("btnNotificationPrev").disabled = state.notificationPage <= 1;
+  document.getElementById("btnNotificationNext").disabled = state.notificationPage >= state.notificationPages;
+}
+
 async function refreshChatSessions() {
   const data = await api("/api/chat/sessions");
   state.chatSessions = data.sessions || [];
@@ -429,39 +469,53 @@ async function sendChat() {
 async function refreshGroups() {
   const data = await api("/api/feishu-groups");
   state.feishuGroups = data.groups || [];
-  const checks = document.getElementById("groupRoleChecks");
-  if (checks) {
-    checks.innerHTML = state.roles.map((role) => `<label><input type="checkbox" data-group-role="${role.role_uuid}"> ${esc(role.role_number)} ${esc(role.nickname)} ${role.status === "running" ? "（运行中）" : ""}</label>`).join("");
+  const list = document.getElementById("groupCards");
+  if (!list) return;
+  const statusLabel = { normal: "正常", error: "异常", disabled: "停用", untested: "未测试" };
+  list.innerHTML = state.feishuGroups.length ? state.feishuGroups.map((group) => {
+    const status = group.status || (group.enabled ? "untested" : "disabled");
+    return `<div class="group-card status-${status}">
+      <div class="group-card-head">
+        <strong>${esc(group.name)}</strong>
+        <span class="tag ${status === "normal" ? "ok" : status === "error" ? "bad" : "warn"}">${statusLabel[status] || status}</span>
+        ${group.is_default ? '<span class="tag ok">默认</span>' : ""}
+      </div>
+      <div class="meta">Chat ID：${esc(group.chat_id)}</div>
+      <div class="meta">${group.last_test_at ? `最近测试：${esc(fmt(group.last_test_at))}` : "尚未测试"}</div>
+      <div class="group-card-actions">
+        <button class="small ghost" data-test-group="${group.id}">测试</button>
+        <button class="small ghost" data-edit-group="${group.id}">重命名</button>
+        <button class="small danger" data-delete-group="${group.id}">删除</button>
+      </div>
+    </div>`;
+  }).join("") : '<div class="empty">还没有飞书群。点击“添加群”开始注册。</div>';
+}
+
+async function refreshRouting() {
+  const data = await api("/api/feishu-routing");
+  const groups = data.groups || [];
+  const groupOptions = (selected) => `<option value="">不发送</option>` + groups.map((group) => `<option value="${group.id}"${selected === group.id ? " selected" : ""}>${esc(group.name)}</option>`).join("");
+  const body = document.getElementById("routeStageBody");
+  if (!body) return;
+  const stages = [["login", "登录状态"], ["error", "操作异常"], ["daily", "每日日报"]];
+  const rows = [`<tr class="route-default-row">
+    <td><strong>默认通知群</strong></td>
+    <td>所有新角色</td>
+    <td><select id="routingDefaultGroup">${groupOptions(data.defaultGroupId)}</select></td>
+    <td><span class="hint">自动加入</span></td>
+  </tr>`];
+  for (const role of data.roles || []) {
+    for (const [stageKey, stageLabel] of stages) {
+      const stage = role.stages?.[stageKey] || { groupId: "", groupName: "" };
+      rows.push(`<tr>
+        <td>${esc(role.role_number)} ${esc(role.nickname)}</td>
+        <td>${stageLabel}</td>
+        <td>${stage.groupName ? esc(stage.groupName) : '<span class="hint">不发送</span>'}</td>
+        <td><button class="small ghost" data-route-role="${role.role_uuid}" data-route-stage="${stageKey}" data-route-label="${esc(role.role_number)} ${esc(role.nickname)} / ${stageLabel}">一键填充</button></td>
+      </tr>`);
+    }
   }
-  const replySelect = document.getElementById("groupReplyRole");
-  if (replySelect) {
-    const current = replySelect.value;
-    replySelect.innerHTML = state.roles.map((role) => `<option value="${role.role_uuid}">${esc(role.role_number)} ${esc(role.nickname)}</option>`).join("");
-    if (current) replySelect.value = current;
-  }
-  const list = document.getElementById("groupList");
-  if (list) {
-    list.innerHTML = state.feishuGroups.length ? state.feishuGroups.map((group) => {
-      const roles = group.roles.map((item) => state.roles.find((role) => role.role_uuid === item.role_uuid)?.nickname || item.role_uuid.slice(0, 6)).join("、");
-      const nodes = [
-        group.roles.some((item) => item.notify_login) ? "登录" : "",
-        group.roles.some((item) => item.notify_error) ? "异常" : "",
-        group.roles.some((item) => item.notify_daily) ? "日报" : "",
-      ].filter(Boolean).join("/");
-      return `<div class="row">
-        <div>
-          <strong>${esc(group.name)}</strong> ${group.is_default ? tag("默认", "ok") : ""} ${tag(group.enabled ? "启用" : "关闭", group.enabled ? "ok" : "")}
-          <div class="meta">Chat ID: ${esc(group.chat_id)} · 角色：${esc(roles || "未选")} · 节点：${esc(nodes || "无")}${group.webhook ? " · webhook" : ""}</div>
-        </div>
-        <div class="actions">
-          ${group.is_default ? "" : `<button class="small ghost" data-default-group="${group.id}">设为默认</button>`}
-          <button class="small ghost" data-test-group="${group.id}">测试</button>
-          <button class="small ghost" data-edit-group="${group.id}">修改</button>
-          <button class="small danger" data-delete-group="${group.id}">删除</button>
-        </div>
-      </div>`;
-    }).join("") : '<div class="empty">还没有配置飞书群。</div>';
-  }
+  body.innerHTML = rows.join("");
 }
 
 function openEditRole(roleUuid) {
@@ -496,24 +550,14 @@ async function generateRoleKeywords() {
   toast(result.aiUsed ? "AI 已生成下一轮关键词" : "已用本地规则生成关键词");
 }
 
-async function refreshRouting() {
-  const table = document.getElementById("roleRoutingTable");
-  if (!table) return;
-  const data = await api("/api/feishu-routing");
-  const groups = data.groups || [];
-  const options = (selected) => `<option value=""${selected ? "" : " selected"}>不发送</option>` + groups.map((group) => `<option value="${group.id}"${selected === group.id ? " selected" : ""}>${esc(group.name)}</option>`).join("");
-  const defaultRow = `<div class="row"><div><strong>默认通知群</strong><div class="meta">新建角色默认加入这个群</div></div><div class="actions"><select id="routingDefaultGroup">${options(data.defaultGroupId)}</select></div></div>`;
-  const roleRows = (data.roles || []).map((role) => `<div class="row"><div><strong>${esc(role.role_number)} ${esc(role.nickname)}</strong><div class="meta">${esc(role.status)}</div></div><div class="actions"><select data-route-role="${role.role_uuid}" data-role-label="${esc(role.role_number)} ${esc(role.nickname)}">${options(role.groupId)}</select></div></div>`).join("");
-  table.innerHTML = defaultRow + (roleRows || '<div class="empty">还没有角色；创建角色后在这里分配群。</div>');
-}
-
 function resetGroupForm() {
   state.editingGroupId = "";
-  for (const id of ["groupName", "groupChatId", "groupWebhook"]) document.getElementById(id).value = "";
-  document.querySelectorAll('[data-group-role]').forEach((input) => { input.checked = false; });
-  const reply = document.getElementById("groupReplyRole");
-  if (reply) reply.selectedIndex = -1;
-  for (const id of ["groupNotifyLogin", "groupNotifyError", "groupNotifyDaily"]) document.getElementById(id).checked = true;
+  for (const id of ["groupName", "groupChatId", "groupWebhook"]) {
+    const input = document.getElementById(id);
+    if (input) input.value = "";
+  }
+  const title = document.getElementById("groupDialogTitle");
+  if (title) title.textContent = "添加飞书群";
 }
 
 async function refreshAll() {
@@ -526,6 +570,7 @@ async function refreshAll() {
     await refreshProviders();
     await refreshReports();
     await refreshMessages();
+    await refreshNotificationHistory().catch(() => {});
     await refreshGroups();
     await refreshRouting();
     await refreshChatSessions();
@@ -610,15 +655,6 @@ function bind() {
     } catch (error) { alert(error.message); }
   });
 
-  document.getElementById("btnFillGroup").onclick = () => {
-    document.querySelectorAll('[data-group-role]').forEach((input) => {
-      const role = state.roles.find((item) => item.role_uuid === input.dataset.groupRole);
-      input.checked = Boolean(role && role.status === "running");
-    });
-    for (const id of ["groupNotifyLogin", "groupNotifyError", "groupNotifyDaily"]) {
-      document.getElementById(id).checked = true;
-    }
-  };
   document.getElementById("btnResetGroup").onclick = resetGroupForm;
   document.getElementById("btnSyncGroups").onclick = async () => {
     try {
@@ -627,8 +663,9 @@ function bind() {
       toast(`已同步 ${result.groups} 个群到消息平台，重启服务生效`);
     } catch (error) { alert(error.message); }
   };
-  document.getElementById("btnGroupConfig").onclick = () => {
+  document.getElementById("btnAddGroup").onclick = () => {
     resetGroupForm();
+    document.getElementById("groupDialogTitle").textContent = "添加飞书群";
     document.getElementById("groupDialog").showModal();
   };
   document.getElementById("btnCloseGroupDialog").onclick = () => document.getElementById("groupDialog").close();
@@ -660,22 +697,44 @@ function bind() {
   document.getElementById("btnGenerateRoleKeywords").onclick = async () => {
     try { await generateRoleKeywords(); } catch (error) { alert(error.message); }
   };
-  document.getElementById("messageLog").addEventListener("click", (event) => {
-    const row = event.target.closest("[data-notification]");
-    if (!row) return;
-    const item = (state.notifications || []).find((entry) => String(entry.id) === String(row.dataset.notification));
+  const openNotification = (item) => {
     if (!item) return;
     document.getElementById("notificationTitle").textContent = item.title || item.type;
     document.getElementById("notificationBody").textContent = `${item.body || ""}\n\n时间：${item.created_at || ""}\n状态：${item.status || ""}`;
     document.getElementById("notificationDialog").showModal();
+  };
+  document.getElementById("messageLog").addEventListener("click", (event) => {
+    const row = event.target.closest("[data-notification]");
+    if (!row) return;
+    openNotification((state.notifications || []).find((entry) => String(entry.id) === String(row.dataset.notification)));
   });
+  document.getElementById("notificationHistoryList").addEventListener("click", (event) => {
+    const row = event.target.closest("[data-notification]");
+    if (!row) return;
+    openNotification((state.historyNotifications || []).find((entry) => String(entry.id) === String(row.dataset.notification)));
+  });
+  document.getElementById("btnSearchNotifications").onclick = async () => {
+    state.notificationPage = 1;
+    try { await refreshNotificationHistory(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("notificationSearch").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") document.getElementById("btnSearchNotifications").click();
+  });
+  document.getElementById("notificationPageSize").onchange = async () => {
+    state.notificationPage = 1;
+    try { await refreshNotificationHistory(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnNotificationPrev").onclick = async () => {
+    if (state.notificationPage <= 1) return;
+    state.notificationPage -= 1;
+    try { await refreshNotificationHistory(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnNotificationNext").onclick = async () => {
+    if (state.notificationPage >= state.notificationPages) return;
+    state.notificationPage += 1;
+    try { await refreshNotificationHistory(); } catch (error) { alert(error.message); }
+  };
   document.getElementById("btnSaveGroup").onclick = async () => {
-    const roles = [...document.querySelectorAll('[data-group-role]:checked')].map((input) => ({
-      role_uuid: input.dataset.groupRole,
-      notify_login: document.getElementById("groupNotifyLogin").checked,
-      notify_error: document.getElementById("groupNotifyError").checked,
-      notify_daily: document.getElementById("groupNotifyDaily").checked,
-    }));
     try {
       await api("/api/feishu-groups", {
         method: "POST",
@@ -684,8 +743,6 @@ function bind() {
           name: document.getElementById("groupName").value.trim(),
           chatId: document.getElementById("groupChatId").value.trim(),
           webhook: document.getElementById("groupWebhook").value.trim(),
-          replyRoleUuid: document.getElementById("groupReplyRole").value,
-          roles,
         },
       });
       state.editingGroupId = "";
@@ -693,85 +750,90 @@ function bind() {
       await refreshRouting();
       resetGroupForm();
       document.getElementById("groupDialog").close();
-      toast("飞书群配置已保存");
+      toast("飞书群已保存，请在卡片上点“测试”确认连通");
     } catch (error) { alert(error.message); }
   };
-  document.getElementById("groupList").addEventListener("click", async (event) => {
+  document.getElementById("groupCards").addEventListener("click", async (event) => {
+    const testGroup = event.target.closest("button[data-test-group]");
     const edit = event.target.closest("button[data-edit-group]");
     const del = event.target.closest("button[data-delete-group]");
-    const setDefault = event.target.closest("button[data-default-group]");
-    const testGroup = event.target.closest("button[data-test-group]");
     try {
       if (testGroup) {
-        const result = await api(`/api/feishu-groups/${testGroup.dataset.testGroup}/test`, { method: "POST", body: {} });
-        toast(`群测试已发送${result.result?.mode ? `（${result.result.mode}）` : ""}`);
-      }
-      if (setDefault) {
-        const group = state.feishuGroups.find((item) => item.id === setDefault.dataset.defaultGroup);
-        if (!group) return;
-        await api("/api/feishu-groups", {
-          method: "POST",
-          body: {
-            id: group.id,
-            name: group.name,
-            chatId: group.chat_id,
-            webhook: group.webhook || "",
-            isDefault: true,
-            replyRoleUuid: group.reply_role_uuid || "",
-            roles: group.roles,
-          },
-        });
+        try {
+          const result = await api(`/api/feishu-groups/${testGroup.dataset.testGroup}/test`, { method: "POST", body: {} });
+          toast(`群测试已发送${result.result?.mode ? `（${result.result.mode}）` : ""}`);
+        } catch (error) {
+          toast(`群测试失败：${error.message}`, true);
+        }
         await refreshGroups();
-        await refreshRouting();
-        toast(`已将「${group.name}」设为默认通知群`);
+        return;
       }
       if (edit) {
         const group = state.feishuGroups.find((item) => item.id === edit.dataset.editGroup);
         if (!group) return;
         state.editingGroupId = group.id;
+        document.getElementById("groupDialogTitle").textContent = "重命名 / 修改群";
         document.getElementById("groupName").value = group.name;
         document.getElementById("groupChatId").value = group.chat_id;
         document.getElementById("groupWebhook").value = group.webhook || "";
-        if (group.reply_role_uuid) document.getElementById("groupReplyRole").value = group.reply_role_uuid;
-        document.querySelectorAll('[data-group-role]').forEach((input) => {
-          const match = group.roles.find((item) => item.role_uuid === input.dataset.groupRole);
-          input.checked = Boolean(match);
-        });
-        const first = group.roles[0];
-        document.getElementById("groupNotifyLogin").checked = first ? first.notify_login : true;
-        document.getElementById("groupNotifyError").checked = first ? first.notify_error : true;
-        document.getElementById("groupNotifyDaily").checked = first ? first.notify_daily : true;
         document.getElementById("groupDialog").showModal();
-      }
-      if (del) {
-        await api(`/api/feishu-groups/${del.dataset.deleteGroup}`, { method: "DELETE" });
-        await refreshGroups();
-        await refreshRouting();
-      }
-    } catch (error) { alert(error.message); }
-  });
-
-  document.getElementById("roleRoutingTable").addEventListener("change", async (event) => {
-    const target = event.target;
-    try {
-      if (target.id === "routingDefaultGroup") {
-        await api("/api/feishu-groups/default", { method: "POST", body: { groupId: target.value } });
-        await refreshGroups();
-        await refreshRouting();
-        toast("默认通知群已更新");
         return;
       }
-      if (target.matches("select[data-route-role]")) {
-        await api("/api/feishu-routing", {
-          method: "POST",
-          body: { roleUuid: target.dataset.routeRole, groupId: target.value },
-        });
-        await refreshGroups();
-        await refreshRouting();
-        toast("角色发送群已更新");
+      if (del) {
+        const group = state.feishuGroups.find((item) => item.id === del.dataset.deleteGroup);
+        if (!group) return;
+        state.deleteGroupId = group.id;
+        const roleNames = group.roles.map((item) => state.roles.find((role) => role.role_uuid === item.role_uuid)?.nickname || item.role_uuid.slice(0, 6));
+        document.getElementById("deleteGroupInfo").textContent = `群名称：${group.name}\nChat ID：${group.chat_id}\n状态：${group.status}\n正在使用：${roleNames.length ? roleNames.join("、") : "无角色"}`;
+        document.getElementById("deleteGroupDialog").showModal();
       }
     } catch (error) { alert(error.message); }
   });
+  document.getElementById("btnConfirmDeleteGroup").onclick = async () => {
+    if (!state.deleteGroupId) return;
+    try {
+      await api(`/api/feishu-groups/${state.deleteGroupId}`, { method: "DELETE" });
+      state.deleteGroupId = "";
+      document.getElementById("deleteGroupDialog").close();
+      await refreshGroups();
+      await refreshRouting();
+      toast("群已删除");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnCancelDeleteGroup").onclick = () => document.getElementById("deleteGroupDialog").close();
+  document.getElementById("routeStageBody").addEventListener("change", async (event) => {
+    if (event.target.id !== "routingDefaultGroup") return;
+    try {
+      await api("/api/feishu-groups/default", { method: "POST", body: { groupId: event.target.value } });
+      await refreshGroups();
+      await refreshRouting();
+      toast("默认通知群已更新");
+    } catch (error) { alert(error.message); }
+  });
+  document.getElementById("routeStageBody").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-route-role]");
+    if (!button || !state.feishuGroups.length) {
+      if (button && !state.feishuGroups.length) toast("请先添加飞书群", true);
+      return;
+    }
+    state.routeGroupRole = button.dataset.routeRole;
+    state.routeGroupStage = button.dataset.routeStage;
+    document.getElementById("routeGroupInfo").textContent = `为 ${button.dataset.routeLabel} 选择通知群`;
+    document.getElementById("routeGroupSelect").innerHTML = '<option value="">不发送</option>' + state.feishuGroups.map((group) => `<option value="${group.id}">${esc(group.name)}</option>`).join("");
+    document.getElementById("routeGroupDialog").showModal();
+  });
+  document.getElementById("btnSaveRouteGroup").onclick = async () => {
+    try {
+      await api("/api/feishu-routing/stage", {
+        method: "POST",
+        body: { roleUuid: state.routeGroupRole, stage: state.routeGroupStage, groupId: document.getElementById("routeGroupSelect").value },
+      });
+      document.getElementById("routeGroupDialog").close();
+      await refreshRouting();
+      toast("角色通知群已更新");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnCancelRouteGroup").onclick = () => document.getElementById("routeGroupDialog").close();
 
   document.getElementById("btnRefresh").onclick = refreshAll;
   document.getElementById("btnTick").onclick = doTick;
@@ -1284,12 +1346,16 @@ function setupTooltips() {
 bind();
 setupTooltips();
 refreshAll().then(() => refreshRouting()).catch((error) => {
-  const table = document.getElementById("roleRoutingTable");
-  if (table) table.innerHTML = `<div class="empty">角色发送群加载失败：${esc(error.message)}</div>`;
+  const table = document.getElementById("routeStageBody");
+  if (table) table.innerHTML = `<tr><td colspan="4" class="empty">角色通知群加载失败：${esc(error.message)}</td></tr>`;
 });
 refreshRouting().catch((error) => {
-  const table = document.getElementById("roleRoutingTable");
-  if (table) table.innerHTML = `<div class="empty">角色发送群加载失败：${esc(error.message)}</div>`;
+  const table = document.getElementById("routeStageBody");
+  if (table) table.innerHTML = `<tr><td colspan="4" class="empty">角色通知群加载失败：${esc(error.message)}</td></tr>`;
+});
+refreshNotificationHistory().catch((error) => {
+  const list = document.getElementById("notificationHistoryList");
+  if (list) list.innerHTML = `<div class="empty">历史通知加载失败：${esc(error.message)}</div>`;
 });
 setInterval(refreshHealth, 15000);
 setInterval(() => refreshTasks().catch(() => {}), 4000);

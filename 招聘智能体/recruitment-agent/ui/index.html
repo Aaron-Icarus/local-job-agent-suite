@@ -108,12 +108,26 @@
       </div>
       <div id="taskSummary" class="cards"></div>
       <div class="panel">
-        <h2>任务列表</h2>
+        <h2>待处理任务</h2>
         <div id="taskList" class="list"></div>
       </div>
       <div class="panel">
-        <h2>采集事件</h2>
+        <h2>进行中的采集事件</h2>
         <div id="eventList" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2>历史任务与采集事件</h2>
+        <p class="hint">已完成/失败/取消的任务和历史采集事件在这里；窗口内部滚动查看。</p>
+        <div class="history-grid">
+          <div>
+            <h3>历史任务</h3>
+            <div id="historyTaskList" class="scroll-list"></div>
+          </div>
+          <div>
+            <h3>历史采集事件</h3>
+            <div id="historyEventList" class="scroll-list"></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -225,6 +239,7 @@
       <div class="split">
         <div class="panel">
           <h2>飞书机器人应用</h2>
+          <p class="hint">这里只放飞书应用凭证（App ID/Secret）和长连接服务，用于让机器人能收发消息；群的新增/删除和角色路由在上方模块，不在这里。</p>
           <label>App ID<input id="mpAppId" placeholder="cli_xxx"></label>
           <label>App Secret<input id="mpAppSecret" type="password" placeholder="只保存在本机 .env"></label>
           <label>群 ID（Chat ID）<input id="mpChatId" placeholder="oc_xxx"></label>
@@ -253,45 +268,96 @@
       <div class="panel" id="groupPanel">
         <div class="section-head">
           <div>
-            <h2>已注册飞书群（最多 10 个）</h2>
-            <p class="hint">这里显示已保存的群。新增/修改请点“调整配置”；配置保存后会注册到列表。没有默认群时只记录本地通知。</p>
+            <h2>飞书群管理</h2>
+            <p class="hint">只在这里添加、测试、重命名或删除群；群不直接分配给角色。最多 10 个群。</p>
           </div>
           <div class="toolbar">
-            <button id="btnGroupConfig">新增/调整群</button>
+            <button id="btnAddGroup">添加群</button>
             <button id="btnGroupHelp" class="ghost" title="飞书机器人和群怎么配置">?</button>
           </div>
         </div>
-        <div id="groupList" class="list"></div>
-        <div class="panel" id="roleRoutingPanel">
-          <h2>角色发送群</h2>
-          <p class="hint">第一行是默认通知群；下面每行一个角色，选择该角色发送到哪个群。修改后立即保存。</p>
-          <div id="roleRoutingTable" class="list"></div>
+        <div id="groupCards" class="group-cards"></div>
+      </div>
+
+      <div class="panel" id="routePanel">
+        <div class="section-head">
+          <div>
+            <h2>默认通知群与角色路由</h2>
+            <p class="hint">第一行是默认通知群；下面按角色、环节分配群。每行最后一键填充，不在这里增删群。</p>
+          </div>
+        </div>
+        <div class="route-table-wrap">
+          <table class="route-table">
+            <thead><tr><th>角色</th><th>环节</th><th>通知群</th><th>操作</th></tr></thead>
+            <tbody id="routeStageBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" id="notificationHistoryPanel">
+        <div class="section-head">
+          <div>
+            <h2>历史通知</h2>
+            <p class="hint">按关键词、日期筛选；每页条数可调；列表内部滚动，查看详情点一行。</p>
+          </div>
+        </div>
+        <div class="toolbar notification-filters">
+          <input id="notificationSearch" placeholder="搜索标题/内容/类型">
+          <input id="notificationFrom" type="date" title="开始日期">
+          <span>至</span>
+          <input id="notificationTo" type="date" title="结束日期">
+          <select id="notificationPageSize">
+            <option value="10">每页 10 条</option>
+            <option value="20">每页 20 条</option>
+            <option value="50">每页 50 条</option>
+          </select>
+          <button id="btnSearchNotifications">搜索</button>
+        </div>
+        <div id="notificationHistoryList" class="scroll-list history-list"></div>
+        <div class="toolbar pager">
+          <button id="btnNotificationPrev" class="ghost">上一页</button>
+          <span id="notificationPageInfo">第 1 / 1 页</span>
+          <button id="btnNotificationNext" class="ghost">下一页</button>
         </div>
       </div>
     </section>
 
     <dialog id="groupDialog">
-      <div class="panel dialog-panel" style="max-width:760px">
-        <h2>调整飞书群配置</h2>
-        <p class="hint">保存前请确认：群 ID、角色、通知节点。保存后点“关闭”返回列表；默认群用于新角色。</p>
+      <div class="panel dialog-panel" style="max-width:680px">
+        <h2 id="groupDialogTitle">添加飞书群</h2>
+        <p class="hint">这里只维护群本身；角色用哪个群在“默认通知群与角色路由”里配置。保存后请在卡片上点“测试”。</p>
         <label>群名称<input id="groupName" placeholder="例如：求职日报群"></label>
         <label>群 Chat ID<input id="groupChatId" placeholder="oc_xxx"></label>
         <label>群 Webhook（可选）<input id="groupWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
-        <label>群回复角色（@机器人 时使用）
-          <select id="groupReplyRole"></select>
-        </label>
-        <div class="checks" id="groupRoleChecks"></div>
-        <div class="checks">
-          <label><input id="groupNotifyLogin" type="checkbox" checked> 登录状态</label>
-          <label><input id="groupNotifyError" type="checkbox" checked> 操作异常</label>
-          <label><input id="groupNotifyDaily" type="checkbox" checked> 每日日报</label>
-        </div>
         <div class="toolbar">
-          <button id="btnFillGroup">一键填充运行中角色</button>
-          <button id="btnSaveGroup">保存并确认</button>
+          <button id="btnSaveGroup">保存群</button>
           <button id="btnSyncGroups" class="ghost">同步群到消息平台</button>
           <button id="btnResetGroup" class="ghost">清空</button>
           <button id="btnCloseGroupDialog" class="ghost">关闭</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="deleteGroupDialog">
+      <div class="panel dialog-panel" style="max-width:560px">
+        <h2>确认删除群</h2>
+        <div id="deleteGroupInfo" class="hint"></div>
+        <p class="hint">删除后该群的角色路由会一并移除；此操作需要二次确认。</p>
+        <div class="toolbar">
+          <button id="btnConfirmDeleteGroup" class="danger">确认删除</button>
+          <button id="btnCancelDeleteGroup" class="ghost">取消</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="routeGroupDialog">
+      <div class="panel dialog-panel" style="max-width:520px">
+        <h2>选择通知群</h2>
+        <p id="routeGroupInfo" class="hint"></p>
+        <label>通知群<select id="routeGroupSelect"></select></label>
+        <div class="toolbar">
+          <button id="btnSaveRouteGroup">保存</button>
+          <button id="btnCancelRouteGroup" class="ghost">取消</button>
         </div>
       </div>
     </dialog>
@@ -384,6 +450,6 @@
 
   <div id="customTooltip" class="custom-tooltip" role="tooltip" hidden></div>
 
-  <script src="/app.js?v=1.5.1"></script>
+  <script src="/app.js?v=1.5.2"></script>
 </body>
 </html>

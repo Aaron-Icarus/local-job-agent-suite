@@ -14,7 +14,7 @@ const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
 const { buildExcelHtml } = require("./export_service");
-const { listNotifications, createNotification } = require("./notifier");
+const { listNotifications, createNotification, queryNotifications } = require("./notifier");
 const messagePlatform = require("./message_platform_service");
 const chat = require("./chat_service");
 const feishuGroups = require("./feishu_groups");
@@ -379,7 +379,15 @@ function createAppServer(options = {}) {
       }
 
       if (pathname === "/api/notifications") {
-        return json(res, 200, { ok: true, notifications: listNotifications(db) });
+        const url = new URL(req.url, "http://127.0.0.1");
+        const result = queryNotifications(db, {
+          q: url.searchParams.get("q") || "",
+          from: url.searchParams.get("from") || "",
+          to: url.searchParams.get("to") || "",
+          page: url.searchParams.get("page") || 1,
+          pageSize: url.searchParams.get("page_size") || 10,
+        });
+        return json(res, 200, { ok: true, notifications: result.items, total: result.total, page: result.page, pageSize: result.pageSize, pages: result.pages });
       }
 
       if (pathname === "/api/messages" && req.method === "GET") {
@@ -421,6 +429,10 @@ function createAppServer(options = {}) {
         });
       }
 
+      if (pathname === "/api/feishu-routing/stage" && req.method === "POST") {
+        const body = await readBody(req);
+        return json(res, 200, { ok: true, ...feishuGroups.setRoleStageGroup(db, body.roleUuid, body.stage, body.groupId || "") });
+      }
       if (pathname === "/api/feishu-routing" && req.method === "GET") {
         return json(res, 200, { ok: true, ...feishuGroups.routing(db) });
       }
