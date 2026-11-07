@@ -1,18 +1,21 @@
 # 本地招聘信息智能体与飞书消息转发平台
 
-> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.5.0（2026-11-06）。
+> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前版本：v1.5.1（2026-11-07）。
 >
-> v1.4/v1.5 客户端方案：
+> v1.4/v1.5.1 客户端方案：
 > [需求说明](docs/requirements/v1.4_客户端化与多角色_需求说明.md) ·
 > [PRD v3.0](docs/prd/招聘信息智能体_客户端_PRD_v3.0.md) ·
 > [执行计划](docs/plans/v1.4_客户端化_执行计划.md) ·
 > [小白说明](docs/v1.4_小白说明.md) ·
-> [安装与依赖](docs/安装与依赖.md)
+> [安装与依赖](docs/安装与依赖.md) ·
+> [数据字段与日志说明](docs/数据字段与日志说明.md) ·
+> [消息路由与画像Skill设计](docs/消息路由与画像Skill设计.md) ·
+> [v1.5.1 验证记录](docs/v1.5.1_验证记录.md)
 >
 > v1.4 新数据层使用 `node:sqlite`，要求 Node.js >= 22.5.0；v1.3 旧 CLI 仍兼容原环境。
 > Electron 使用 28.3.3，`npm run electron` 已带 `--no-sandbox`（本机 Windows 兼容）。
 
-## v1.5 客户端（Windows / macOS）
+## v1.5.1 客户端（Windows / macOS）
 
 **Windows：双击根目录 `启动招聘智能体.cmd`。**  
 **macOS：双击 `启动招聘智能体.command`（首次可能需要 `chmod +x`）。**

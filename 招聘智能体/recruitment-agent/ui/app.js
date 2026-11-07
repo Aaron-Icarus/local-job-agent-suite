@@ -219,7 +219,7 @@ async function refreshJobs() {
         <strong>${esc(job.display_id)} ${esc(job.company || "")} · ${esc(job.title || "")}</strong>
         ${tag(job.job_status || job.main_job_status || "open", (job.job_status || job.main_job_status) === "closed" ? "bad" : "ok")}
         ${(job.duplicate_status || job.main_duplicate_status) === "duplicate" ? tag("重复", "bad") : ""}
-        <div class="meta">${esc(job.salary_text || "-")} · ${esc(job.city || "-")}${job.district ? " " + esc(job.district) : ""} · 采集 ${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")} · 评分 ${job.score ?? "-"} ${esc(job.tier || "")}</div>
+        <div class="meta">${esc(job.salary_text || "-")} · ${esc(job.city || "-")}${job.district ? " " + esc(job.district) : ""} · 采集 ${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")} · 评分 ${job.score ?? "-"} ${esc(job.tier || "")}${job.last_recheck_at ? " · 总刷 " + esc(job.last_recheck_at) : ""}</div>
       </div>
       <div class="actions">
         ${job.job_url ? `<a class="small" href="${esc(job.job_url)}" target="_blank" rel="noreferrer">打开岗位</a>` : ""}
@@ -791,6 +791,19 @@ function bind() {
     state.jobPage = 1;
     refreshJobs();
   };
+  document.getElementById("btnRecheckJobs").onclick = async () => {
+    const status = document.getElementById("jobRecheckStatus");
+    if (!window.confirm("将检查最近 1 周以上未见、仍未关闭的岗位；从最久未见开始，确认不存在则关闭。继续？")) return;
+    status.textContent = "正在确认历史岗位，请稍候…";
+    try {
+      const result = await api("/api/jobs/recheck", { method: "POST", body: { limit: 10 } });
+      const batch = result.batch;
+      status.textContent = `本次确认 ${batch.checked} 个，关闭 ${batch.closed} 个，未知 ${batch.skipped} 个 · 触发 ${batch.startedAt}`;
+      await refreshJobs();
+    } catch (error) {
+      status.textContent = `确认失败：${error.message}`;
+    }
+  };
   document.getElementById("btnJobReset").onclick = () => {
     for (const id of ["jobSearch", "jobLocation", "jobSalaryMin", "jobSalaryMax", "jobDateFrom", "jobDateTo"]) {
       document.getElementById(id).value = "";
@@ -822,6 +835,14 @@ function bind() {
   document.getElementById("btnExport").onclick = () => {
     const roleUuid = document.getElementById("jobRoleSelect").value;
     if (roleUuid) window.location.href = `/api/export/${roleUuid}`;
+  };
+
+  document.getElementById("btnShowLogs").onclick = async () => {
+    try {
+      const data = await api("/api/logs?limit=200");
+      document.getElementById("localLogStats").textContent = `目录：${data.stats.dir} · 总量 ${Math.round(data.stats.totalBytes / 1024)} KB / 上限 ${Math.round(data.stats.maxTotalBytes / 1024)} KB`;
+      document.getElementById("localLogs").textContent = data.logs.join("\n") || "暂无日志";
+    } catch (error) { alert(error.message); }
   };
 
   document.getElementById("settingsForm").onsubmit = async (event) => {

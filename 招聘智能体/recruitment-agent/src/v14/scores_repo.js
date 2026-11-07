@@ -344,7 +344,7 @@ function searchRoleJobs(db, roleUuid, options = {}) {
   const safePage = Math.min(page, pages);
   const jobs = db.prepare(
     `SELECT rj.*, j.display_id, j.company, j.title, j.job_url, j.salary_text, j.city, j.district,
-            j.first_seen_date, j.last_seen_date, j.ingested_at, j.job_status AS main_job_status,
+            j.first_seen_date, j.last_seen_date, j.last_recheck_at, j.ingested_at, j.job_status AS main_job_status,
             j.duplicate_status AS main_duplicate_status, j.long_lived_days
      FROM role_jobs rj
      JOIN jobs j ON j.job_uuid = rj.job_uuid

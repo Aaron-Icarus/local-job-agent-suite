@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>招聘智能体 v1.5</title>
+  <title>招聘智能体 v1.5.1</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <strong>招聘智能体</strong>
-      <span class="badge">v1.5 客户端</span>
+      <span class="badge">v1.5.1 客户端</span>
     </div>
     <div class="top-status">
       <span id="healthBadge" class="pill">连接中…</span>
@@ -118,9 +118,11 @@
         <h1>职位库</h1>
         <div class="toolbar">
           <select id="jobRoleSelect"></select>
+          <button id="btnRecheckJobs" class="ghost" data-tooltip="检查最近 1 周以上未见、但仍未关闭的岗位；从最久未见的开始，确认不存在则关闭。每批会记录总刷时间，短时间重复点击会跳过。">历史岗位确认</button>
           <button id="btnExport">导出 Excel</button>
         </div>
       </div>
+      <p id="jobRecheckStatus" class="hint"></p>
       <div class="panel filter-panel">
         <div class="filter-grid">
           <label>关键词/编号/公司/岗位/JD<input id="jobSearch" placeholder="A001、公司、岗位、JD 关键字"></label>
@@ -182,6 +184,14 @@
         <div class="form-actions"><button type="submit">保存设置</button></div>
       </form>
       <pre id="settingsLog" class="log"></pre>
+      <div class="panel">
+        <div class="section-head">
+          <h2>本地运行日志</h2>
+          <button id="btnShowLogs" class="ghost">查看最近日志</button>
+        </div>
+        <p id="localLogStats" class="hint">记录操作、告警和异常；日志总量有上限，超过后自动轮转。</p>
+        <pre id="localLogs" class="log"></pre>
+      </div>
     </section>
 
     <section id="tab-ai" class="tab-panel">

@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   first_seen_date TEXT,
   last_seen_at TEXT,
   last_seen_date TEXT,
+  last_recheck_at TEXT,
   ingested_at TEXT,
   content_hash TEXT,
   facts_updated_at TEXT,
@@ -341,8 +342,7 @@ CREATE TABLE IF NOT EXISTS feishu_groups (
   UNIQUE(chat_id)
 );
 
-CREATE TABLE IF NOT EXISTS feishu_group_roles (
-  group_id TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS feishu_group_roles (  group_id TEXT NOT NULL,
   role_uuid TEXT NOT NULL,
   notify_login INTEGER NOT NULL DEFAULT 1,
   notify_error INTEGER NOT NULL DEFAULT 1,
@@ -373,5 +373,16 @@ CREATE TABLE IF NOT EXISTS notifications (
   error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status, created_at);
+
+CREATE TABLE IF NOT EXISTS job_recheck_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  checked_count INTEGER NOT NULL DEFAULT 0,
+  closed_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT ''
+);
 
 

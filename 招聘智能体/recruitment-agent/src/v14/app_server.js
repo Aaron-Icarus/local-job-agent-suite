@@ -18,6 +18,8 @@ const { listNotifications, createNotification } = require("./notifier");
 const messagePlatform = require("./message_platform_service");
 const chat = require("./chat_service");
 const feishuGroups = require("./feishu_groups");
+const logger = require("./logger");
+const jobRecheck = require("./job_recheck");
 const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
 
 function json(res, status, payload) {
@@ -67,6 +69,13 @@ function createAppServer(options = {}) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     const pathname = decodeURIComponent(url.pathname);
+    const startedAt = Date.now();
+    res.on("finish", () => {
+      logger.info("http", `${req.method} ${pathname}`, {
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    });
     try {
       if (pathname === "/api/health") {
         return json(res, 200, {
@@ -75,6 +84,13 @@ function createAppServer(options = {}) {
           roles: roles.listRoles(db).length,
           tasks: listTasks(db, { limit: 5 }).length,
           login: loginStatus(db),
+        });
+      }
+      if (pathname === "/api/logs" && req.method === "GET") {
+        return json(res, 200, {
+          ok: true,
+          stats: logger.stats(),
+          logs: logger.tail(Number(url.searchParams.get("limit") || 200)),
         });
       }
       if (pathname === "/api/settings" && req.method === "GET") {
@@ -184,6 +200,21 @@ function createAppServer(options = {}) {
         return json(res, 200, { ok: Boolean(plan), ...(plan || {}) });
       }
 
+      if (pathname === "/api/jobs/recheck/candidates" && req.method === "GET") {
+        const items = jobRecheck.candidates(db, { limit: Number(url.searchParams.get("limit") || 20) });
+        return json(res, 200, { ok: true, count: items.length, jobs: items.map((job) => ({
+          displayId: job.display_id, company: job.company, title: job.title,
+          lastSeenDate: job.last_seen_date, lastRecheckAt: job.last_recheck_at,
+        })) });
+      }
+      if (pathname === "/api/jobs/recheck" && req.method === "POST") {
+        const body = await readBody(req);
+        const result = await jobRecheck.runRecheck(db, { limit: Number(body.limit || 10) });
+        return json(res, 200, { ok: true, ...result });
+      }
+      if (pathname === "/api/jobs/recheck/batches" && req.method === "GET") {
+        return json(res, 200, { ok: true, batches: jobRecheck.listBatches(db) });
+      }
       if (pathname === "/api/jobs" && req.method === "GET") {
         const roleUuid = url.searchParams.get("role") || "";
         if (roleUuid) {
@@ -347,6 +378,7 @@ function createAppServer(options = {}) {
       }
       return json(res, 404, { ok: false, error: "Not found" });
     } catch (error) {
+      logger.error("http", `${req.method} ${pathname} 失败：${error.message}`);
       return json(res, 400, { ok: false, error: error.message });
     }
   });
