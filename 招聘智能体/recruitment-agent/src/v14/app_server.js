@@ -314,6 +314,10 @@ function createAppServer(options = {}) {
       if (feishuGroupId && req.method === "DELETE") {
         return json(res, 200, { ok: true, deleted: feishuGroups.deleteGroup(db, feishuGroupId[1]) });
       }
+      const feishuGroupTest = pathname.match(/^\/api\/feishu-groups\/([^/]+)\/test$/);
+      if (feishuGroupTest && req.method === "POST") {
+        return json(res, 200, { ok: true, result: await feishuGroups.testGroup(db, feishuGroupTest[1]) });
+      }
       if (pathname === "/api/messages/test" && req.method === "POST") {
         const settings = getSettings(db);
         const webhook = settings.feishu_webhook || "";

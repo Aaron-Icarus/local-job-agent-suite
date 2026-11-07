@@ -446,6 +446,7 @@ async function refreshGroups() {
         </div>
         <div class="actions">
           ${group.is_default ? "" : `<button class="small ghost" data-default-group="${group.id}">设为默认</button>`}
+          <button class="small ghost" data-test-group="${group.id}">测试</button>
           <button class="small ghost" data-edit-group="${group.id}">修改</button>
           <button class="small danger" data-delete-group="${group.id}">删除</button>
         </div>
@@ -615,7 +616,12 @@ function bind() {
     const edit = event.target.closest("button[data-edit-group]");
     const del = event.target.closest("button[data-delete-group]");
     const setDefault = event.target.closest("button[data-default-group]");
+    const testGroup = event.target.closest("button[data-test-group]");
     try {
+      if (testGroup) {
+        const result = await api(`/api/feishu-groups/${testGroup.dataset.testGroup}/test`, { method: "POST", body: {} });
+        toast(`群测试已发送${result.result?.mode ? `（${result.result.mode}）` : ""}`);
+      }
       if (setDefault) {
         const group = state.feishuGroups.find((item) => item.id === setDefault.dataset.defaultGroup);
         if (!group) return;

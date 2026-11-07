@@ -100,6 +100,17 @@ function credentials() {
   };
 }
 
+async function testGroup(db, id) {
+  const group = getGroup(db, id);
+  if (!group) throw new Error("群不存在");
+  const creds = credentials();
+  return sendFeishuText(group.chat_id, `【群连通测试】${new Date().toLocaleString("zh-CN", { hour12: false })} 配置已保存，这条消息用于确认群通道。`, {
+    webhook: group.webhook,
+    appId: creds.appId,
+    appSecret: creds.appSecret,
+  });
+}
+
 async function sendToGroups(db, type, text, roleUuid = "") {
   const groups = listGroups(db).filter((group) => group.enabled);
   const targets = [];
@@ -132,4 +143,4 @@ async function sendReportToGroups(db, report) {
   return sendToGroups(db, "daily", report.content, report.role_uuid);
 }
 
-module.exports = { MAX_GROUPS, listGroups, getGroup, saveGroup, deleteGroup, applyDefaultGroup, sendToGroups, sendReportToGroups };
+module.exports = { MAX_GROUPS, listGroups, getGroup, saveGroup, deleteGroup, applyDefaultGroup, testGroup, sendToGroups, sendReportToGroups };
