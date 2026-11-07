@@ -7,6 +7,7 @@
   "scripts": {
     "electron": "electron --no-sandbox .",
     "doctor": "node src/v14/cli/doctor.js",
+    "path:audit": "node src/v14/cli/path_audit.js",
     "v14:serve": "node src/v14/cli/serve.js",
     "v14:seed-demo": "node src/v14/cli/seed_demo.js",
     "v14:clear-demo": "node src/v14/cli/clear_demo.js",

@@ -10,7 +10,8 @@
 > [安装与依赖](docs/安装与依赖.md) ·
 > [数据字段与日志说明](docs/数据字段与日志说明.md) ·
 > [消息路由与画像Skill设计](docs/消息路由与画像Skill设计.md) ·
-> [v1.5.1 验证记录](docs/v1.5.1_验证记录.md)
+> [v1.5.1 验证记录](docs/v1.5.1_验证记录.md) ·
+> [路径与便携性说明](docs/路径与便携性说明.md)
 >
 > v1.4 新数据层使用 `node:sqlite`，要求 Node.js >= 22.5.0；v1.3 旧 CLI 仍兼容原环境。
 > Electron 使用 28.3.3，`npm run electron` 已带 `--no-sandbox`（本机 Windows 兼容）。

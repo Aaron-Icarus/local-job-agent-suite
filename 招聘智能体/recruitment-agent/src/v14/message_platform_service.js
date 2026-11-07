@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const PLATFORM_DIR = path.resolve(__dirname, "..", "..", "..", "..", "消息平台", "message-platform");
+const PLATFORM_DIR = path.resolve(process.env.V14_MESSAGE_PLATFORM_DIR || path.join(__dirname, "..", "..", "..", "..", "消息平台", "message-platform"));
 const ENV_FILE = path.join(PLATFORM_DIR, ".env");
 const CHANNELS_FILE = path.join(PLATFORM_DIR, "channels.config.json");
 const ROUTES_FILE = path.join(PLATFORM_DIR, "routes.config.json");

@@ -13,6 +13,7 @@ const COMMON_PATHS = [
 ];
 
 function defaultProfileDir() {
+  if (process.env.V14_CHROME_PROFILE) return path.resolve(process.env.V14_CHROME_PROFILE);
   if (process.platform === "darwin") {
     return path.join(process.env.HOME || "", "Library", "Application Support", "JobAgent", "ChromeProfile");
   }
