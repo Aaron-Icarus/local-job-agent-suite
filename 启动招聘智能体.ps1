@@ -3,7 +3,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $app = Join-Path $root "招聘智能体\recruitment-agent"
 Set-Location -LiteralPath $app
 
-Write-Host "招聘智能体 v1.4 启动器"
+Write-Host "招聘智能体 v1.5.1 启动器"
 Write-Host "项目目录：$app"
 
 if (-not (Test-Path -LiteralPath (Join-Path $app "node_modules\electron\dist\electron.exe"))) {
@@ -20,13 +20,16 @@ if (-not (Test-Path -LiteralPath $db)) {
 
 $env:V14_DB_PATH = $db
 $env:V14_PORT = "4780"
+# Electron 进程的 PATH 可能找不到 node，显式传系统 Node 路径，避免后台服务启动失败。
+$nodeExe = (Get-Command node -ErrorAction Stop).Source
+$env:V14_NODE = $nodeExe
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-$electron = Join-Path $app "node_modules\.bin\electron.cmd"
+$electron = Join-Path $app "node_modules\electron\dist\electron.exe"
 
 if (Test-Path -LiteralPath $electron) {
   Write-Host "启动桌面客户端..."
-  Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$electron`" . --no-sandbox" -WorkingDirectory $app -WindowStyle Hidden
-  Start-Sleep -Seconds 5
+  $electronProc = Start-Process -FilePath $electron -ArgumentList @(".", "--no-sandbox") -WorkingDirectory $app -PassThru
+  Start-Sleep -Seconds 8
   $healthy = $false
   try {
     $health = Invoke-WebRequest -Uri "http://127.0.0.1:4780/api/health" -UseBasicParsing -TimeoutSec 3
@@ -34,7 +37,9 @@ if (Test-Path -LiteralPath $electron) {
   } catch {
     $healthy = $false
   }
-  if ($healthy) {
+  $alive = $false
+  try { $alive = -not (Get-Process -Id $electronProc.Id -ErrorAction Stop).HasExited } catch { $alive = $false }
+  if ($healthy -and $alive) {
     Write-Host "桌面客户端已启动。"
     exit 0
   }

@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   first_seen_date TEXT,
   last_seen_at TEXT,
   last_seen_date TEXT,
+  last_recheck_at TEXT,
   ingested_at TEXT,
   content_hash TEXT,
   facts_updated_at TEXT,
@@ -307,6 +308,49 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(report_date, role_uuid);
 
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  role_uuid TEXT NOT NULL DEFAULT '',
+  external_key TEXT NOT NULL DEFAULT '',
+  state_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES chat_sessions(id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, id);
+
+CREATE TABLE IF NOT EXISTS feishu_groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  webhook TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  reply_role_uuid TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(chat_id)
+);
+
+CREATE TABLE IF NOT EXISTS feishu_group_roles (  group_id TEXT NOT NULL,
+  role_uuid TEXT NOT NULL,
+  notify_login INTEGER NOT NULL DEFAULT 1,
+  notify_error INTEGER NOT NULL DEFAULT 1,
+  notify_daily INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY(group_id, role_uuid),
+  FOREIGN KEY(group_id) REFERENCES feishu_groups(id)
+);
+
 CREATE TABLE IF NOT EXISTS login_checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   platform TEXT NOT NULL,
@@ -329,5 +373,17 @@ CREATE TABLE IF NOT EXISTS notifications (
   error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status, created_at);
+
+CREATE TABLE IF NOT EXISTS job_recheck_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  total_count INTEGER NOT NULL DEFAULT 0,
+  checked_count INTEGER NOT NULL DEFAULT 0,
+  closed_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT ''
+);
 
 

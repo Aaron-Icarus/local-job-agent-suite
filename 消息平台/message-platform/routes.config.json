@@ -5,18 +5,29 @@
       "source_id": "feishu_moi_test_group",
       "chat_id": "oc_test_moi_group",
       "enabled": false,
-      "default_agent_id": "job_greeting_agent",
+      "default_agent_id": "local_chat_agent",
       "routing_policy": {
         "mode": "single_default_agent",
         "commands": [
           {
             "name": "ping",
-            "patterns": ["ping", "测试", "连通性"],
+            "patterns": [
+              "ping",
+              "测试",
+              "连通性"
+            ],
             "agent_id": "ping_agent"
           },
           {
             "name": "job_greeting",
-            "patterns": ["写招呼", "打招呼", "处理岗位", "详细处理", "修改", "改一下"],
+            "patterns": [
+              "写招呼",
+              "打招呼",
+              "处理岗位",
+              "详细处理",
+              "修改",
+              "改一下"
+            ],
             "agent_id": "job_greeting_agent"
           }
         ]
@@ -24,8 +35,23 @@
       "session_policy": {
         "ttl_minutes": 60,
         "max_turns": 10,
-        "continue_keywords": ["刚才", "上一个", "这条", "结果不对", "修改", "改一下", "再强调", "补充"],
-        "new_task_keywords": ["新任务", "重新开始", "换一个", "另一个岗位", "再帮我处理"]
+        "continue_keywords": [
+          "刚才",
+          "上一个",
+          "这条",
+          "结果不对",
+          "修改",
+          "改一下",
+          "再强调",
+          "补充"
+        ],
+        "new_task_keywords": [
+          "新任务",
+          "重新开始",
+          "换一个",
+          "另一个岗位",
+          "再帮我处理"
+        ]
       },
       "message_cleaner": {
         "strip_mentions": true,
@@ -44,7 +70,7 @@
       "source_id": "feishu_jobs_group",
       "chat_id": "oc_test_jobs_group",
       "enabled": false,
-      "default_agent_id": "job_greeting_agent",
+      "default_agent_id": "local_chat_agent",
       "routing_policy": {
         "mode": "single_default_agent",
         "commands": [

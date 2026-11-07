@@ -19,6 +19,8 @@ const DEFAULTS = Object.freeze({
   login_check_hours: 12,
   max_roles: 3,
   raw_retention_days: 30,
+  recheck_min_age_days: 7,
+  recheck_interval_hours: 24,
 });
 
 function minutesOfDay(value) {

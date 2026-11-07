@@ -16,6 +16,12 @@ function applySchema(db) {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
   db.exec(schema);
   ensureColumn(db, "roles", "resume_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "chat_sessions", "external_key", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "feishu_groups", "is_default", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "feishu_groups", "reply_role_uuid", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "last_recheck_at", "TEXT");
+  ensureColumn(db, "job_recheck_batches", "total_count", "INTEGER NOT NULL DEFAULT 0");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_external ON chat_sessions(external_key) WHERE external_key <> ''");
 }
 
 function ensureColumn(db, table, column, definition) {

@@ -63,11 +63,14 @@ function createWindow(url) {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromDataURL(
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg=="
-  );
+  const iconPath = path.join(__dirname, "icon.png");
+  const icon = fs.existsSync(iconPath)
+    ? nativeImage.createFromPath(iconPath)
+    : nativeImage.createFromDataURL(
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg=="
+    );
   tray = new Tray(icon);
-  tray.setToolTip("招聘智能体 v1.4");
+  tray.setToolTip("招聘智能体 v1.5.1");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {

@@ -79,6 +79,34 @@ test("API 健康检查、静态页面、设置校验和角色生命周期", asyn
   assert.equal(board.body.ok, true);
   assert.ok(Array.isArray(board.body.tasks));
 
+  const messages = await jsonFetch(`${base}/api/messages`);
+  assert.equal(messages.body.ok, true);
+  assert.equal(messages.body.original_message_platform.integrated, true);
+  const testMessage = await jsonFetch(`${base}/api/messages/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(testMessage.response.status, 400);
+
+  const group = await jsonFetch(`${base}/api/feishu-groups`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "测试群",
+      chatId: "oc_test_group",
+      isDefault: true,
+      roles: [{ role_uuid: roleUuid, notify_login: true, notify_error: true, notify_daily: true }],
+    }),
+  });
+  assert.equal(group.response.status, 200);
+  assert.equal(group.body.group.chat_id, "oc_test_group");
+  assert.equal(group.body.group.is_default, true);
+  const groups = await jsonFetch(`${base}/api/feishu-groups`);
+  assert.equal(groups.body.groups.length, 1);
+  const deleted = await fetch(`${base}/api/feishu-groups/${group.body.group.id}`, { method: "DELETE" });
+  assert.equal(deleted.status, 200);
+
   const exported = await fetch(`${base}/api/export/${roleUuid}`);
   assert.equal(exported.status, 200);
   assert.match(exported.headers.get("content-type") || "", /ms-excel/);

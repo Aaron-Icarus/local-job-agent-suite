@@ -62,6 +62,34 @@
         "can_change_config": false
       },
       "requires_confirmation": []
+    },
+    {
+      "agent_id": "local_chat_agent",
+      "name": "本地对话 Agent",
+      "description": "把飞书群里 @机器人 的消息转发到本地 v1.5 对话服务，由对话 Skill/AI 处理后回群。",
+      "enabled": true,
+      "input_schema": {
+        "session": "消息平台会话",
+        "clean_text": "用户消息正文",
+        "chat_id": "来源群聊 ID"
+      },
+      "output_schema": {
+        "reply_text": "回群文本",
+        "session_update": "会话摘要"
+      },
+      "executor_type": "local_chat",
+      "executor_config": {
+        "base_url": "http://127.0.0.1:4780",
+        "role_uuid": ""
+      },
+      "side_effect_policy": {
+        "can_write_files": false,
+        "can_send_message": true,
+        "can_change_config": false,
+        "can_run_shell": false,
+        "can_apply_jobs": false
+      },
+      "requires_confirmation": []
     }
   ]
 }

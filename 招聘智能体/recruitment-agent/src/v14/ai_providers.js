@@ -79,13 +79,21 @@ async function defaultTest(provider) {
     return { ok: Boolean(provider.command), detail: provider.command ? "configured" : "missing command" };
   }
   if (!provider.base_url || !provider.api_key) return { ok: false, error: "缺少 Base URL 或 API Key" };
-  const url = `${provider.base_url.replace(/\/+$/, "")}/models`;
+  const url = `${provider.base_url.replace(/\/+$/, "")}/chat/completions`;
   try {
     const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${provider.api_key}` },
-      signal: AbortSignal.timeout(8000),
+      method: "POST",
+      headers: { Authorization: `Bearer ${provider.api_key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: provider.model,
+        messages: [{ role: "user", content: "只回复 OK" }],
+        max_tokens: 16,
+      }),
+      signal: AbortSignal.timeout(20000),
     });
-    return { ok: response.ok, status: response.status, error: response.ok ? "" : `HTTP ${response.status}` };
+    const json = await response.json().catch(() => ({}));
+    const error = json.error?.message || `HTTP ${response.status}`;
+    return { ok: response.ok, status: response.status, error: response.ok ? "" : error.slice(0, 500) };
   } catch (error) {
     return { ok: false, error: error.message };
   }

@@ -18,6 +18,7 @@ body {
   font: 14px/1.55 "Microsoft YaHei", "Segoe UI", sans-serif;
 }
 .topbar {
+  position: sticky; top: 0; z-index: 30;
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 22px; background: #0f2d28; color: #fff;
 }
@@ -32,7 +33,7 @@ body {
   background: #e7f6f1; color: var(--ok);
 }
 .pill.bad { background: #fee4e2; color: var(--danger); }
-.tabs { display: flex; gap: 4px; padding: 8px 18px; background: #fff; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs { display: flex; gap: 4px; padding: 8px 18px; background: #fff; border-bottom: 1px solid var(--line); overflow-x: auto; position: sticky; top: 64px; z-index: 29; }
 .tabs button {
   border: 0; background: transparent; color: var(--muted); padding: 8px 12px;
   border-radius: 8px; cursor: pointer; white-space: nowrap;
@@ -60,6 +61,24 @@ h2 { font-size: 15px; margin: 0 0 12px; }
 dialog { border: 0; border-radius: 14px; padding: 0; box-shadow: 0 20px 60px rgba(16,24,40,.25); }
 dialog::backdrop { background: rgba(16,24,40,.35); }
 .dialog-panel { margin: 0; min-width: 320px; }
+.filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 12px; }
+.filter-panel { padding: 12px 14px; }
+.pager { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+.pager button { padding: 5px 9px; font-size: 12px; }
+.pager button.active { background: #0f2d28; }
+.pager input { width: 70px; padding: 5px 8px; }
+.pager .hint { margin-left: 6px; }
+.chat-layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
+.chat-messages { min-height: 360px; max-height: 58vh; overflow: auto; display: grid; gap: 10px; padding: 4px; }
+.chat-bubble { max-width: 88%; padding: 10px 12px; border-radius: 12px; white-space: pre-wrap; line-height: 1.55; }
+.chat-bubble.user { justify-self: end; background: #e7f6f1; color: #0f2d28; }
+.chat-bubble.assistant { justify-self: start; background: #f2f4f7; color: var(--text); }
+.chat-bubble .meta { color: var(--muted); font-size: 11px; margin-top: 6px; }
+.chat-compose { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+.chat-compose textarea { margin-bottom: 8px; }
+.file-line { display: flex; align-items: center; gap: 8px; }
+.file-line input { width: auto; }
+@media (max-width: 820px) { .chat-layout { grid-template-columns: 1fr; } }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
 .card .num { font-size: 24px; font-weight: 700; color: var(--brand); }
 .card .label { color: var(--muted); font-size: 12px; }
@@ -71,9 +90,9 @@ input, select, textarea {
   padding: 8px 10px; font: inherit; color: var(--text); background: #fff;
 }
 textarea { resize: vertical; }
-.checks { display: flex; gap: 12px; color: var(--text); font-size: 13px; }
-.checks label { display: flex; align-items: center; gap: 4px; margin: 0; }
-.checks input { width: auto; }
+.checks { display: flex; gap: 12px; color: var(--text); font-size: 13px; flex-wrap: wrap; }
+.checks label { display: flex; align-items: center; gap: 6px; margin: 0; min-height: 32px; }
+.checks input[type="checkbox"] { width: 24px; height: 24px; margin: 0; accent-color: var(--brand); }
 button {
   border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer;
   background: var(--brand); color: #fff; font-weight: 600;
@@ -104,3 +123,10 @@ button.small { padding: 4px 8px; font-size: 12px; }
   .split { grid-template-columns: 1fr; }
   main { padding: 14px; }
 }
+.custom-tooltip {
+  position: fixed; z-index: 1000; max-width: 320px;
+  background: #101828; color: #f9fafb; border: 1px solid #344054;
+  border-radius: 8px; padding: 9px 11px; font-size: 12px; line-height: 1.55;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, .25); pointer-events: none;
+}
+[data-tooltip] { cursor: help; }
