@@ -3,7 +3,7 @@ const { runCollectionEvent } = require("./collection_runner");
 const { processRawQueue } = require("./ingest_service");
 const { buildReport } = require("./report_service");
 const { runningRoles } = require("./task_service");
-const { ensureChrome, minimizeChrome } = require("./chrome_manager");
+const { ensureChrome } = require("./chrome_manager");
 const { getIdleStatus } = require("./system_idle");
 
 function idleThreshold() {
@@ -33,8 +33,7 @@ async function runTask(db, task) {
       return;
     }
     if (!chrome.reused) {
-      setTimeout(() => minimizeChrome(chrome.port).catch(() => {}), 1500);
-      setTimeout(() => minimizeChrome(chrome.port).catch(() => {}), 4000);
+      // Chrome 启动时已在 ensureChrome 中最小化；采集标签使用 background 创建，不抢前台。
     }
     await runCollectionEvent(db, task.payload.eventId, { taskId: task.id });
     return;

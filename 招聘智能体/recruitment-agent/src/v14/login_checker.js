@@ -1,6 +1,6 @@
 const path = require("path");
 const { spawn } = require("child_process");
-const { ensureChrome, closeChrome, minimizeChrome } = require("./chrome_manager");
+const { ensureChrome, closeChrome } = require("./chrome_manager");
 
 const SCRIPTS = {
   BOSS: path.join(__dirname, "..", "platforms", "boss", "check_boss_login_status.js"),
@@ -52,8 +52,7 @@ async function checkPlatform(platform, options = {}) {
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (!chrome.reused) {
-      setTimeout(() => minimizeChrome(chrome.port).catch(() => {}), 1200);
-      setTimeout(() => minimizeChrome(chrome.port).catch(() => {}), 3200);
+      // Chrome 启动时已在 ensureChrome 中最小化；这里不再重复，避免覆盖用户手动恢复。
     }
     let stdout = "";
     let stderr = "";

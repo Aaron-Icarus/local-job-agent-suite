@@ -115,11 +115,6 @@ async function activateTab(tab) {
   return;
 }
 
-async function createStableTab() {
-  const encoded = encodeURIComponent(bossStableUrl);
-  return getJson(`${cdpBaseUrl}/json/new?${encoded}`, { method: "PUT" });
-}
-
 async function findTab() {
   // 标签隔离：只复用采集自己创建的标签（记录在 data/collect_tabs.json），
   // 绝不复用用户手动打开的标签，避免采集导航走用户正在看的页面。
