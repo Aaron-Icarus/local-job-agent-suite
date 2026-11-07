@@ -238,31 +238,44 @@
       </div>
       <div class="panel">
         <div class="section-head">
-          <h2>飞书群与角色路由（最多 10 个群）</h2>
-          <span class="hint">没有配置群时只发软件弹窗/本地通知</span>
-        </div>
-        <div class="split">
           <div>
-            <label>群名称<input id="groupName" placeholder="例如：求职日报群"></label>
-            <label>群 Chat ID<input id="groupChatId" placeholder="oc_xxx"></label>
-            <label>群 Webhook（可选）<input id="groupWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
-            <div class="checks" id="groupRoleChecks"></div>
-            <div class="checks">
-              <label><input id="groupNotifyLogin" type="checkbox" checked> 登录状态</label>
-              <label><input id="groupNotifyError" type="checkbox" checked> 操作异常</label>
-              <label><input id="groupNotifyDaily" type="checkbox" checked> 每日日报</label>
-            </div>
-            <div class="toolbar">
-              <button id="btnFillGroup">一键填充运行中角色</button>
-              <button id="btnSaveGroup">保存群</button>
-              <button id="btnSyncGroups" class="ghost">同步群到消息平台</button>
-              <button id="btnResetGroup" class="ghost">清空</button>
-            </div>
+            <h2>飞书群与角色路由（最多 10 个群）</h2>
+            <p class="hint">这里只显示已保存的配置。新增/修改请点“调整配置”。没有默认群时只记录本地通知。</p>
           </div>
-          <div id="groupList" class="list"></div>
+          <div class="toolbar">
+            <button id="btnGroupConfig">调整配置</button>
+            <button id="btnGroupHelp" class="ghost" title="飞书机器人和群怎么配置">?</button>
+          </div>
         </div>
+        <div id="groupList" class="list"></div>
       </div>
     </section>
+
+    <dialog id="groupDialog">
+      <div class="panel dialog-panel" style="max-width:760px">
+        <h2>调整飞书群配置</h2>
+        <p class="hint">保存前请确认：群 ID、角色、通知节点。保存后点“关闭”返回列表；默认群用于新角色。</p>
+        <label>群名称<input id="groupName" placeholder="例如：求职日报群"></label>
+        <label>群 Chat ID<input id="groupChatId" placeholder="oc_xxx"></label>
+        <label>群 Webhook（可选）<input id="groupWebhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></label>
+        <label>群回复角色（@机器人 时使用）
+          <select id="groupReplyRole"></select>
+        </label>
+        <div class="checks" id="groupRoleChecks"></div>
+        <div class="checks">
+          <label><input id="groupNotifyLogin" type="checkbox" checked> 登录状态</label>
+          <label><input id="groupNotifyError" type="checkbox" checked> 操作异常</label>
+          <label><input id="groupNotifyDaily" type="checkbox" checked> 每日日报</label>
+        </div>
+        <div class="toolbar">
+          <button id="btnFillGroup">一键填充运行中角色</button>
+          <button id="btnSaveGroup">保存并确认</button>
+          <button id="btnSyncGroups" class="ghost">同步群到消息平台</button>
+          <button id="btnResetGroup" class="ghost">清空</button>
+          <button id="btnCloseGroupDialog" class="ghost">关闭</button>
+        </div>
+      </div>
+    </dialog>
 
     <section id="tab-reports" class="tab-panel">
       <h1>日报</h1>
@@ -287,6 +300,30 @@
         <button type="button" class="ghost" id="btnCancelConfirm">取消</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="helpDialog">
+    <div class="panel dialog-panel" style="max-width:680px">
+      <h2>飞书机器人与群配置</h2>
+      <ol class="help-list">
+        <li>打开飞书开发者后台，创建/进入自建应用。</li>
+        <li>在“凭证与基础信息”复制 App ID、App Secret，填入消息页并保存。</li>
+        <li>开启机器人能力，把机器人拉进目标群。</li>
+        <li>群 Chat ID 以 <code>oc_</code> 开头；可在群设置/开放平台接口中查看，群里发消息后事件里也会带。</li>
+        <li>在“事件与回调”选择长连接，订阅 <code>im.message.receive_v1</code>。</li>
+        <li>在“调整配置”里填群名称、Chat ID、角色和通知节点，保存后点“同步群到消息平台”。</li>
+        <li>点“启动消息平台”，然后在群里 @机器人 测试；没有默认群时只记录本地通知。</li>
+      </ol>
+      <div class="toolbar"><button id="btnCloseHelp">知道了</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="notificationDialog">
+    <div class="panel dialog-panel" style="max-width:680px">
+      <h2 id="notificationTitle">通知详情</h2>
+      <pre id="notificationBody" class="log"></pre>
+      <div class="toolbar"><button id="btnCloseNotification">关闭</button></div>
+    </div>
   </dialog>
 
   <script src="/app.js"></script>

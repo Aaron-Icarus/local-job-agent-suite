@@ -316,8 +316,9 @@ async function refreshMessages() {
   const list = document.getElementById("messageLog");
   if (list) {
     const items = data.notifications || [];
+    state.notifications = items;
     list.innerHTML = items.length ? items.map((item) => `
-      <div class="row">
+      <div class="row" data-notification="${item.id}" style="cursor:pointer">
         <div>
           <strong>${esc(item.title || item.type)}</strong> ${tag(item.status, item.status === "sent" ? "ok" : item.status === "failed" ? "bad" : "warn")}
           <div class="meta">${esc(item.type)} · ${esc(fmt(item.created_at))} ${item.body ? "· " + esc(item.body).slice(0, 120) : ""}</div>
@@ -423,6 +424,12 @@ async function refreshGroups() {
   if (checks) {
     checks.innerHTML = state.roles.map((role) => `<label><input type="checkbox" data-group-role="${role.role_uuid}"> ${esc(role.role_number)} ${esc(role.nickname)} ${role.status === "running" ? "（运行中）" : ""}</label>`).join("");
   }
+  const replySelect = document.getElementById("groupReplyRole");
+  if (replySelect) {
+    const current = replySelect.value;
+    replySelect.innerHTML = state.roles.map((role) => `<option value="${role.role_uuid}">${esc(role.role_number)} ${esc(role.nickname)}</option>`).join("");
+    if (current) replySelect.value = current;
+  }
   const list = document.getElementById("groupList");
   if (list) {
     list.innerHTML = state.feishuGroups.length ? state.feishuGroups.map((group) => {
@@ -434,10 +441,11 @@ async function refreshGroups() {
       ].filter(Boolean).join("/");
       return `<div class="row">
         <div>
-          <strong>${esc(group.name)}</strong> ${tag(group.enabled ? "启用" : "关闭", group.enabled ? "ok" : "")}
+          <strong>${esc(group.name)}</strong> ${group.is_default ? tag("默认", "ok") : ""} ${tag(group.enabled ? "启用" : "关闭", group.enabled ? "ok" : "")}
           <div class="meta">Chat ID: ${esc(group.chat_id)} · 角色：${esc(roles || "未选")} · 节点：${esc(nodes || "无")}${group.webhook ? " · webhook" : ""}</div>
         </div>
         <div class="actions">
+          ${group.is_default ? "" : `<button class="small ghost" data-default-group="${group.id}">设为默认</button>`}
           <button class="small ghost" data-edit-group="${group.id}">修改</button>
           <button class="small danger" data-delete-group="${group.id}">删除</button>
         </div>
@@ -559,6 +567,25 @@ function bind() {
       toast(`已同步 ${result.groups} 个群到消息平台，重启服务生效`);
     } catch (error) { alert(error.message); }
   };
+  document.getElementById("btnGroupConfig").onclick = () => {
+    state.editingGroupId = "";
+    for (const id of ["groupName", "groupChatId", "groupWebhook"]) document.getElementById(id).value = "";
+    document.querySelectorAll('[data-group-role]').forEach((input) => { input.checked = false; });
+    document.getElementById("groupDialog").showModal();
+  };
+  document.getElementById("btnCloseGroupDialog").onclick = () => document.getElementById("groupDialog").close();
+  document.getElementById("btnGroupHelp").onclick = () => document.getElementById("helpDialog").showModal();
+  document.getElementById("btnCloseHelp").onclick = () => document.getElementById("helpDialog").close();
+  document.getElementById("btnCloseNotification").onclick = () => document.getElementById("notificationDialog").close();
+  document.getElementById("messageLog").addEventListener("click", (event) => {
+    const row = event.target.closest("[data-notification]");
+    if (!row) return;
+    const item = (state.notifications || []).find((entry) => String(entry.id) === String(row.dataset.notification));
+    if (!item) return;
+    document.getElementById("notificationTitle").textContent = item.title || item.type;
+    document.getElementById("notificationBody").textContent = `${item.body || ""}\n\n时间：${item.created_at || ""}\n状态：${item.status || ""}`;
+    document.getElementById("notificationDialog").showModal();
+  });
   document.getElementById("btnSaveGroup").onclick = async () => {
     const roles = [...document.querySelectorAll('[data-group-role]:checked')].map((input) => ({
       role_uuid: input.dataset.groupRole,
@@ -574,18 +601,39 @@ function bind() {
           name: document.getElementById("groupName").value.trim(),
           chatId: document.getElementById("groupChatId").value.trim(),
           webhook: document.getElementById("groupWebhook").value.trim(),
+          replyRoleUuid: document.getElementById("groupReplyRole").value,
           roles,
         },
       });
       state.editingGroupId = "";
       await refreshGroups();
+      document.getElementById("groupDialog").close();
       toast("飞书群配置已保存");
     } catch (error) { alert(error.message); }
   };
   document.getElementById("groupList").addEventListener("click", async (event) => {
     const edit = event.target.closest("button[data-edit-group]");
     const del = event.target.closest("button[data-delete-group]");
+    const setDefault = event.target.closest("button[data-default-group]");
     try {
+      if (setDefault) {
+        const group = state.feishuGroups.find((item) => item.id === setDefault.dataset.defaultGroup);
+        if (!group) return;
+        await api("/api/feishu-groups", {
+          method: "POST",
+          body: {
+            id: group.id,
+            name: group.name,
+            chatId: group.chat_id,
+            webhook: group.webhook || "",
+            isDefault: true,
+            replyRoleUuid: group.reply_role_uuid || "",
+            roles: group.roles,
+          },
+        });
+        await refreshGroups();
+        toast(`已将「${group.name}」设为默认通知群`);
+      }
       if (edit) {
         const group = state.feishuGroups.find((item) => item.id === edit.dataset.editGroup);
         if (!group) return;
@@ -593,6 +641,7 @@ function bind() {
         document.getElementById("groupName").value = group.name;
         document.getElementById("groupChatId").value = group.chat_id;
         document.getElementById("groupWebhook").value = group.webhook || "";
+        if (group.reply_role_uuid) document.getElementById("groupReplyRole").value = group.reply_role_uuid;
         document.querySelectorAll('[data-group-role]').forEach((input) => {
           const match = group.roles.find((item) => item.role_uuid === input.dataset.groupRole);
           input.checked = Boolean(match);
@@ -601,6 +650,7 @@ function bind() {
         document.getElementById("groupNotifyLogin").checked = first ? first.notify_login : true;
         document.getElementById("groupNotifyError").checked = first ? first.notify_error : true;
         document.getElementById("groupNotifyDaily").checked = first ? first.notify_daily : true;
+        document.getElementById("groupDialog").showModal();
       }
       if (del) {
         await api(`/api/feishu-groups/${del.dataset.deleteGroup}`, { method: "DELETE" });

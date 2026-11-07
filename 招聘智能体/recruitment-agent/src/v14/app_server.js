@@ -109,7 +109,8 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/roles" && req.method === "POST") {
         const result = roles.createRole(db, await readBody(req));
-        return json(res, 200, { ok: true, ...result });
+        const defaultGroup = feishuGroups.applyDefaultGroup(db, result.role.role_uuid);
+        return json(res, 200, { ok: true, ...result, defaultGroup });
       }
 
       if (pathname === "/api/resumes" && req.method === "GET") {

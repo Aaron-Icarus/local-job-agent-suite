@@ -18,7 +18,7 @@ async function runLocalChatAgent(input, agentConfig) {
       const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/feishu-groups`, { signal: AbortSignal.timeout(5000) });
       const json = await response.json();
       const group = (json.groups || []).find((item) => item.chat_id === input.chat_id);
-      roleUuid = group?.roles?.[0]?.role_uuid || "";
+      roleUuid = group?.reply_role_uuid || group?.roles?.[0]?.role_uuid || "";
     } catch {
       // 没有群角色映射时继续
     }

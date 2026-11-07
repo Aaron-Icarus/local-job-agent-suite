@@ -334,6 +334,8 @@ CREATE TABLE IF NOT EXISTS feishu_groups (
   chat_id TEXT NOT NULL,
   webhook TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  reply_role_uuid TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(chat_id)

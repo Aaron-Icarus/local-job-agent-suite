@@ -17,6 +17,8 @@ function applySchema(db) {
   db.exec(schema);
   ensureColumn(db, "roles", "resume_id", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "chat_sessions", "external_key", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "feishu_groups", "is_default", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "feishu_groups", "reply_role_uuid", "TEXT NOT NULL DEFAULT ''");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_external ON chat_sessions(external_key) WHERE external_key <> ''");
 }
 

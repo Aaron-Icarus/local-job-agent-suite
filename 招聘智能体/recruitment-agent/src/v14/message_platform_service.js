@@ -129,7 +129,7 @@ function startService() {
     throw new Error("未找到消息平台长连接入口");
   }
   fs.mkdirSync(LOG_DIR, { recursive: true });
-  fs.appendFileSync(LOG_FILE, `\n[${new Date().toISOString()}] starting\n`, "utf8");
+  fs.writeFileSync(LOG_FILE, `[${new Date().toISOString()}] starting\n`, "utf8");
   child = spawn(process.execPath, ["src/cli/start_feishu_long_connection.js"], {
     cwd: PLATFORM_DIR,
     env: process.env,
