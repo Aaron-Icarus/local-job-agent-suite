@@ -84,7 +84,7 @@ function createTray() {
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg=="
     );
   tray = new Tray(icon);
-  tray.setToolTip("招聘智能体 v1.5.1");
+  tray.setToolTip("招聘智能体 v1.5.2");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {

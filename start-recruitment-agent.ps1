@@ -3,7 +3,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $app = Join-Path $root "招聘智能体\recruitment-agent"
 Set-Location -LiteralPath $app
 
-Write-Host "招聘智能体 v1.5.1 启动器"
+Write-Host "招聘智能体 v1.5.2 启动器"
 Write-Host "项目目录：$app"
 
 if (-not (Test-Path -LiteralPath (Join-Path $app "node_modules\electron\dist\electron.exe"))) {
