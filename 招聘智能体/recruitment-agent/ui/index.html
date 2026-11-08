@@ -87,14 +87,16 @@
           <h2>新建角色</h2>
           <label>昵称<input id="roleNickname" placeholder="例如：实施顾问-A"></label>
           <label>导入简历（MD/TXT/DOCX/DOC/PDF）<input id="resumeFile" type="file" accept=".md,.markdown,.txt,.docx,.doc,.pdf"></label>
-          <div id="resumeStatus" class="hint">未选择简历；也可以直接粘贴到下方</div>
-          <label>简历/画像<textarea id="roleProfile" rows="6" placeholder="粘贴简历或画像；导入 MD 后会自动填入"></textarea></label>
+          <div id="resumeStatus" class="hint">未选择简历；也可以直接粘贴简历或标准画像</div>
+          <label>简历/画像<textarea id="roleProfile" rows="6" placeholder="粘贴简历原文，或粘贴已整理好的标准画像；创建时会结合 Skill 生成/校正"></textarea></label>
           <label>目标岗位<input id="roleTargets" placeholder="AI项目经理, AI产品经理"></label>
           <label>目标城市（可多个，用“、”分隔）<input id="roleCity" placeholder="江苏省、苏州市、上海市浦东新区"></label>
           <div id="roleCityPreview" class="hint"></div>
           <label>期望薪资（千元）<span class="salary-range"><input id="roleSalaryMin" type="number" min="1" step="1" placeholder="18"> 至 <input id="roleSalaryMax" type="number" min="1" step="1" placeholder="30"></span></label>
           <button id="btnGenerateKeywords" type="button" class="keyword-generate-btn">AI 生成每日关键词</button>
-          <label>关键词（用“、”分隔）<input id="roleKeywords" placeholder="AI项目经理、AI产品经理、智能体交付"></label>
+          <label>关键词（用“、”分隔）<input id="roleKeywords" placeholder="AI 生成的每日关键词"></label>
+          <label>人工高优关键词（优先采集）<input id="roleManualKeywords" placeholder="例如：FDE、AI交付、智能体实施"></label>
+          <label>默认兜底关键词<input id="roleFallbackKeywords" placeholder="AI 未生成时可手动填写"></label>
           <p class="hint">每日关键词单独保存到角色，不写入画像 MD。</p>
           <button id="btnCreateRole">创建角色</button>
           <p class="hint">创建时不选渠道；确认角色时再勾选 BOSS/猎聘。</p>
@@ -385,6 +387,8 @@
       <label>目标城市（可多个，用“、”分隔）<input id="editRoleCity"></label>
       <label>期望薪资（千元）<span class="salary-range"><input id="editSalaryMin" type="number" min="1" step="1"> 至 <input id="editSalaryMax" type="number" min="1" step="1"></span></label>
       <label>关键词（用“、”分隔）<input id="editRoleKeywords"></label>
+      <label>人工高优关键词<input id="editManualKeywords"></label>
+      <label>默认兜底关键词<input id="editFallbackKeywords"></label>
       <div class="toolbar">
         <button id="btnSaveRoleEdit">保存修改</button>
         <button id="btnCancelRoleEdit" class="ghost">取消</button>
@@ -473,10 +477,19 @@
   </dialog>
 
   <dialog id="keywordDialog">
-    <div class="panel dialog-panel" style="max-width:720px">
+    <div class="panel dialog-panel" style="max-width:780px">
       <h2>角色关键词</h2>
-      <p class="hint">推荐词用于下一轮；兜底词在推荐词效果差时使用。画像 MD 不包含关键词。</p>
-      <div id="keywordList" class="list"></div>
+      <p class="hint">推荐词用于下一轮；人工词优先采集；兜底词在推荐词效果差时使用。画像 MD 不包含关键词。</p>
+      <h3>AI 每日关键词</h3>
+      <div id="keywordRecommended" class="keyword-grid"></div>
+      <h3>人工高优关键词</h3>
+      <div class="keyword-manual-bar">
+        <input id="manualKeywordInput" placeholder="输入关键词，例如 FDE、AI交付">
+        <button id="btnAddManualKeyword" class="small">加入人工词</button>
+      </div>
+      <div id="keywordManual" class="keyword-grid"></div>
+      <h3>默认兜底关键词</h3>
+      <div id="keywordFallback" class="keyword-grid"></div>
       <div class="toolbar">
         <button id="btnGenerateRoleKeywords">生成下一轮</button>
         <button id="btnCloseKeywords" class="ghost">关闭</button>

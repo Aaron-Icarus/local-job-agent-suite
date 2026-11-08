@@ -19,6 +19,17 @@ function applySchema(db) {
   ensureColumn(db, "roles", "target_cities_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "roles", "salary_min", "INTEGER");
   ensureColumn(db, "roles", "salary_max", "INTEGER");
+  ensureColumn(db, "roles", "profile_status", "TEXT NOT NULL DEFAULT 'ready'");
+  ensureColumn(db, "resumes", "file_path", "TEXT NOT NULL DEFAULT ''");
+  db.exec(`CREATE TABLE IF NOT EXISTS profile_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resume_id TEXT NOT NULL DEFAULT '',
+    file_path TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
   ensureColumn(db, "chat_sessions", "external_key", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "feishu_groups", "is_default", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "feishu_groups", "reply_role_uuid", "TEXT NOT NULL DEFAULT ''");

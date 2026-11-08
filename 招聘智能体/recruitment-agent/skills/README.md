@@ -4,9 +4,10 @@
 
 ## 文件说明
 
-- `resume_profile_skill.md`：如何从简历生成角色画像，包含字段、隐私和输出格式。
-- `daily_keyword_skill.md`：如何生成每日搜索关键词、推荐词/兜底词和轮换规则。
+- `resume_profile_skill.md`：如何从简历生成角色画像，包含字段、隐私、通用提炼方法和输出格式。
+- `daily_keyword_skill.md`：如何生成 AI 推荐词、人工高优词、默认兜底词，以及跨专业规则。
 - `usage_skill.md`：软件整体操作顺序、配置 AI/飞书群/角色、输出物校验。
+- 原始简历统一存 `data/resumes/files/`，角色通过 `resumes.file_path` 回溯；AI 失败时看 `profile_tasks`。
 
 ## 给其他智能体怎么问
 

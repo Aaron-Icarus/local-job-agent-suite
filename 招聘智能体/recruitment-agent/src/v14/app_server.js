@@ -12,6 +12,7 @@ const { loginStatus, recordCheck } = require("./login_monitor");
 const { checkPlatform } = require("./login_checker");
 const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome } = require("./chrome_manager");
 const { extractDocument } = require("./document_text");
+const { prepareProfile } = require("./profile_generator");
 const { normalizeCities, normalizeSalary } = require("./location_service");
 const skillsDir = path.resolve(__dirname, "..", "..", "skills");
 const resumes = require("./resumes_repo");
@@ -134,6 +135,14 @@ function createAppServer(options = {}) {
         const result = await chat.runTurn(db, chatMessage[1], body);
         return json(res, 200, { ok: true, ...result });
       }
+      const roleKeywordsManual = pathname.match(/^\/api\/roles\/([^/]+)\/keywords\/manual$/);
+      if (roleKeywordsManual && req.method === "POST") {
+        const body = await readBody(req);
+        const keywords = body.action === "remove"
+          ? keywordService.removeManual(db, roleKeywordsManual[1], body.keyword)
+          : keywordService.addManual(db, roleKeywordsManual[1], body.keyword);
+        return json(res, 200, { ok: true, keywords });
+      }
       const roleKeywords = pathname.match(/^\/api\/roles\/([^/]+)\/keywords$/);
       if (roleKeywords && req.method === "GET") {
         return json(res, 200, { ok: true, keywords: keywordService.list(db, roleKeywords[1]) });
@@ -154,20 +163,61 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/roles" && req.method === "POST") {
         const body = await readBody(req);
-        const result = roles.createRole(db, body);
-        if (body.role_keywords?.length) {
+        const prepared = await prepareProfile(db, body);
+        const result = roles.createRole(db, {
+          ...body,
+          profile_md: prepared.profile_md,
+          resume_id: prepared.resume_id || body.resume_id || "",
+          profile_status: prepared.profile_status,
+        });
+        if (body.role_keywords?.length || body.manual_keywords?.length || body.fallback_keywords?.length) {
           const fallback = body.fallback_keywords?.length
             ? body.fallback_keywords
-            : (keywordService.extractFallbackFromProfile(body.profile_md).length
-              ? keywordService.extractFallbackFromProfile(body.profile_md)
-              : keywordService.fallbackKeywords(body).fallback);
+            : (keywordService.extractFallbackFromProfile(prepared.profile_md).length
+              ? keywordService.extractFallbackFromProfile(prepared.profile_md)
+              : keywordService.fallbackKeywords({ ...body, profile_md: prepared.profile_md }).fallback);
           keywordService.save(db, result.role.role_uuid, {
-            recommended: body.role_keywords,
+            recommended: body.role_keywords || [],
             fallback,
+          });
+          for (const keyword of body.manual_keywords || []) {
+            keywordService.addManual(db, result.role.role_uuid, keyword);
+          }
+        } else {
+          await chat.generateKeywords(db, {
+            role_uuid: result.role.role_uuid,
+            profile_md: prepared.profile_md,
+            target_roles: body.target_roles || "",
+            target_city: body.target_city || "",
+            target_salary: body.target_salary || "",
+            career_expectation: body.career_expectation || "",
           });
         }
         const defaultGroup = feishuGroups.applyDefaultGroup(db, result.role.role_uuid);
-        return json(res, 200, { ok: true, ...result, defaultGroup });
+        return json(res, 200, { ok: true, ...result, profile_status: prepared.profile_status, profile_error: prepared.profile_error, profile_provider: prepared.provider, defaultGroup });
+      }
+      const roleReprofile = pathname.match(/^\/api\/roles\/([^/]+)\/reprofile$/);
+      if (roleReprofile && req.method === "POST") {
+        const role = roles.getRole(db, roleReprofile[1]);
+        if (!role) return json(res, 404, { ok: false, error: "角色不存在" });
+        const resume = role.resume_id ? resumes.getResume(db, role.resume_id) : null;
+        if (!resume) return json(res, 400, { ok: false, error: "该角色没有关联简历，请重新上传" });
+        const prepared = await prepareProfile(db, {
+          resume_md: resume.raw_md,
+          resume_id: resume.id,
+          nickname: role.nickname,
+          target_roles: role.target_roles,
+          target_city: role.target_city,
+          salary_min: role.salary_min,
+          salary_max: role.salary_max,
+          profile_md: "",
+        });
+        const updated = roles.updateRole(db, role.role_uuid, { profile_md: prepared.profile_md, profile_status: prepared.profile_status });
+        if (prepared.profile_status === "ready") {
+          db.prepare("UPDATE profile_tasks SET status = 'done', updated_at = ? WHERE resume_id = ? AND status = 'pending'")
+            .run(new Date().toISOString(), resume.id);
+        }
+        return json(res, 200, { ok: true, role: updated, ...prepared });
       }
       const roleEdit = pathname.match(/^\/api\/roles\/([^/]+)$/);
       if (roleEdit && ["PATCH", "PUT"].includes(req.method)) {
@@ -178,6 +228,10 @@ function createAppServer(options = {}) {
             recommended: body.role_keywords,
             fallback: body.fallback_keywords || keywordService.extractFallbackFromProfile(body.profile_md),
           });
+        }
+        if (Array.isArray(body.manual_keywords)) {
+          db.prepare("DELETE FROM role_keyword_entries WHERE role_uuid = ? AND category = 'manual'").run(roleEdit[1]);
+          for (const keyword of body.manual_keywords) keywordService.addManual(db, roleEdit[1], keyword);
         }
         return json(res, 200, { ok: true, ...result });
       }

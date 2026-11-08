@@ -10,6 +10,7 @@ const state = {
   confirmRoleId: "",
   resumeContent: "",
   resumeFileName: "",
+  resumeFileBase64: "",
   jobPage: 1,
   jobPageSize: 20,
   jobTotal: 0,
@@ -150,9 +151,12 @@ async function refreshRoles() {
         <div>
           <strong>${esc(role.role_number)} · ${esc(role.nickname)}</strong>
           ${tag(role.status, role.status === "running" ? "ok" : role.status === "pending_confirm" ? "warn" : "")}
+          ${role.profile_status === "pending" ? tag("画像待整理", "warn") : ""}
           <div class="meta">${esc(role.target_roles || "未设置目标岗位")} · 渠道：${esc(channels)} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}</div>
         </div>
         <div class="actions">
+          ${role.profile_status === "pending" ? `<button class="small" data-action="reprofile" data-id="${role.role_uuid}">重新整理画像</button>` : ""}
+          ${role.resume_id ? `<button class="small ghost" data-resume="${role.resume_id}">原始简历</button>` : ""}
           <button class="small keyword-link" data-keywords="${role.role_uuid}">关键词</button>
           ${role.status === "pending_confirm" ? `<button class="small" data-action="confirm" data-id="${role.role_uuid}">确认渠道</button>` : ""}
           ${role.status === "pending_confirm" ? `<button class="small ghost" data-edit-role="${role.role_uuid}">修改</button>` : ""}
@@ -395,8 +399,14 @@ async function loadResumeFile(file, target = "chat") {
   } else {
     state.resumeContent = content;
     state.resumeFileName = file.name;
-    document.getElementById("roleProfile").value = content;
-    document.getElementById("resumeStatus").textContent = `已导入：${file.name}（${content.length} 字）`;
+    state.resumeFileBase64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || "").split(",").pop() || "");
+      reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+      reader.readAsDataURL(file);
+    });
+    document.getElementById("roleProfile").value = "";
+    document.getElementById("resumeStatus").textContent = `已上传：${file.name}（${content.length} 字），创建角色时会结合 Skill 生成画像`;
   }
   return content;
 }
@@ -605,7 +615,7 @@ async function refreshRouting() {
   body.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="5" class="empty">还没有角色；创建角色后在这里配置。</td></tr>';
 }
 
-function openEditRole(roleUuid) {
+async function openEditRole(roleUuid) {
   const role = state.roles.find((item) => item.role_uuid === roleUuid);
   if (!role) return;
   state.editRoleUuid = roleUuid;
@@ -616,19 +626,55 @@ function openEditRole(roleUuid) {
   document.getElementById("editSalaryMin").value = role.salary_min || "";
   document.getElementById("editSalaryMax").value = role.salary_max || "";
   document.getElementById("editRoleKeywords").value = (role.role_keywords || []).join("、");
+  try {
+    const data = await api(`/api/roles/${roleUuid}/keywords`);
+    const current = (data.keywords || []).filter((item) => item.is_current);
+    const manual = current.filter((item) => item.category === "manual").map((item) => item.keyword);
+    const fallback = current.filter((item) => item.category === "fallback").map((item) => item.keyword);
+    document.getElementById("editRoleKeywords").value = (role.role_keywords || []).filter((item) => !manual.includes(item)).join("、");
+    document.getElementById("editManualKeywords").value = manual.join("、");
+    document.getElementById("editFallbackKeywords").value = fallback.join("、");
+  } catch {
+    document.getElementById("editManualKeywords").value = "";
+    document.getElementById("editFallbackKeywords").value = "";
+  }
   document.getElementById("editRoleDialog").showModal();
 }
 
-async function openKeywordDialog(roleUuid) {  state.keywordRoleUuid = roleUuid;
+async function openKeywordDialog(roleUuid) {
+  state.keywordRoleUuid = roleUuid;
   const data = await api(`/api/roles/${roleUuid}/keywords`);
-  const entries = data.keywords || [];
-  const current = entries.filter((item) => item.is_current);
-  const renderGroup = (category, label) => {
-    const rows = current.filter((item) => item.category === category);
-    return `<h2>${label}</h2>${rows.length ? rows.map((item) => `<div class="row"><div><strong>${esc(item.keyword)}</strong><div class="meta">使用 ${item.use_count || 0} 次 · 新增 ${item.new_count || 0} · 重复 ${item.duplicate_count || 0} · 失败 ${item.failed_count || 0}${item.last_used_at ? " · 上次 " + esc(item.last_used_at) : ""}</div></div></div>`).join("") : '<div class="empty">暂无</div>'}`;
+  const entries = (data.keywords || []).filter((item) => item.is_current);
+  const renderGroup = (containerId, category) => {
+    const rows = entries.filter((item) => item.category === category);
+    document.getElementById(containerId).innerHTML = rows.length ? rows.map((item) => `
+      <div class="keyword-card">
+        <strong>${esc(item.keyword)}</strong>
+        <div class="meta">${category === "manual" ? "人工高优" : category === "fallback" ? "默认兜底" : "AI 推荐"}${item.use_count ? ` · 用 ${item.use_count} 次` : ""}${item.new_count ? ` · 新增 ${item.new_count}` : ""}${item.failed_count ? ` · 失败 ${item.failed_count}` : ""}</div>
+        ${category === "manual" ? `<button class="small danger" data-remove-manual="${esc(item.keyword)}">删除</button>` : ""}
+      </div>`).join("") : '<div class="empty">暂无</div>';
   };
-  document.getElementById("keywordList").innerHTML = renderGroup("recommended", "下一轮推荐") + renderGroup("fallback", "默认兜底");
+  renderGroup("keywordRecommended", "recommended");
+  renderGroup("keywordManual", "manual");
+  renderGroup("keywordFallback", "fallback");
   document.getElementById("keywordDialog").showModal();
+}
+
+async function addManualKeyword() {
+  if (!state.keywordRoleUuid) return;
+  const input = document.getElementById("manualKeywordInput");
+  const keyword = input.value.trim();
+  if (!keyword) return;
+  await api(`/api/roles/${state.keywordRoleUuid}/keywords/manual`, { method: "POST", body: { action: "add", keyword } });
+  input.value = "";
+  await openKeywordDialog(state.keywordRoleUuid);
+  toast(`已加入人工高优关键词：${keyword}`);
+}
+
+async function removeManualKeyword(keyword) {
+  if (!state.keywordRoleUuid) return;
+  await api(`/api/roles/${state.keywordRoleUuid}/keywords/manual`, { method: "POST", body: { action: "remove", keyword } });
+  await openKeywordDialog(state.keywordRoleUuid);
 }
 
 async function generateRoleKeywords() {
@@ -778,6 +824,19 @@ function bind() {
   document.getElementById("btnCloseHelp").onclick = () => document.getElementById("helpDialog").close();
   document.getElementById("btnCloseNotification").onclick = () => document.getElementById("notificationDialog").close();
   document.getElementById("btnCloseKeywords").onclick = () => document.getElementById("keywordDialog").close();
+  document.getElementById("btnAddManualKeyword").onclick = async () => {
+    try { await addManualKeyword(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("manualKeywordInput").addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    try { await addManualKeyword(); } catch (error) { alert(error.message); }
+  });
+  document.getElementById("keywordManual").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-remove-manual]");
+    if (!button) return;
+    try { await removeManualKeyword(button.dataset.removeManual); } catch (error) { alert(error.message); }
+  });
   document.getElementById("keywordDialog").addEventListener("click", (event) => {
     if (event.target === document.getElementById("keywordDialog")) document.getElementById("keywordDialog").close();
   });
@@ -796,6 +855,8 @@ function bind() {
           salary_min: Number(document.getElementById("editSalaryMin").value || 0) || null,
           salary_max: Number(document.getElementById("editSalaryMax").value || 0) || null,
           role_keywords: document.getElementById("editRoleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+          manual_keywords: document.getElementById("editManualKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+          fallback_keywords: document.getElementById("editFallbackKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
         },
       });
       document.getElementById("editRoleDialog").close();
@@ -1017,6 +1078,7 @@ function bind() {
         },
       });
       document.getElementById("roleKeywords").value = (result.keywords || []).join("、");
+      document.getElementById("roleFallbackKeywords").value = (result.fallbackKeywords || []).join("、");
       toast(result.aiUsed ? "AI 已生成每日关键词" : "已用本地规则生成关键词");
     } catch (error) { alert(error.message); }
   };
@@ -1041,13 +1103,15 @@ function bind() {
       if (min != null && (!Number.isInteger(min) || min <= 0)) throw new Error("期望薪资下限必须是正整数（千元）");
       if (max != null && (!Number.isInteger(max) || max <= 0)) throw new Error("期望薪资上限必须是正整数且不能为 0");
       if (min != null && max != null && max < min) throw new Error("期望薪资上限不能小于下限");
+      const profileInput = document.getElementById("roleProfile").value.trim();
       const result = await api("/api/roles", {
         method: "POST",
         body: {
           nickname: document.getElementById("roleNickname").value.trim(),
-          profile_md: document.getElementById("roleProfile").value.trim(),
-          resume_md: state.resumeContent,
+          profile_md: profileInput,
+          resume_md: state.resumeContent || profileInput,
           resume_file_name: state.resumeFileName,
+          resume_file_base64: state.resumeFileBase64,
           target_roles: document.getElementById("roleTargets").value.trim(),
           target_city: document.getElementById("roleCity").value.trim(),
           target_cities: document.getElementById("roleCity").value.trim(),
@@ -1055,14 +1119,20 @@ function bind() {
           salary_max: max || null,
           target_salary: min && max ? `${min}-${max}K` : "",
           role_keywords: document.getElementById("roleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+          manual_keywords: document.getElementById("roleManualKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+          fallback_keywords: document.getElementById("roleFallbackKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
         },
       });
+      if (result.profile_status === "pending") {
+        alert(`角色已创建，但 AI 画像整理失败：${result.profile_error || "AI 能力未配置"}\n原始简历和待处理记录已保存，配置好 AI 后可重新整理。`);
+      }
       if (result.similar?.length) {
         alert(`与已有角色相似：${result.similar.map((item) => `${item.role_number} ${item.nickname}（${Math.round(item.score * 100)}%）`).join("，")}`);
       }
       state.resumeContent = "";
       state.resumeFileName = "";
-      for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalaryMin", "roleSalaryMax", "roleKeywords"]) {
+      state.resumeFileBase64 = "";
+      for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalaryMin", "roleSalaryMax", "roleKeywords", "roleManualKeywords", "roleFallbackKeywords"]) {
         document.getElementById(id).value = "";
       }
       document.getElementById("resumeFile").value = "";
@@ -1102,6 +1172,14 @@ function bind() {
     const keywordButton = event.target.closest("button[data-keywords]");
     if (keywordButton) {
       try { await openKeywordDialog(keywordButton.dataset.keywords); } catch (error) { alert(error.message); }
+      return;
+    }
+    const resumeButton = event.target.closest("button[data-resume]");
+    if (resumeButton) {
+      try {
+        const data = await api(`/api/resumes/${resumeButton.dataset.resume}`);
+        alert(`原始简历：${data.resume.file_name || "未命名"}\n路径：${data.resume.file_path || "旧数据未保存原文件"}`);
+      } catch (error) { alert(error.message); }
       return;
     }
     const button = event.target.closest("button[data-action]");
