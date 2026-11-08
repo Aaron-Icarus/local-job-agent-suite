@@ -122,10 +122,10 @@ function createRole(db, input = {}) {
     db.prepare(
       `INSERT INTO roles(
         role_uuid, role_number, nickname, status, profile_md, resume_id, resume_source, target_roles,
-        target_city, target_salary, target_cities_json, salary_min, salary_max, special_requirements, role_keywords_json, role_channels_json,
+        target_city, target_salary, target_cities_json, salary_min, salary_max, profile_status, special_requirements, role_keywords_json, role_channels_json,
         collection_weight, ai_provider_id, report_channel_id, has_started, created_at, updated_at,
         confirmed_at, modified_at, first_started_at, deleted_at
-      ) VALUES (?, ?, ?, 'pending_confirm', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, NULL)`
+      ) VALUES (?, ?, ?, 'pending_confirm', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, NULL)`
     ).run(
       roleUuid,
       roleNumber,
@@ -139,6 +139,7 @@ function createRole(db, input = {}) {
       JSON.stringify(location.cities || []),
       salary.salaryMin,
       salary.salaryMax,
+      String(input.profile_status || "ready"),
       String(input.special_requirements || ""),
       JSON.stringify(input.role_keywords || []),
       JSON.stringify(input.role_channels || []),
@@ -182,6 +183,7 @@ function updateRole(db, roleUuid, patch = {}) {
       target_cities_json: normalized.target_cities_json,
       salary_min: normalized.salary_min,
       salary_max: normalized.salary_max,
+      profile_status: normalized.profile_status,
       special_requirements: normalized.special_requirements,
       role_keywords_json: normalized.role_keywords === undefined ? undefined : JSON.stringify(normalized.role_keywords),
       role_channels_json: normalized.role_channels === undefined ? undefined : JSON.stringify(normalized.role_channels),

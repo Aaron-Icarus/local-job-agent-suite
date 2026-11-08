@@ -10,14 +10,15 @@ const scores = require("./scores_repo");
 const { listJobs, countJobs } = require("./jobs_repo");
 const { loginStatus, recordCheck } = require("./login_monitor");
 const { checkPlatform } = require("./login_checker");
-const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome } = require("./chrome_manager");
+const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome, restoreChrome } = require("./chrome_manager");
 const { extractDocument } = require("./document_text");
+const { prepareProfile, buildLocalProfile } = require("./profile_generator");
 const { normalizeCities, normalizeSalary } = require("./location_service");
 const skillsDir = path.resolve(__dirname, "..", "..", "skills");
 const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
-const { buildExcelHtml } = require("./export_service");
+const { buildExcelXlsx } = require("./export_service");
 const { listNotifications, createNotification, queryNotifications } = require("./notifier");
 const messagePlatform = require("./message_platform_service");
 const chat = require("./chat_service");
@@ -26,7 +27,7 @@ const logger = require("./logger");
 const jobRecheck = require("./job_recheck");
 const keywordService = require("./keyword_service");
 const { getIdleStatus } = require("./system_idle");
-const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
+const { listTasks, pauseTask, resumeTask, cancelTask, getTask, createTask, PRIORITY } = require("./tasks_repo");
 
 function json(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -134,6 +135,14 @@ function createAppServer(options = {}) {
         const result = await chat.runTurn(db, chatMessage[1], body);
         return json(res, 200, { ok: true, ...result });
       }
+      const roleKeywordsManual = pathname.match(/^\/api\/roles\/([^/]+)\/keywords\/manual$/);
+      if (roleKeywordsManual && req.method === "POST") {
+        const body = await readBody(req);
+        const keywords = body.action === "remove"
+          ? keywordService.removeManual(db, roleKeywordsManual[1], body.keyword)
+          : keywordService.addManual(db, roleKeywordsManual[1], body.keyword);
+        return json(res, 200, { ok: true, keywords });
+      }
       const roleKeywords = pathname.match(/^\/api\/roles\/([^/]+)\/keywords$/);
       if (roleKeywords && req.method === "GET") {
         return json(res, 200, { ok: true, keywords: keywordService.list(db, roleKeywords[1]) });
@@ -154,20 +163,56 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/roles" && req.method === "POST") {
         const body = await readBody(req);
-        const result = roles.createRole(db, body);
-        if (body.role_keywords?.length) {
-          const fallback = body.fallback_keywords?.length
-            ? body.fallback_keywords
-            : (keywordService.extractFallbackFromProfile(body.profile_md).length
-              ? keywordService.extractFallbackFromProfile(body.profile_md)
-              : keywordService.fallbackKeywords(body).fallback);
-          keywordService.save(db, result.role.role_uuid, {
-            recommended: body.role_keywords,
-            fallback,
-          });
+        const nickname = String(body.nickname || "").trim();
+        const processing = nickname
+          ? db.prepare(
+            `SELECT * FROM roles WHERE nickname = ? AND deleted_at IS NULL
+             AND profile_status = 'processing' AND created_at > ?
+             ORDER BY created_at DESC LIMIT 1`
+          ).get(nickname, new Date(Date.now() - 2 * 60 * 1000).toISOString())
+          : null;
+        if (processing) {
+          return json(res, 200, { ok: true, role: processing, processing: true, duplicate: true });
         }
+        const result = roles.createRole(db, {
+          ...body,
+          profile_md: "",
+          resume_id: "",
+          profile_status: "processing",
+        });
         const defaultGroup = feishuGroups.applyDefaultGroup(db, result.role.role_uuid);
-        return json(res, 200, { ok: true, ...result, defaultGroup });
+        startRolePreparation(db, result.role, body);
+        return json(res, 200, { ok: true, ...result, processing: true, defaultGroup });
+      }
+      const roleReprofile = pathname.match(/^\/api\/roles\/([^/]+)\/reprofile$/);
+      if (roleReprofile && req.method === "POST") {
+        const role = roles.getRole(db, roleReprofile[1]);
+        if (!role) return json(res, 404, { ok: false, error: "角色不存在" });
+        const resume = role.resume_id ? resumes.getResume(db, role.resume_id) : null;
+        if (!resume) return json(res, 400, { ok: false, error: "该角色没有关联简历，请重新上传" });
+        const prepared = await prepareProfile(db, {
+          resume_md: resume.raw_md,
+          resume_id: resume.id,
+          nickname: role.nickname,
+          target_roles: role.target_roles,
+          target_city: role.target_city,
+          salary_min: role.salary_min,
+          salary_max: role.salary_max,
+          profile_md: "",
+        });
+        const updated = roles.updateRole(db, role.role_uuid, { profile_md: prepared.profile_md, profile_status: prepared.profile_status });
+        if (prepared.profile_status === "ready") {
+          db.prepare("UPDATE profile_tasks SET status = 'done', updated_at = ? WHERE resume_id = ? AND status = 'pending'")
+            .run(new Date().toISOString(), resume.id);
+        }
+        return json(res, 200, { ok: true, role: updated, ...prepared });
+      }
+      const roleEnrich = pathname.match(/^\/api\/roles\/([^/]+)\/enrich$/);
+      if (roleEnrich && req.method === "POST") {
+        const role = roles.getRole(db, roleEnrich[1]);
+        if (!role) return json(res, 404, { ok: false, error: "角色不存在" });
+        const result = await chat.enrichRoleProfile(db, role);
+        return json(res, 200, { ok: true, roleUuid: role.role_uuid, ...result });
       }
       const roleEdit = pathname.match(/^\/api\/roles\/([^/]+)$/);
       if (roleEdit && ["PATCH", "PUT"].includes(req.method)) {
@@ -178,6 +223,10 @@ function createAppServer(options = {}) {
             recommended: body.role_keywords,
             fallback: body.fallback_keywords || keywordService.extractFallbackFromProfile(body.profile_md),
           });
+        }
+        if (Array.isArray(body.manual_keywords)) {
+          db.prepare("DELETE FROM role_keyword_entries WHERE role_uuid = ? AND category = 'manual'").run(roleEdit[1]);
+          for (const keyword of body.manual_keywords) keywordService.addManual(db, roleEdit[1], keyword);
         }
         return json(res, 200, { ok: true, ...result });
       }
@@ -251,6 +300,17 @@ function createAppServer(options = {}) {
         return json(res, httpStatus, { ok: result.ok, error, platform, result, saved });
       }
 
+      if (pathname === "/api/chrome/open-url" && req.method === "POST") {
+        const body = await readBody(req);
+        const target = String(body.url || "").trim();
+        if (!/^https?:\/\//i.test(target)) return json(res, 400, { ok: false, error: "只允许打开 http/https 链接" });
+        const chrome = await ensureChrome({ startUrl: target, startMinimized: false });
+        if (chrome?.reused && chrome.port) {
+          await fetch(`http://127.0.0.1:${chrome.port}/json/new?${encodeURIComponent(target)}`, { method: "PUT" });
+          await restoreChrome(chrome.port);
+        }
+        return json(res, 200, { ok: Boolean(chrome && chrome.port), port: chrome?.port || 0, reused: Boolean(chrome?.reused) });
+      }
       if (pathname === "/api/chrome/open" && req.method === "POST") {
         const body = await readBody(req);
         const platform = String(body.platform || "");
@@ -307,6 +367,18 @@ function createAppServer(options = {}) {
       if (pathname === "/api/tasks/board" && req.method === "GET") {
         return json(res, 200, { ok: true, ...getTaskBoard(db) });
       }
+      if (pathname === "/api/tasks/export" && req.method === "POST") {
+        const body = await readBody(req);
+        const kind = String(body.kind || "excel").toLowerCase();
+        if (!["excel", "log"].includes(kind)) return json(res, 400, { ok: false, error: "不支持的导出类型" });
+        if (kind === "excel" && !body.roleUuid) return json(res, 400, { ok: false, error: "缺少角色" });
+        const task = createTask(db, {
+          type: "export",
+          priority: PRIORITY.EXPORT,
+          payload: { kind, roleUuid: String(body.roleUuid || ""), requestedAt: new Date().toISOString() },
+        });
+        return json(res, 200, { ok: true, task });
+      }
       if (pathname === "/api/tasks/tick" && req.method === "POST") {
         const body = await readBody(req);
         return json(res, 200, { ok: true, ...planTick(db, { idleAllowed: Boolean(body.idleAllowed), forceReason: body.forceReason || "" }) });
@@ -345,6 +417,29 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/jobs/recheck/batches" && req.method === "GET") {
         return json(res, 200, { ok: true, batches: jobRecheck.listBatches(db) });
+      }
+      const jobDetail = pathname.match(/^\/api\/jobs\/([^/]+)$/);
+      if (jobDetail && req.method === "GET") {
+        const roleUuid = url.searchParams.get("role") || "";
+        const row = db.prepare(
+          `SELECT j.*, rj.score, rj.tier, rj.score_time, rj.score_explanation, rj.score_reasons_json,
+                  rj.score_risks_json, rj.note, rj.greeting_status, rj.score_version
+           FROM jobs j
+           LEFT JOIN role_jobs rj ON rj.job_uuid = j.job_uuid AND rj.role_uuid = ?
+           WHERE j.job_uuid = ?`
+        ).get(roleUuid, jobDetail[1]);
+        if (!row) return json(res, 404, { ok: false, error: "岗位不存在" });
+        return json(res, 200, { ok: true, job: row });
+      }
+      if (pathname === "/api/open-url" && req.method === "POST") {
+        const body = await readBody(req);
+        const target = String(body.url || "").trim();
+        if (!/^https?:\/\//i.test(target)) return json(res, 400, { ok: false, error: "只允许打开 http/https 链接" });
+        const command = process.platform === "win32" ? "cmd.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+        const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
+        const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+        child.unref();
+        return json(res, 200, { ok: true, url: target });
       }
       if (pathname === "/api/jobs" && req.method === "GET") {
         const roleUuid = url.searchParams.get("role") || "";
@@ -415,12 +510,14 @@ function createAppServer(options = {}) {
 
       if (pathname.startsWith("/api/export/") && req.method === "GET") {
         const roleUuid = pathname.split("/").pop();
-        const html = buildExcelHtml(db, roleUuid);
+        const result = buildExcelXlsx(db, roleUuid);
+        const fileName = result.filename.replace(/[^\w.\-\u4e00-\u9fa5]/g, "_");
         res.writeHead(200, {
-          "Content-Type": "application/vnd.ms-excel; charset=utf-8",
-          "Content-Disposition": `attachment; filename="jobs-${roleUuid.slice(0, 8)}.xls"`,
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+          "Content-Length": result.buffer.length,
         });
-        return res.end(`\ufeff${html}`);
+        return res.end(result.buffer);
       }
 
       if (pathname === "/api/notifications") {
@@ -539,6 +636,45 @@ function createAppServer(options = {}) {
   });
 
   return server;
+}
+
+function startRolePreparation(db, role, body) {
+  setImmediate(async () => {
+    try {
+      const prepared = await prepareProfile(db, body);
+      roles.updateRole(db, role.role_uuid, {
+        profile_md: prepared.profile_md,
+        resume_id: prepared.resume_id || role.resume_id || "",
+        profile_status: prepared.profile_status,
+      });
+      if (body.role_keywords?.length || body.manual_keywords?.length || body.fallback_keywords?.length) {
+        const fallback = body.fallback_keywords?.length
+          ? body.fallback_keywords
+          : (keywordService.extractFallbackFromProfile(prepared.profile_md).length
+            ? keywordService.extractFallbackFromProfile(prepared.profile_md)
+            : keywordService.fallbackKeywords({ ...body, profile_md: prepared.profile_md }).fallback);
+        keywordService.save(db, role.role_uuid, { recommended: body.role_keywords || [], fallback });
+        for (const keyword of body.manual_keywords || []) keywordService.addManual(db, role.role_uuid, keyword);
+      } else {
+        await chat.generateKeywords(db, {
+          role_uuid: role.role_uuid,
+          profile_md: prepared.profile_md,
+          target_roles: body.target_roles || "",
+          target_city: body.target_city || "",
+          target_salary: body.target_salary || "",
+          career_expectation: body.career_expectation || "",
+        });
+      }
+    } catch (error) {
+      const fallback = buildLocalProfile(body, body.resume_md || body.profile_md || "");
+      roles.updateRole(db, role.role_uuid, { profile_md: fallback, profile_status: "pending" });
+      db.prepare(
+        `INSERT INTO profile_tasks(resume_id, file_path, status, error, created_at, updated_at)
+         VALUES (?, ?, 'pending', ?, ?, ?)`
+      ).run(role.resume_id || "", "", String(error.message || error).slice(0, 1000), new Date().toISOString(), new Date().toISOString());
+      logger.error("role_prepare", `${role.role_uuid} 画像处理失败：${error.message || error}`);
+    }
+  });
 }
 
 function startServer(db, options = {}) {

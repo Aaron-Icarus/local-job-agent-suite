@@ -7,8 +7,8 @@ const { spawn } = require("child_process");
 
 const logBase = process.platform === "darwin"
   ? path.join(os.homedir(), "Library", "Application Support")
-  : (process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"));
-const logDir = path.join(logBase, "boss-job-agent");
+  : (process.env.LOCALAPPDATA || process.env.APPDATA || path.join(os.homedir(), "AppData", "Local"));
+const logDir = path.join(logBase, "JobAgent");
 const logFile = path.join(logDir, "startup.log");
 try {
   fs.mkdirSync(logDir, { recursive: true });
@@ -36,6 +36,17 @@ process.on("exit", (code) => {
 });
 
 const { app, BrowserWindow, Tray, Menu, nativeImage, dialog } = require("electron");
+
+// Windows 上 %APPDATA%\boss-job-agent 可能被安全软件/遗留 ACL 拒绝写入，
+// 导致单实例锁、缓存和日志失败。把 Electron 用户目录放到可写的 LocalAppData。
+try {
+  const userDataDir = path.join(logBase, "JobAgent", "ElectronProfile");
+  fs.mkdirSync(userDataDir, { recursive: true });
+  app.setPath("userData", userDataDir);
+  startupLog(`userData: ${userDataDir}`);
+} catch (error) {
+  startupLog(`set userData failed: ${error.message}`);
+}
 
 let mainWindow = null;
 let tray = null;
@@ -73,7 +84,7 @@ function createTray() {
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg=="
     );
   tray = new Tray(icon);
-  tray.setToolTip("招聘智能体 v1.5.1");
+  tray.setToolTip("招聘智能体 v1.5.2");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {

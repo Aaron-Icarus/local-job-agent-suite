@@ -10,6 +10,7 @@ const state = {
   confirmRoleId: "",
   resumeContent: "",
   resumeFileName: "",
+  resumeFileBase64: "",
   jobPage: 1,
   jobPageSize: 20,
   jobTotal: 0,
@@ -19,6 +20,7 @@ const state = {
   chatSuggestions: [],
   chatResumeContent: "",
   chatResumeFileName: "",
+  chatSending: false,
   feishuGroups: [],
   editingGroupId: "",
   recheckPolling: false,
@@ -30,6 +32,11 @@ const state = {
   notificationPages: 1,
   notificationPageSize: 10,
   historyNotifications: [],
+  jobDetailUrl: "",
+  creatingRole: false,
+  rolePollTimer: null,
+  quickRouteRoleUuid: "",
+  editEnrichSuggested: "",
 };
 
 async function api(path, options = {}) {
@@ -78,13 +85,13 @@ function appendLog(id, message) {
   el.scrollTop = el.scrollHeight;
 }
 
-function toast(message, bad = false) {
+function toast(message, bad = false, ms = 3000) {
   const el = document.getElementById("healthBadge");
   if (!el) return;
   el.textContent = message;
   el.classList.toggle("bad", bad);
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(refreshHealth, 3000);
+  toast.timer = setTimeout(refreshHealth, ms);
 }
 
 async function refreshHealth() {
@@ -144,21 +151,26 @@ async function refreshRoles() {
   } else {
     list.innerHTML = state.roles.map((role) => {
       const channels = (role.role_channels || []).join(" / ") || "未选渠道";
+      const processing = role.profile_status === "processing";
       return `
-      <div class="row">
+      <div class="row ${processing ? "processing" : ""}">
         <div>
           <strong>${esc(role.role_number)} · ${esc(role.nickname)}</strong>
-          ${tag(role.status, role.status === "running" ? "ok" : role.status === "pending_confirm" ? "warn" : "")}
-          <div class="meta">${esc(role.target_roles || "未设置目标岗位")} · 渠道：${esc(channels)} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}</div>
+          ${processing ? tag("处理中", "warn") : tag(role.status, role.status === "running" ? "ok" : role.status === "pending_confirm" ? "warn" : "")}
+          ${role.profile_status === "pending" ? tag("画像待整理", "warn") : ""}
+          <div class="meta">${processing ? "正在保存原始简历并调用 AI 画像 Skill，完成后按钮会自动出现" : `${esc(role.target_roles || "未设置目标岗位")} · 渠道：${esc(channels)} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}`}</div>
         </div>
         <div class="actions">
+          ${processing ? "" : `
+          ${role.profile_status === "pending" ? `<button class="small" data-action="reprofile" data-id="${role.role_uuid}">重新整理画像</button>` : ""}
+          ${role.resume_id ? `<button class="small ghost" data-resume="${role.resume_id}">原始简历</button>` : ""}
           <button class="small keyword-link" data-keywords="${role.role_uuid}">关键词</button>
           ${role.status === "pending_confirm" ? `<button class="small" data-action="confirm" data-id="${role.role_uuid}">确认渠道</button>` : ""}
           ${role.status === "pending_confirm" ? `<button class="small ghost" data-edit-role="${role.role_uuid}">修改</button>` : ""}
           ${["pending_start", "paused"].includes(role.status) ? `<button class="small" data-action="start" data-id="${role.role_uuid}">启动</button>` : ""}
           ${role.status === "running" ? `<button class="small ghost" data-action="pause" data-id="${role.role_uuid}">暂停</button>` : ""}
           <button class="small ghost" data-action="copy" data-id="${role.role_uuid}">复制</button>
-          <button class="small danger" data-action="delete" data-id="${role.role_uuid}">删除</button>
+          <button class="small danger" data-action="delete" data-id="${role.role_uuid}">删除</button>`}
         </div>
       </div>`;
     }).join("");
@@ -172,6 +184,10 @@ async function refreshRoles() {
     }
   }
   state.activeRole = document.getElementById("jobRoleSelect")?.value || state.roles[0]?.role_uuid || "";
+  clearTimeout(state.rolePollTimer);
+  if (state.roles.some((role) => role.profile_status === "processing")) {
+    state.rolePollTimer = setTimeout(() => refreshRoles().catch(() => {}), 1500);
+  }
 }
 
 async function refreshTasks() {
@@ -183,6 +199,13 @@ async function refreshTasks() {
   const summary = document.getElementById("taskSummary");
   const running = state.tasks.filter((task) => task.status === "running").length;
   const queued = state.tasks.filter((task) => ["queued", "retrying"].includes(task.status)).length;
+  const badge = document.getElementById("taskBadge");
+  if (badge) {
+    const activeCount = state.tasks.filter((task) => ["queued", "running", "retrying", "paused", "stalled"].includes(task.status)).length;
+    badge.textContent = String(activeCount);
+    badge.classList.toggle("active", activeCount > 0);
+  }
+  const typeLabel = (type) => ({ collect: "采集", ingest: "入库", score: "评分", report: "日报", export: "导出" }[type] || type);
   summary.innerHTML = `
     <div class="card"><div class="num">${running}</div><div class="label">运行中</div></div>
     <div class="card"><div class="num">${queued}</div><div class="label">排队/重试</div></div>
@@ -196,7 +219,7 @@ async function refreshTasks() {
   list.innerHTML = pendingTasks.length ? pendingTasks.map((task) => `
     <div class="row">
       <div>
-        <strong>#${task.id} ${esc(task.type)}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : task.status === "failed" ? "bad" : "warn")}
+        <strong>#${task.id} ${esc(typeLabel(task.type))}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : task.status === "failed" ? "bad" : "warn")}
         <div class="meta">优先级 ${task.priority} · 尝试 ${task.attempts} · ${esc(fmt(task.updated_at))} ${task.last_error ? "· " + esc(task.last_error) : ""}</div>
       </div>
       <div class="actions">
@@ -209,8 +232,8 @@ async function refreshTasks() {
   historyList.innerHTML = historyTasks.length ? historyTasks.map((task) => `
     <div class="row">
       <div>
-        <strong>#${task.id} ${esc(task.type)}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : "bad")}
-        <div class="meta">${esc(fmt(task.updated_at))}${task.last_error ? " · " + esc(task.last_error) : ""}</div>
+        <strong>#${task.id} ${esc(typeLabel(task.type))}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : "bad")}
+        <div class="meta">${esc(fmt(task.updated_at))}${task.last_error ? " · " + esc(task.last_error) : ""}${task.progress?.filePath ? " · 文件：" + esc(task.progress.filePath) : ""}</div>
       </div>
     </div>`).join("") : '<div class="empty">暂无历史任务</div>';
   const events = document.getElementById("eventList");
@@ -255,10 +278,46 @@ async function refreshJobs() {
         <div class="meta">${esc(job.salary_text || "-")} · ${esc(job.city || "-")}${job.district ? " " + esc(job.district) : ""} · 采集 ${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")} · 评分 ${job.score ?? "-"} ${esc(job.tier || "")}${job.last_recheck_at ? " · 总刷 " + esc(job.last_recheck_at) : ""}</div>
       </div>
       <div class="actions">
-        ${job.job_url ? `<a class="small" href="${esc(job.job_url)}" target="_blank" rel="noreferrer">打开岗位</a>` : ""}
+        <button class="small ghost" data-job-detail="${esc(job.job_uuid)}">查看详情</button>
       </div>
     </div>`).join("") : '<div class="empty">没有符合条件的岗位。</div>';
   renderJobPager();
+}
+
+async function openJobDetail(jobUuid) {
+  const roleUuid = document.getElementById("jobRoleSelect").value;
+  const data = await api(`/api/jobs/${encodeURIComponent(jobUuid)}?role=${encodeURIComponent(roleUuid)}`);
+  const job = data.job || {};
+  state.jobDetailUrl = job.job_url || "";
+  document.getElementById("jobDetailTitle").textContent = `${job.display_id || ""} ${job.company || ""} · ${job.title || ""}`;
+  const reasons = safeJson(job.score_reasons_json, []);
+  const risks = safeJson(job.score_risks_json, []);
+  document.getElementById("jobDetailBody").innerHTML = `
+    <div class="job-detail-grid">
+      <div><span>平台</span>${esc(job.platform || "-")}</div>
+      <div><span>地点</span>${esc([job.city, job.district, job.address].filter(Boolean).join(" ") || "-")}</div>
+      <div><span>薪资</span>${esc(job.salary_text || "-")}</div>
+      <div><span>评分</span>${job.score == null ? "-" : esc(job.score)} ${esc(job.tier || "")}</div>
+      <div><span>状态</span>${esc(job.job_status || "-")}</div>
+      <div><span>采集</span>${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")}</div>
+      <div><span>岗位更新</span>${esc(job.job_updated_at || "-")}</div>
+      <div><span>HC</span>${job.hc_count == null ? "-" : esc(job.hc_count)}</div>
+      <div><span>招聘方</span>${esc(job.recruiter_name || "-")} ${job.recruiter_certified ? "已认证" : ""}</div>
+      <div><span>在线</span>${esc(job.recruiter_online || "-")}${job.recruiter_type ? " · " + esc(job.recruiter_type) : ""}${job.recruiter_title ? " · " + esc(job.recruiter_title) : ""}</div>
+      <div class="wide"><span>招聘公司</span>${esc(job.recruiter_company || job.company || "-")}</div>
+    </div>
+    <label>职位网址<input id="jobDetailUrlInput" readonly value="${esc(job.job_url || "")}"></label>
+    ${job.job_url ? `<a id="jobDetailUrlLink" class="job-url-link" href="${esc(job.job_url)}" target="_blank" rel="noreferrer">在默认浏览器打开该网址</a>` : '<p class="hint">该岗位没有可打开的网址</p>'}
+    <h3>评分理由</h3><p>${reasons.length ? reasons.map(esc).join("；") : esc(job.score_explanation || "-")}</p>
+    <h3>风险 / 备注</h3><p>${risks.length ? risks.map(esc).join("；") : "-"}${job.note ? "；备注：" + esc(job.note) : ""}</p>
+    <h3>职位描述</h3><pre class="job-jd">${esc(job.jd_clean_text || job.job_description || "暂无 JD")}</pre>
+    ${job.jd_clean_text && job.job_description ? `<details class="raw-jd"><summary>查看原始 JD（清洗前）</summary><pre class="job-jd">${esc(job.job_description)}</pre></details>` : ""}
+  `;
+  document.getElementById("jobDetailDialog").showModal();
+}
+
+function safeJson(value, fallback) {
+  try { return JSON.parse(value || "null") ?? fallback; } catch { return fallback; }
 }
 
 function renderJobPager() {
@@ -364,8 +423,14 @@ async function loadResumeFile(file, target = "chat") {
   } else {
     state.resumeContent = content;
     state.resumeFileName = file.name;
-    document.getElementById("roleProfile").value = content;
-    document.getElementById("resumeStatus").textContent = `已导入：${file.name}（${content.length} 字）`;
+    state.resumeFileBase64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || "").split(",").pop() || "");
+      reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+      reader.readAsDataURL(file);
+    });
+    document.getElementById("roleProfile").value = "";
+    document.getElementById("resumeStatus").textContent = `已上传：${file.name}（${content.length} 字），创建角色时会结合 Skill 生成画像`;
   }
   return content;
 }
@@ -510,24 +575,37 @@ async function loadChatSession(id) {
 }
 
 async function sendChat() {
-  const text = document.getElementById("chatInput").value.trim();
+  if (state.chatSending) return;
+  const input = document.getElementById("chatInput");
+  const button = document.getElementById("btnChatSend");
+  const text = input.value.trim();
   if (!text && !state.chatResumeContent) return;
-  const sessionId = await ensureChatSession();
-  const result = await api(`/api/chat/sessions/${sessionId}/messages`, {
-    method: "POST",
-    body: {
-      text,
-      resume_md: state.chatResumeContent || undefined,
-      resume_file_name: state.chatResumeFileName || undefined,
-      roleUuid: document.getElementById("chatRoleSelect")?.value || undefined,
-    },
-  });
-  state.chatResumeContent = "";
-  state.chatResumeFileName = "";
-  document.getElementById("chatResumeFile").value = "";
-  document.getElementById("chatInput").value = "";
-  renderChat(result.session);
-  await refreshChatSessions();
+  state.chatSending = true;
+  if (button) { button.disabled = true; button.textContent = "处理中…"; }
+  input.disabled = true;
+  try {
+    const sessionId = await ensureChatSession();
+    const result = await api(`/api/chat/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: {
+        text,
+        resume_md: state.chatResumeContent || undefined,
+        resume_file_name: state.chatResumeFileName || undefined,
+        roleUuid: document.getElementById("chatRoleSelect")?.value || undefined,
+      },
+    });
+    state.chatResumeContent = "";
+    state.chatResumeFileName = "";
+    document.getElementById("chatResumeFile").value = "";
+    input.value = "";
+    renderChat(result.session);
+    await refreshChatSessions();
+  } finally {
+    state.chatSending = false;
+    input.disabled = false;
+    if (button) { button.disabled = false; button.textContent = "发送"; }
+    input.focus();
+  }
 }
 
 async function refreshGroups() {
@@ -574,7 +652,7 @@ async function refreshRouting() {
   body.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="5" class="empty">还没有角色；创建角色后在这里配置。</td></tr>';
 }
 
-function openEditRole(roleUuid) {
+async function openEditRole(roleUuid) {
   const role = state.roles.find((item) => item.role_uuid === roleUuid);
   if (!role) return;
   state.editRoleUuid = roleUuid;
@@ -585,19 +663,58 @@ function openEditRole(roleUuid) {
   document.getElementById("editSalaryMin").value = role.salary_min || "";
   document.getElementById("editSalaryMax").value = role.salary_max || "";
   document.getElementById("editRoleKeywords").value = (role.role_keywords || []).join("、");
+  try {
+    const data = await api(`/api/roles/${roleUuid}/keywords`);
+    const current = (data.keywords || []).filter((item) => item.is_current);
+    const manual = current.filter((item) => item.category === "manual").map((item) => item.keyword);
+    const fallback = current.filter((item) => item.category === "fallback").map((item) => item.keyword);
+    document.getElementById("editRoleKeywords").value = (role.role_keywords || []).filter((item) => !manual.includes(item)).join("、");
+    document.getElementById("editManualKeywords").value = manual.join("、");
+    document.getElementById("editFallbackKeywords").value = fallback.join("、");
+  } catch {
+    document.getElementById("editManualKeywords").value = "";
+    document.getElementById("editFallbackKeywords").value = "";
+  }
+  document.getElementById("editAiEnrichResult").textContent = "";
+  document.getElementById("editAiEnrichActions").hidden = true;
+  state.editEnrichSuggested = "";
   document.getElementById("editRoleDialog").showModal();
 }
 
-async function openKeywordDialog(roleUuid) {  state.keywordRoleUuid = roleUuid;
+async function openKeywordDialog(roleUuid) {
+  state.keywordRoleUuid = roleUuid;
   const data = await api(`/api/roles/${roleUuid}/keywords`);
-  const entries = data.keywords || [];
-  const current = entries.filter((item) => item.is_current);
-  const renderGroup = (category, label) => {
-    const rows = current.filter((item) => item.category === category);
-    return `<h2>${label}</h2>${rows.length ? rows.map((item) => `<div class="row"><div><strong>${esc(item.keyword)}</strong><div class="meta">使用 ${item.use_count || 0} 次 · 新增 ${item.new_count || 0} · 重复 ${item.duplicate_count || 0} · 失败 ${item.failed_count || 0}${item.last_used_at ? " · 上次 " + esc(item.last_used_at) : ""}</div></div></div>`).join("") : '<div class="empty">暂无</div>'}`;
+  const entries = (data.keywords || []).filter((item) => item.is_current);
+  const renderGroup = (containerId, category) => {
+    const rows = entries.filter((item) => item.category === category);
+    document.getElementById(containerId).innerHTML = rows.length ? rows.map((item) => `
+      <div class="keyword-card">
+        <strong>${esc(item.keyword)}</strong>
+        <div class="meta">${category === "manual" ? "人工高优" : category === "fallback" ? "默认兜底" : "AI 推荐"}${item.use_count ? ` · 用 ${item.use_count} 次` : ""}${item.new_count ? ` · 新增 ${item.new_count}` : ""}${item.failed_count ? ` · 失败 ${item.failed_count}` : ""}</div>
+        ${category === "manual" ? `<button class="small danger" data-remove-manual="${esc(item.keyword)}">删除</button>` : ""}
+      </div>`).join("") : '<div class="empty">暂无</div>';
   };
-  document.getElementById("keywordList").innerHTML = renderGroup("recommended", "下一轮推荐") + renderGroup("fallback", "默认兜底");
+  renderGroup("keywordRecommended", "recommended");
+  renderGroup("keywordManual", "manual");
+  renderGroup("keywordFallback", "fallback");
   document.getElementById("keywordDialog").showModal();
+}
+
+async function addManualKeyword() {
+  if (!state.keywordRoleUuid) return;
+  const input = document.getElementById("manualKeywordInput");
+  const keyword = input.value.trim();
+  if (!keyword) return;
+  await api(`/api/roles/${state.keywordRoleUuid}/keywords/manual`, { method: "POST", body: { action: "add", keyword } });
+  input.value = "";
+  await openKeywordDialog(state.keywordRoleUuid);
+  toast(`已加入人工高优关键词：${keyword}`);
+}
+
+async function removeManualKeyword(keyword) {
+  if (!state.keywordRoleUuid) return;
+  await api(`/api/roles/${state.keywordRoleUuid}/keywords/manual`, { method: "POST", body: { action: "remove", keyword } });
+  await openKeywordDialog(state.keywordRoleUuid);
 }
 
 async function generateRoleKeywords() {
@@ -711,6 +828,9 @@ function bind() {
     if (!button) return;
     const suggested = state.chatSuggestions[Number(button.dataset.chatCreateRole)];
     if (!suggested) return;
+    if (button.disabled) return;
+    button.disabled = true;
+    toast("正在用此画像创建角色…", false, 2000);
     try {
       const result = await api("/api/roles", {
         method: "POST",
@@ -725,8 +845,11 @@ function bind() {
         },
       });
       await refreshRoles();
-      toast(`角色 ${result.role.role_number} 已创建，请确认渠道`);
+      activateTab("roles");
+      document.getElementById("roleList")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      toast(`角色 ${result.role.role_number} 已创建，画像处理中，可在角色页确认`, false, 3000);
     } catch (error) { alert(error.message); }
+    finally { button.disabled = false; }
   });
 
   document.getElementById("btnResetGroup").onclick = resetGroupForm;
@@ -747,10 +870,71 @@ function bind() {
   document.getElementById("btnCloseHelp").onclick = () => document.getElementById("helpDialog").close();
   document.getElementById("btnCloseNotification").onclick = () => document.getElementById("notificationDialog").close();
   document.getElementById("btnCloseKeywords").onclick = () => document.getElementById("keywordDialog").close();
+  document.getElementById("btnAddManualKeyword").onclick = async () => {
+    try { await addManualKeyword(); } catch (error) { alert(error.message); }
+  };
+  document.getElementById("manualKeywordInput").addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    try { await addManualKeyword(); } catch (error) { alert(error.message); }
+  });
+  document.getElementById("keywordManual").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-remove-manual]");
+    if (!button) return;
+    try { await removeManualKeyword(button.dataset.removeManual); } catch (error) { alert(error.message); }
+  });
   document.getElementById("keywordDialog").addEventListener("click", (event) => {
     if (event.target === document.getElementById("keywordDialog")) document.getElementById("keywordDialog").close();
   });
   document.getElementById("btnCancelRoleEdit").onclick = () => document.getElementById("editRoleDialog").close();
+  document.getElementById("btnEnrichRole").onclick = async () => {
+    if (!state.editRoleUuid) return;
+    const resultBox = document.getElementById("editAiEnrichResult");
+    const actions = document.getElementById("editAiEnrichActions");
+    resultBox.textContent = "正在按画像 Skill 检查…";
+    try {
+      const data = await api(`/api/roles/${state.editRoleUuid}/enrich`, { method: "POST", body: {} });
+      state.editEnrichSuggested = data.suggestedProfile || "";
+      resultBox.innerHTML = `<strong>AI 检查结果</strong>\n${(data.missing?.length ? `缺失：${data.missing.join("、")}\n` : "")}${(data.questions || []).map((item) => `• ${esc(item)}`).join("\n") || "现有信息基本完整。"}`;
+      actions.hidden = !state.editEnrichSuggested;
+    } catch (error) { resultBox.textContent = `检查失败：${error.message}`; }
+  };
+  document.getElementById("btnEnrichInChat").onclick = () => {
+    if (!state.editRoleUuid) return;
+    const role = state.roles.find((item) => item.role_uuid === state.editRoleUuid);
+    if (!role) return;
+    document.getElementById("editRoleDialog").close();
+    activateTab("chat");
+    const select = document.getElementById("chatRoleSelect");
+    if (select) select.value = state.editRoleUuid;
+    document.getElementById("chatInput").value = `请按画像 Skill 帮我补充角色 ${role.role_number} ${role.nickname} 缺失的信息。当前字段：目标岗位=${role.target_roles || "待确认"}；城市=${role.target_city || "待确认"}；薪资=${role.salary_min || "?"}-${role.salary_max || "?"}K。请先问我还缺哪些信息，不要编造。`;
+    document.getElementById("chatInput").focus();
+  };
+  document.getElementById("btnApplyEnrich").onclick = () => {
+    if (!state.editEnrichSuggested) return;
+    document.getElementById("editRoleProfile").value = state.editEnrichSuggested;
+    toast("建议已写回画像，请检查后点“保存修改”");
+  };
+  document.getElementById("btnCreateFromEnrich").onclick = async () => {
+    if (!state.editEnrichSuggested) return;
+    try {
+      const result = await api("/api/roles", {
+        method: "POST",
+        body: {
+          nickname: `${document.getElementById("editRoleNickname").value.trim() || "角色"} 补充版`,
+          profile_md: state.editEnrichSuggested,
+          target_roles: document.getElementById("editRoleTargets").value.trim(),
+          target_city: document.getElementById("editRoleCity").value.trim(),
+          salary_min: Number(document.getElementById("editSalaryMin").value || 0) || null,
+          salary_max: Number(document.getElementById("editSalaryMax").value || 0) || null,
+        },
+      });
+      document.getElementById("editRoleDialog").close();
+      await refreshRoles();
+      activateTab("roles");
+      toast(`已创建补充版角色 ${result.role.role_number}`, false, 3000);
+    } catch (error) { alert(error.message); }
+  };
   document.getElementById("btnSaveRoleEdit").onclick = async () => {
     if (!state.editRoleUuid) return;
     try {
@@ -765,6 +949,8 @@ function bind() {
           salary_min: Number(document.getElementById("editSalaryMin").value || 0) || null,
           salary_max: Number(document.getElementById("editSalaryMax").value || 0) || null,
           role_keywords: document.getElementById("editRoleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+          manual_keywords: document.getElementById("editManualKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+          fallback_keywords: document.getElementById("editFallbackKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
         },
       });
       document.getElementById("editRoleDialog").close();
@@ -899,16 +1085,25 @@ function bind() {
   document.getElementById("routeStageBody").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-fill-role]");
     if (!button) return;
-    const groupId = document.getElementById("routingDefaultGroup")?.value || state.feishuGroups[0]?.id || "";
-    if (!groupId) {
-      toast("请先添加飞书群，或在默认通知群选择群", true);
+    if (!state.feishuGroups.length) {
+      toast("请先添加飞书群", true);
       return;
     }
-    document.querySelectorAll(`#routeStageBody select[data-route-role="${button.dataset.fillRole}"]`).forEach((select) => {
+    state.quickRouteRoleUuid = button.dataset.fillRole;
+    document.getElementById("quickRouteGroup").innerHTML = state.feishuGroups.map((group) => `<option value="${esc(group.id)}">${esc(group.name || group.chat_id || group.id)}</option>`).join("");
+    document.getElementById("quickRouteDialog").showModal();
+  });
+  document.getElementById("btnCancelQuickRoute").onclick = () => document.getElementById("quickRouteDialog").close();
+  document.getElementById("btnConfirmQuickRoute").onclick = () => {
+    const roleUuid = state.quickRouteRoleUuid;
+    const groupId = document.getElementById("quickRouteGroup").value;
+    if (!roleUuid || !groupId) return;
+    document.querySelectorAll(`#routeStageBody select[data-route-role="${roleUuid}"]`).forEach((select) => {
       select.value = groupId;
     });
+    document.getElementById("quickRouteDialog").close();
     toast("已填入该角色的三个环节，请点“保存角色路由”");
-  });
+  };
 
   document.getElementById("btnRefresh").onclick = refreshAll;
   document.getElementById("btnTick").onclick = doTick;
@@ -972,6 +1167,14 @@ function bind() {
     }
   });
 
+  for (const id of ["roleManualKeywords", "roleFallbackKeywords", "manualKeywordInput", "editManualKeywords", "editFallbackKeywords"]) {
+    const input = document.getElementById(id);
+    if (input) {
+      input.disabled = false;
+      input.readOnly = false;
+      input.style.pointerEvents = "auto";
+    }
+  }
   document.getElementById("btnGenerateKeywords").onclick = async () => {
     try {
       const min = Number(document.getElementById("roleSalaryMin").value || 0);
@@ -986,6 +1189,7 @@ function bind() {
         },
       });
       document.getElementById("roleKeywords").value = (result.keywords || []).join("、");
+      document.getElementById("roleFallbackKeywords").value = (result.fallbackKeywords || []).join("、");
       toast(result.aiUsed ? "AI 已生成每日关键词" : "已用本地规则生成关键词");
     } catch (error) { alert(error.message); }
   };
@@ -1002,6 +1206,8 @@ function bind() {
     }
   });
   document.getElementById("btnCreateRole").onclick = async () => {
+    if (state.creatingRole) return;
+    const button = document.getElementById("btnCreateRole");
     try {
       const minText = document.getElementById("roleSalaryMin").value;
       const maxText = document.getElementById("roleSalaryMax").value;
@@ -1010,36 +1216,55 @@ function bind() {
       if (min != null && (!Number.isInteger(min) || min <= 0)) throw new Error("期望薪资下限必须是正整数（千元）");
       if (max != null && (!Number.isInteger(max) || max <= 0)) throw new Error("期望薪资上限必须是正整数且不能为 0");
       if (min != null && max != null && max < min) throw new Error("期望薪资上限不能小于下限");
-      const result = await api("/api/roles", {
-        method: "POST",
-        body: {
-          nickname: document.getElementById("roleNickname").value.trim(),
-          profile_md: document.getElementById("roleProfile").value.trim(),
-          resume_md: state.resumeContent,
-          resume_file_name: state.resumeFileName,
-          target_roles: document.getElementById("roleTargets").value.trim(),
-          target_city: document.getElementById("roleCity").value.trim(),
-          target_cities: document.getElementById("roleCity").value.trim(),
-          salary_min: min || null,
-          salary_max: max || null,
-          target_salary: min && max ? `${min}-${max}K` : "",
-          role_keywords: document.getElementById("roleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
-        },
-      });
-      if (result.similar?.length) {
-        alert(`与已有角色相似：${result.similar.map((item) => `${item.role_number} ${item.nickname}（${Math.round(item.score * 100)}%）`).join("，")}`);
+      const profileInput = document.getElementById("roleProfile").value.trim();
+      const nickname = document.getElementById("roleNickname").value.trim();
+      if (!nickname) throw new Error("请填写角色昵称");
+      if (state.roles.some((role) => role.nickname === nickname && role.profile_status === "processing")) {
+        throw new Error("这个昵称的角色正在处理中，请等它完成");
       }
+      const payload = {
+        nickname,
+        profile_md: profileInput,
+        resume_md: state.resumeContent || profileInput,
+        resume_file_name: state.resumeFileName,
+        resume_file_base64: state.resumeFileBase64,
+        target_roles: document.getElementById("roleTargets").value.trim(),
+        target_city: document.getElementById("roleCity").value.trim(),
+        target_cities: document.getElementById("roleCity").value.trim(),
+        salary_min: min || null,
+        salary_max: max || null,
+        target_salary: min && max ? `${min}-${max}K` : "",
+        role_keywords: document.getElementById("roleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+        manual_keywords: document.getElementById("roleManualKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+        fallback_keywords: document.getElementById("roleFallbackKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+      };
+      state.creatingRole = true;
+      button.disabled = true;
+      button.textContent = "创建中…";
       state.resumeContent = "";
       state.resumeFileName = "";
-      for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalaryMin", "roleSalaryMax", "roleKeywords"]) {
+      state.resumeFileBase64 = "";
+      for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalaryMin", "roleSalaryMax", "roleKeywords", "roleManualKeywords", "roleFallbackKeywords"]) {
         document.getElementById(id).value = "";
       }
+      document.getElementById("roleCityPreview").textContent = "";
       document.getElementById("resumeFile").value = "";
-      document.getElementById("resumeStatus").textContent = "未选择简历；也可以直接粘贴到下方";
+      document.getElementById("resumeStatus").textContent = "未选择简历；也可以直接粘贴简历或标准画像";
+      const list = document.getElementById("roleList");
+      list.insertAdjacentHTML("afterbegin", `<div class="row processing" id="optimisticRole"><div><strong>处理中 · ${esc(nickname)}</strong> ${tag("处理中", "warn")}<div class="meta">正在保存原始简历并调用 AI 画像 Skill，完成后按钮会自动出现</div></div></div>`);
+      const result = await api("/api/roles", { method: "POST", body: payload });
+      document.getElementById("optimisticRole")?.remove();
       await refreshRoles();
       await refreshRouting();
-      toast("角色已创建");
-    } catch (error) { alert(error.message); }
+      toast(result.duplicate ? "已有同名角色正在处理" : "角色已创建，画像处理中");
+    } catch (error) {
+      document.getElementById("optimisticRole")?.remove();
+      alert(error.message);
+    } finally {
+      state.creatingRole = false;
+      button.disabled = false;
+      button.textContent = "创建角色";
+    }
   };
 
   document.getElementById("btnConfirmRole").onclick = async () => {
@@ -1071,6 +1296,14 @@ function bind() {
     const keywordButton = event.target.closest("button[data-keywords]");
     if (keywordButton) {
       try { await openKeywordDialog(keywordButton.dataset.keywords); } catch (error) { alert(error.message); }
+      return;
+    }
+    const resumeButton = event.target.closest("button[data-resume]");
+    if (resumeButton) {
+      try {
+        const data = await api(`/api/resumes/${resumeButton.dataset.resume}`);
+        alert(`原始简历：${data.resume.file_name || "未命名"}\n路径：${data.resume.file_path || "旧数据未保存原文件"}`);
+      } catch (error) { alert(error.message); }
       return;
     }
     const button = event.target.closest("button[data-action]");
@@ -1150,6 +1383,47 @@ function bind() {
     state.jobPage = 1;
     refreshJobs();
   };
+  document.getElementById("jobList").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-job-detail]");
+    if (!button) return;
+    try { await openJobDetail(button.dataset.jobDetail); } catch (error) { alert(error.message); }
+  });
+  document.getElementById("btnCloseJobDetail").onclick = () => document.getElementById("jobDetailDialog").close();
+  document.getElementById("jobDetailDialog").addEventListener("click", (event) => {
+    if (event.target === document.getElementById("jobDetailDialog")) document.getElementById("jobDetailDialog").close();
+  });
+  document.getElementById("jobDetailBody").addEventListener("click", async (event) => {
+    const link = event.target.closest("#jobDetailUrlLink");
+    if (!link) return;
+    event.preventDefault();
+    try {
+      await api("/api/open-url", { method: "POST", body: { url: link.href } });
+    } catch (error) { alert(error.message); }
+  });
+  document.getElementById("btnCopyJobUrl").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(state.jobDetailUrl || "");
+      toast("职位网址已复制");
+    } catch {
+      const input = document.getElementById("jobDetailUrlInput");
+      if (input) { input.select(); document.execCommand("copy"); toast("职位网址已复制"); }
+    }
+  };
+  document.getElementById("btnOpenJobUrl").onclick = async () => {
+    if (!state.jobDetailUrl) return toast("该岗位没有网址", true);
+    try {
+      await api("/api/open-url", { method: "POST", body: { url: state.jobDetailUrl } });
+      toast("已交给默认浏览器打开");
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnOpenJobInstance").onclick = async () => {
+    if (!state.jobDetailUrl) return toast("该岗位没有网址", true);
+    try {
+      await api("/api/chrome/open-url", { method: "POST", body: { url: state.jobDetailUrl } });
+      toast("已交给程序实例浏览器打开");
+    } catch (error) { alert(error.message); }
+  };
+
   document.getElementById("jobPager").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-page]");
     if (button) {
@@ -1163,9 +1437,14 @@ function bind() {
       refreshJobs();
     }
   });
-  document.getElementById("btnExport").onclick = () => {
+  document.getElementById("btnExport").onclick = async () => {
     const roleUuid = document.getElementById("jobRoleSelect").value;
-    if (roleUuid) window.location.href = `/api/export/${roleUuid}`;
+    if (!roleUuid) return;
+    try {
+      await api("/api/tasks/export", { method: "POST", body: { kind: "excel", roleUuid } });
+      toast("任务已创建，请在任务列表查看完成情况", false, 2000);
+      await refreshTasks();
+    } catch (error) { alert(error.message); }
   };
 
   document.getElementById("btnShowLogs").onclick = async () => {
@@ -1179,6 +1458,13 @@ function bind() {
     try {
       const result = await api("/api/logs/open", { method: "POST", body: {} });
       toast(`日志目录：${result.path}`);
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnExportLogs").onclick = async () => {
+    try {
+      await api("/api/tasks/export", { method: "POST", body: { kind: "log" } });
+      toast("日志导出任务已创建，请在任务列表查看", false, 2000);
+      await refreshTasks();
     } catch (error) { alert(error.message); }
   };
 

@@ -109,6 +109,7 @@ test("API 健康检查、静态页面、设置校验和角色生命周期", asyn
 
   const exported = await fetch(`${base}/api/export/${roleUuid}`);
   assert.equal(exported.status, 200);
-  assert.match(exported.headers.get("content-type") || "", /ms-excel/);
-  assert.match(await exported.text(), /API角色/);
+  assert.match(exported.headers.get("content-type") || "", /spreadsheetml/);
+  const workbook = Buffer.from(await exported.arrayBuffer());
+  assert.equal(workbook.slice(0, 2).toString(), "PK");
 });

@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { nowIso } = require("./jobs_repo");
+const { listRoles, getRole } = require("./roles_repo");
 
 const AI_SIGNALS = /AI|智能体|大模型|Agent|AIGC/i;
 const LEGACY_STRATEGY = path.resolve(__dirname, "..", "..", "config", "search_strategy.json");
@@ -97,7 +98,7 @@ function save(db, roleUuid, result = {}) {
   const recommended = unique(result.recommended || result.keywords || [], 12);
   const fallback = unique(result.fallback || result.fallbackKeywords || [], 8);
   const now = nowIso();
-  db.prepare("UPDATE role_keyword_entries SET is_current = 0 WHERE role_uuid = ?").run(roleUuid);
+  db.prepare("UPDATE role_keyword_entries SET is_current = 0 WHERE role_uuid = ? AND category IN ('recommended','fallback')").run(roleUuid);
   const upsert = db.prepare(
     `INSERT INTO role_keyword_entries(role_uuid, keyword, category, is_current, priority, created_at, updated_at)
      VALUES(?, ?, ?, 1, ?, ?, ?)
@@ -106,11 +107,70 @@ function save(db, roleUuid, result = {}) {
   );
   recommended.forEach((keyword, index) => upsert.run(roleUuid, keyword, "recommended", 100 - index, now, now));
   fallback.forEach((keyword, index) => upsert.run(roleUuid, keyword, "fallback", 50 - index, now, now));
-  const active = unique([...recommended, ...fallback], 20);
-  db.prepare("UPDATE roles SET role_keywords_json = ?, updated_at = ? WHERE role_uuid = ?")
-    .run(JSON.stringify(active), now, roleUuid);
+  const active = syncActive(db, roleUuid);
   refreshStats(db, roleUuid);
   return { recommended, fallback, active };
+}
+
+function syncActive(db, roleUuid) {
+  const rows = db.prepare(
+    `SELECT keyword FROM role_keyword_entries
+     WHERE role_uuid = ? AND is_current = 1
+     ORDER BY CASE category WHEN 'manual' THEN 0 WHEN 'recommended' THEN 1 ELSE 2 END, priority DESC, id`
+  ).all(roleUuid);
+  const active = unique(rows.map((row) => row.keyword), 24);
+  db.prepare("UPDATE roles SET role_keywords_json = ?, updated_at = ? WHERE role_uuid = ?")
+    .run(JSON.stringify(active), nowIso(), roleUuid);
+  return active;
+}
+
+function addManual(db, roleUuid, keyword) {
+  const value = String(keyword || "").trim();
+  if (!value) return list(db, roleUuid);
+  const now = nowIso();
+  db.prepare(
+    `INSERT INTO role_keyword_entries(role_uuid, keyword, category, is_current, priority, created_at, updated_at)
+     VALUES(?, ?, 'manual', 1, 300, ?, ?)
+     ON CONFLICT(role_uuid, keyword, category) DO UPDATE SET is_current = 1, priority = 300, updated_at = excluded.updated_at`
+  ).run(roleUuid, value, now, now);
+  syncActive(db, roleUuid);
+  return list(db, roleUuid);
+}
+
+function removeManual(db, roleUuid, keyword) {
+  db.prepare("DELETE FROM role_keyword_entries WHERE role_uuid = ? AND keyword = ? AND category = 'manual'")
+    .run(roleUuid, String(keyword || "").trim());
+  syncActive(db, roleUuid);
+  return list(db, roleUuid);
+}
+
+function ensureFallback(db, roleUuid) {
+  const role = getRole(db, roleUuid);
+  if (!role || role.deleted_at) return [];
+  const existing = db.prepare(
+    "SELECT keyword FROM role_keyword_entries WHERE role_uuid = ? AND category = 'fallback' AND is_current = 1"
+  ).all(roleUuid).map((row) => row.keyword);
+  if (existing.length) return existing;
+  const candidates = extractFallbackFromProfile(role.profile_md);
+  const fallback = candidates.length ? candidates : fallbackKeywords(role).fallback;
+  const now = nowIso();
+  const upsert = db.prepare(
+    `INSERT INTO role_keyword_entries(role_uuid, keyword, category, is_current, priority, created_at, updated_at)
+     VALUES(?, ?, 'fallback', 1, ?, ?, ?)
+     ON CONFLICT(role_uuid, keyword, category) DO UPDATE SET is_current = 1, updated_at = excluded.updated_at`
+  );
+  fallback.forEach((keyword, index) => upsert.run(roleUuid, keyword, 50 - index, now, now));
+  syncActive(db, roleUuid);
+  return fallback;
+}
+
+function ensureAllFallbacks(db) {
+  let count = 0;
+  for (const role of listRoles(db)) {
+    if (role.deleted_at) continue;
+    count += ensureFallback(db, role.role_uuid).length ? 1 : 0;
+  }
+  return count;
 }
 
 function refreshStats(db, roleUuid) {
@@ -131,4 +191,4 @@ function list(db, roleUuid) {
   ).all(roleUuid).map((row) => ({ ...row, is_current: Boolean(row.is_current) }));
 }
 
-module.exports = { fallbackKeywords, extractFallbackFromProfile, history, save, list, splitTargets, unique };
+module.exports = { fallbackKeywords, extractFallbackFromProfile, history, save, addManual, removeManual, ensureFallback, ensureAllFallbacks, list, splitTargets, unique };

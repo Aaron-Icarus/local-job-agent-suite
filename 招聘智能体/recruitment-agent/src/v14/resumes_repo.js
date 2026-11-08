@@ -15,7 +15,7 @@ function rowToResume(row) {
 
 function listResumes(db) {
   return db
-    .prepare("SELECT id, name, source_type, file_name, content_hash, created_at, updated_at FROM resumes ORDER BY created_at DESC")
+    .prepare("SELECT id, name, source_type, file_name, file_path, content_hash, created_at, updated_at FROM resumes ORDER BY created_at DESC")
     .all();
 }
 
@@ -31,10 +31,11 @@ function importResume(db, input = {}) {
   const now = nowIso();
   const existing = db.prepare("SELECT * FROM resumes WHERE id = ?").get(id);
   db.prepare(
-    `INSERT INTO resumes(id, name, source_type, file_name, raw_md, parsed_json, content_hash, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO resumes(id, name, source_type, file_name, file_path, raw_md, parsed_json, content_hash, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name, source_type = excluded.source_type, file_name = excluded.file_name,
+       file_path = excluded.file_path,
        raw_md = excluded.raw_md, parsed_json = excluded.parsed_json,
        content_hash = excluded.content_hash, updated_at = excluded.updated_at`
   ).run(
@@ -42,6 +43,7 @@ function importResume(db, input = {}) {
     String(input.name || parsed.name || "未命名简历"),
     String(input.sourceType || "md"),
     String(input.fileName || ""),
+    String(input.filePath || ""),
     content,
     JSON.stringify(parsed),
     parsed.content_hash,

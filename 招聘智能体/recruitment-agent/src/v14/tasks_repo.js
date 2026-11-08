@@ -16,6 +16,7 @@ const PRIORITY = Object.freeze({
   REPORT: 10,
   PUSH: 10,
   SCORE: 20,
+  EXPORT: 25,
   INGEST: 30,
   COLLECT: 40,
 });

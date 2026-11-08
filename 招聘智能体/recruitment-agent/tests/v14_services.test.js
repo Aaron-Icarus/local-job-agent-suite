@@ -9,9 +9,10 @@ const { listJobs } = require("../src/v14/jobs_repo");
 const roles = require("../src/v14/role_service");
 const scores = require("../src/v14/scores_repo");
 const ai = require("../src/v14/ai_providers");
+const { cleanJobDescription } = require("../src/v14/jd_cleaner");
 const { encryptSecret, decryptSecret } = require("../src/v14/secret_store");
 const reports = require("../src/v14/report_service");
-const { exportRoleToExcel, buildExcelHtml } = require("../src/v14/export_service");
+const { exportRoleToExcel, buildExcelHtml, buildExcelXlsx } = require("../src/v14/export_service");
 const { parseResumeMarkdown } = require("../src/v14/resume_parser");
 const resumes = require("../src/v14/resumes_repo");
 
@@ -105,7 +106,7 @@ test("AI Key 加密存储、供应商排序和逐级降级", async (t) => {
 
 test("日报构建、发送和 2 周清理", async (t) => {
   const { db, role } = seedJobAndRole(t);
-  const report = reports.buildReport(db, { roleUuid: role.role_uuid, date: "2026-11-12" });
+  const report = reports.buildReport(db, { roleUuid: role.role_uuid, date: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10) });
   assert.match(report.content, /重点关注/);
   assert.match(report.content, /测试公司/);
   const sent = await reports.sendReport(db, report.id, {
@@ -127,7 +128,12 @@ test("Excel 导出包含岗位、评分和可点击链接", (t) => {
   const result = exportRoleToExcel(db, role.role_uuid, { outputDir: path.join(root, "downloads") });
   assert.ok(fs.existsSync(result.filePath));
   assert.equal(result.count, 1);
-  assert.match(fs.readFileSync(result.filePath, "utf8"), /测试公司/);
+  assert.ok(result.filePath.endsWith(".xlsx"));
+  const workbook = fs.readFileSync(result.filePath);
+  assert.equal(workbook.slice(0, 2).toString(), "PK");
+  assert.match(workbook.toString("latin1"), /xl\/worksheets\/sheet1\.xml/);
+  const xlsx = buildExcelXlsx(db, role.role_uuid);
+  assert.ok(xlsx.buffer.length > 1000);
 });
 
 test("职位库搜索、AND 筛选与分页", (t) => {
@@ -178,4 +184,14 @@ test("MD 简历解析、导入并生成角色画像", (t) => {
   assert.equal(created.role.resume_id, resume.id);
   assert.match(created.role.profile_md, /实施顾问/);
   assert.deepEqual(created.role.role_channels, []);
+});
+test("JD 清洗剔除导航/推荐并提取招聘方", () => {
+  const raw = "首页 职位 校园 海归 简历优化 关于猎聘 我要招人 我的投递\nAI项目经理 30-45k 上海 10年以下 本科 招1人 10月28日更新 聊一聊 收藏\n邵女士 1天前在线 已认证 猎头顾问 · 北京科锐国际人力资源股份有限公司上海分公司\n【职位描述】\n1、负责项目交付和需求管理。\n任职要求：本科以上学历。\n其他信息 语言要求：不限 行业要求：人工智能\n猎聘温馨提示：\n1. 注意安全。\n猜你喜欢\n另一个岗位 20-30k 上海";
+  const result = cleanJobDescription(raw, "猎聘");
+  assert.match(result.jd_clean_text, /负责项目交付/);
+  assert.doesNotMatch(result.jd_clean_text, /猜你喜欢|另一个岗位|首页 职位/);
+  assert.equal(result.job_updated_at, `${new Date().getFullYear()}-10-28`);
+  assert.equal(result.recruiter_name, "邵女士");
+  assert.equal(result.recruiter_certified, 1);
+  assert.equal(result.hc_count, 1);
 });

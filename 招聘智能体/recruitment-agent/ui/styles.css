@@ -39,6 +39,8 @@ body {
   border-radius: 8px; cursor: pointer; white-space: nowrap;
 }
 .tabs button.active { background: #e7f6f1; color: var(--brand); font-weight: 600; }
+.task-badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 3px; border-radius: 999px; background: #d9e5e1; color: #24443d; font-size: 11px; line-height: 18px; text-align: center; }
+.task-badge.active { background: var(--brand); color: #fff; }
 main { max-width: 1240px; margin: 0 auto; padding: 20px; }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
@@ -92,6 +94,31 @@ main { max-width: 1240px; margin: 0 auto; padding: 20px; }
 #routingDefaultGroup { max-width: 320px; }
 
 .scroll-list { max-height: 280px; overflow-y: auto; padding-right: 4px; }
+.job-detail-body { max-height: 62vh; overflow: auto; padding-right: 4px; }
+.job-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; margin-bottom: 10px; }
+.job-detail-grid span { color: var(--muted); display: inline-block; min-width: 62px; margin-right: 8px; font-weight: 500; }
+.job-detail-grid .wide { grid-column: 1 / -1; }
+.raw-jd { margin-top: 8px; }
+.raw-jd summary { cursor: pointer; color: var(--brand); font-size: 12px; }
+.job-detail-footer { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; margin-top: 10px; }
+.job-detail-footer .toolbar { margin: 0; }
+.job-detail-close { margin-left: auto; }
+.ai-enrich-box { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0 12px; background: #fbfcfc; }
+.ai-enrich-result { white-space: pre-wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.ai-enrich-result strong { color: var(--text); }
+.job-detail-body .job-jd { white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; background: var(--bg); padding: 10px; border-radius: 6px; font-size: 12px; }
+.job-detail-body label input { width: 100%; }
+.job-url-link { display: block; margin: 4px 0 10px; word-break: break-all; color: var(--brand); }
+.keyword-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 6px 0 12px; }
+.keyword-card { border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; min-width: 0; overflow-wrap: anywhere; }
+.keyword-card .meta { margin-top: 3px; font-size: 11px; }
+.keyword-manual-bar { display: flex; gap: 6px; margin: 6px 0; }
+.keyword-manual-bar input { flex: 1; }
+#keywordDialog .dialog-panel { width: min(94vw, 780px); max-width: 780px; max-height: 86vh; overflow: auto; overflow-x: hidden; }
+.keyword-dialog-head { position: sticky; top: -16px; z-index: 3; display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: -16px -16px 8px; padding: 14px 16px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.keyword-dialog-head h2 { margin: 0; }
+.keyword-dialog-head .toolbar { margin: 0; flex-wrap: nowrap; }
+@media (max-width: 640px) { .keyword-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .drag-over { outline: 2px dashed var(--brand); outline-offset: -6px; background: #f2fbf8; }
 .keyword-generate-btn {
   width: 100%;
@@ -114,6 +141,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 20px; }
 .notification-filters input[type="date"] { width: 150px; flex: 0 0 150px; }
 .notification-filters #notificationPageSize { width: 140px; flex: 0 0 140px; }
 .pager { justify-content: center; margin-top: 10px; }
+.pager button { min-width: 28px; min-height: 28px; }
 @media (max-width: 800px) {
   .history-grid { grid-template-columns: 1fr; }
 }
@@ -183,6 +211,8 @@ button.small { padding: 4px 8px; font-size: 12px; }
 }
 .row .meta { color: var(--muted); font-size: 12px; }
 .row .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.row.processing { opacity: .55; background: #f4f5f7; pointer-events: none; }
+button:disabled { opacity: .55; cursor: not-allowed; }
 .tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 12px; background: #eef2f6; color: #475467; }
 .tag.ok { background: #e7f6f1; color: var(--ok); }
 .tag.warn { background: #fff4e5; color: var(--warn); }

@@ -1,8 +1,12 @@
-const { listTasks, startTask, finishTask, failTask } = require("./tasks_repo");
+const { listTasks, startTask, finishTask, failTask, createTask, PRIORITY, getCollectionEvent } = require("./tasks_repo");
 const { runCollectionEvent } = require("./collection_runner");
 const { processRawQueue } = require("./ingest_service");
 const { buildReport } = require("./report_service");
+const { exportRoleToExcel, defaultExportDir } = require("./export_service");
+const fs = require("fs");
+const path = require("path");
 const { runningRoles } = require("./task_service");
+const { scoreAllRoles } = require("./score_service");
 const { ensureChrome } = require("./chrome_manager");
 const { getIdleStatus } = require("./system_idle");
 
@@ -33,6 +37,18 @@ async function runTask(db, task) {
       return;
     }
     await runCollectionEvent(db, task.payload.eventId, { taskId: task.id });
+    const event = getCollectionEvent(db, task.payload.eventId);
+    if (event && ["success", "partial_success"].includes(event.status)) {
+      const existing = listTasks(db, { type: "ingest", limit: 20 })
+        .some((item) => ["queued", "retrying", "running"].includes(item.status));
+      if (!existing) {
+        createTask(db, {
+          type: "ingest",
+          priority: PRIORITY.INGEST,
+          payload: { dateKey: task.payload.dateKey, eventId: task.payload.eventId },
+        });
+      }
+    }
     return;
   }
 
@@ -40,6 +56,33 @@ async function runTask(db, task) {
     startTask(db, task.id, {});
     const summary = processRawQueue(db, { discover: true });
     finishTask(db, task.id, { progress: summary });
+    const pending = Number(db.prepare("SELECT COUNT(*) AS c FROM role_jobs WHERE needs_score = 1").get().c || 0);
+    if (pending > 0 && !listTasks(db, { type: "score", limit: 20 }).some((item) => ["queued", "retrying", "running"].includes(item.status))) {
+      createTask(db, { type: "score", priority: PRIORITY.SCORE, payload: { dateKey: task.payload.dateKey } });
+    }
+    return;
+  }
+
+  if (task.type === "export") {
+    startTask(db, task.id, {});
+    const kind = String(task.payload.kind || "excel");
+    const dir = defaultExportDir();
+    fs.mkdirSync(dir, { recursive: true });
+    if (kind === "log") {
+      const logDir = path.resolve(__dirname, "..", "..", "data", "logs");
+      const stamp = new Date(Date.now() + 8 * 3600000).toISOString().replace(/[:.]/g, "-");
+      const output = path.join(dir, `招聘智能体_logs_${stamp}.log`);
+      const files = fs.existsSync(logDir) ? fs.readdirSync(logDir).filter((name) => name.startsWith("app.log")) : [];
+      const chunks = [];
+      for (const name of files) {
+        chunks.push(`===== ${name} =====\n`, fs.readFileSync(path.join(logDir, name), "utf8"));
+      }
+      fs.writeFileSync(output, chunks.join("\n"), "utf8");
+      finishTask(db, task.id, { progress: { kind, filePath: output, count: files.length } });
+      return;
+    }
+    const result = exportRoleToExcel(db, task.payload.roleUuid, { outputDir: dir });
+    finishTask(db, task.id, { progress: { kind, filePath: result.filePath, count: result.count } });
     return;
   }
 
@@ -56,7 +99,9 @@ async function runTask(db, task) {
   }
 
   if (task.type === "score") {
-    failTask(db, task.id, "评分执行器尚未接入，请先使用角色评分接口", { retry: false });
+    startTask(db, task.id, {});
+    const summary = scoreAllRoles(db);
+    finishTask(db, task.id, { progress: summary });
     return;
   }
 

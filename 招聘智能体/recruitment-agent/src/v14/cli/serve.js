@@ -3,6 +3,9 @@ const path = require("path");
 const { openDatabase } = require("../db");
 const { startServer } = require("../app_server");
 const { startTaskWorker } = require("../task_runner");
+const { backfillJobUrls } = require("../jobs_repo");
+const keywordService = require("../keyword_service");
+const { cleanJobs } = require("../jd_cleaner");
 
 function argValue(name, fallback = "") {
   const prefix = `--${name}=`;
@@ -14,6 +17,10 @@ async function main() {
   const dbPath = argValue("db", process.env.V14_DB_PATH || "");
   const port = Number(argValue("port", process.env.V14_PORT || "0"));
   const { db, path: resolved } = openDatabase(dbPath);
+  backfillJobUrls(db);
+  keywordService.ensureAllFallbacks(db);
+  cleanJobs(db);
+  db.prepare("UPDATE roles SET profile_status = 'pending' WHERE profile_status = 'processing'").run();
   const server = await startServer(db, { port });
   const worker = startTaskWorker(db);
   console.log(JSON.stringify({ ok: true, url: server.url, db: resolved, taskWorker: true }, null, 2));

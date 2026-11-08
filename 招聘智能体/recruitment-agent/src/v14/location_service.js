@@ -79,6 +79,22 @@ function findDistrict(token) {
 function normalizeOneLocation(token) {
   const raw = String(token || "").trim();
   if (!raw) return null;
+  const segments = raw.split("-").map((item) => item.trim()).filter(Boolean);
+  if (segments.length >= 2) {
+    const province = findProvince(segments[0]);
+    const city = findCity(segments[1]);
+    if (province && city) {
+      const districtName = segments[2] && segments[2] !== "全部"
+        ? (findDistrict(segments[2])?.district || "")
+        : "";
+      return {
+        province,
+        city: city.city,
+        district: districtName || "全部",
+        label: `${province}-${city.city}-${districtName || "全部"}`,
+      };
+    }
+  }
   const provincePrefix = Object.keys(PROVINCES).find((province) => raw.startsWith(province));
   if (provincePrefix && raw !== provincePrefix) {
     const remainder = raw.slice(provincePrefix.length).trim();

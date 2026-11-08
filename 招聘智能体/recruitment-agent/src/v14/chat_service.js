@@ -1,4 +1,6 @@
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const { nowIso } = require("./jobs_repo");
 const { importResume } = require("./resumes_repo");
 const { parseResumeMarkdown, resumeToProfileMarkdown } = require("./resume_parser");
@@ -8,6 +10,12 @@ const { runWithFallback } = require("./ai_providers");
 const keywordService = require("./keyword_service");
 
 const KNOWN_CITIES = ["上海", "北京", "深圳", "广州", "杭州", "苏州", "成都", "武汉", "南京", "西安", "重庆"];
+const KEYWORD_SKILL = (() => {
+  try { return fs.readFileSync(path.resolve(__dirname, "..", "..", "skills", "daily_keyword_skill.md"), "utf8"); } catch { return ""; }
+})();
+const PROFILE_SKILL = (() => {
+  try { return fs.readFileSync(path.resolve(__dirname, "..", "..", "skills", "resume_profile_skill.md"), "utf8"); } catch { return ""; }
+})();
 
 function safeJson(value, fallback = {}) {
   try {
@@ -204,6 +212,8 @@ async function generateKeywords(db, state) {
   const history = keywordService.history(db, state.role_uuid).slice(0, 12);
   const ai = await askAI(db, [
     "你是招聘搜索关键词生成器。用户画像和求职意愿权重最高，历史关键词效果只用于调整。",
+    "严格按下面的 Skill 执行：",
+    KEYWORD_SKILL,
     "生成 8-12 个中文/英文搜索关键词，并额外给 3-5 个默认兜底词。",
     "只输出 JSON：{\"recommended\":[\"...\"],\"fallback\":[\"...\"]}。",
     "关键词要具体，覆盖岗位名、行业/技术方向、同义词；不要把城市、薪资、姓名、电话、邮箱写进关键词。",
@@ -225,7 +235,12 @@ async function generateKeywords(db, state) {
   const fallback = uniqueKeywords([
     ...parsed.fallback,
     ...base.fallback,
-  ].filter((item) => !recommended.includes(item)), 8);
+    "项目主管",
+    "PMO",
+    "交付经理",
+    "项目协调",
+    "运营主管",
+  ].filter((item) => !recommended.includes(item)), 5);
   if (state.role_uuid) {
     keywordService.save(db, state.role_uuid, { recommended, fallback });
   }
@@ -243,15 +258,15 @@ function buildProfile(state) {
   const skills = (parsed.skills || []).join("、") || "-";
   const fallbackKeywords = uniqueKeywords(
     state.fallback_keywords || keywordService.fallbackKeywords({ ...state, skills: parsed.skills || [] }).fallback,
-    8
+    5
   );
-  const preferences = state.preferences || "希望岗位方向与目标一致；不希望长期出差或纯外包执行；具体偏好待确认。";
+  const preferences = state.preferences || "希望岗位方向与目标一致；具体偏好待确认。";
   const profile = [
     `# ${parsed.name || "候选人"} 角色画像`,
     "",
     `## 基础信息\n- 姓名：${parsed.name || "-"}\n- 学历：${parsed.education || "-"}\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}`,
     `## 求职诉求\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}\n- 方向/偏好：${state.career_expectation || preferences}`,
-    `## 职业发展期望\n${state.career_expectation || `希望在${state.target_city || "目标城市"}从事${state.target_roles || "目标岗位"}，薪资${state.target_salary || "面议"}，优先 AI/智能体方向。`}`,
+    `## 职业发展期望\n${state.career_expectation || `希望在${state.target_city || "目标城市"}从事${state.target_roles || "目标岗位"}，薪资${state.target_salary || "面议"}；具体方向待确认。`}`,
     `## 工作经历\n${state.experience || parsed.experience_summary || "-"}`,
     `## 能力标签\n${skills}`,
     `## 技能关键词\n${skills}`,
@@ -443,14 +458,15 @@ async function runTurn(db, sessionId, input = {}) {
 
   const profileLocal = buildProfile(state);
   const aiProfile = await askAI(db, [
-    "请根据以下真实信息生成一份角色画像 Markdown，只输出 Markdown，不要编造事实。",
+    "请严格按下面的角色画像 Skill 生成一份角色画像 Markdown，只输出 Markdown，不要编造事实。",
+    PROFILE_SKILL,
     "必须包含这些二级标题：基础信息、求职诉求、职业发展期望、工作经历、能力标签、技能关键词、求职偏好/避雷、兜底关键词、风险/需确认。",
     "画像可以写技能关键词、个人偏好/避雷的描述、兜底关键词；兜底关键词可人工调整。",
     "不要在画像中写每日搜索关键词（下一轮搜索用词），这些由独立关键词模块生成。",
     `目标岗位：${state.target_roles}`,
     `目标城市：${state.target_city}`,
     `薪资：${state.target_salary}`,
-    `职业发展期望：${state.career_expectation || "AI/智能体方向"}`,
+    `职业发展期望：${state.career_expectation || "待确认"}`,
     `经历：${state.experience}`,
     `简历（已脱敏）：${sanitizeProfile(state.resume_md || "")}`,
   ].join("\n"));
@@ -515,6 +531,58 @@ function validateKeywordOutput(keywords, fallback) {
   return { keyword_ok: errors.length === 0, keyword_errors: errors };
 }
 
+async function enrichRoleProfile(db, role) {
+  const missing = [];
+  if (!role.profile_md) missing.push("角色画像");
+  if (!role.target_roles) missing.push("目标岗位");
+  if (!role.target_city) missing.push("目标城市");
+  if (role.salary_min == null || role.salary_max == null) missing.push("期望薪资");
+  if (!role.resume_id) missing.push("原始简历");
+  const prompt = [
+    "请作为角色信息补全助手，严格按下面的画像 Skill 检查这个角色还缺什么。",
+    PROFILE_SKILL,
+    "只问真正影响匹配和搜索的信息，不要一次问太多；不要编造用户经历。",
+    "只输出 JSON：{\"missing\":[\"缺什么\"],\"questions\":[\"要问用户的问题\"],\"suggested_profile_md\":\"在现有画像基础上补全后的完整 Markdown\"}。",
+    `角色编号：${role.role_number || ""}`,
+    `昵称：${role.nickname || ""}`,
+    `目标岗位：${role.target_roles || ""}`,
+    `目标城市：${role.target_city || ""}`,
+    `薪资：${role.salary_min || ""}-${role.salary_max || ""}K`,
+    `现有画像：\n${role.profile_md || ""}`,
+  ].join("\n");
+  const ai = await askAI(db, prompt);
+  if (!ai) {
+    return {
+      aiUsed: false,
+      missing,
+      questions: missing.map((item) => `请补充${item}`),
+      suggestedProfile: role.profile_md || "",
+      reply: missing.length ? `还需要补充：${missing.join("、")}` : "现有信息基本完整，可以确认渠道。",
+    };
+  }
+  let parsed = {};
+  try {
+    const raw = String(ai.text || "").replace(/^\s*```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    parsed = JSON.parse(raw);
+  } catch {
+    return { aiUsed: true, missing, questions: [ai.text], suggestedProfile: role.profile_md || "", reply: ai.text };
+  }
+  const missingList = Array.isArray(parsed.missing)
+    ? parsed.missing
+    : (parsed.missing ? [String(parsed.missing)] : missing);
+  const questions = Array.isArray(parsed.questions)
+    ? parsed.questions
+    : (parsed.questions ? [String(parsed.questions)] : []);
+  const suggested = sanitizeProfile(parsed.suggested_profile_md || role.profile_md || "");
+  return {
+    aiUsed: true,
+    missing: missingList,
+    questions,
+    suggestedProfile: ensureProfileSections(suggested, role.profile_md || suggested),
+    reply: questions.join("\n"),
+  };
+}
+
 module.exports = {
   createSession,
   listSessions,
@@ -525,6 +593,7 @@ module.exports = {
   buildProfile,
   sanitizeProfile,
   generateKeywords,
+  enrichRoleProfile,
   extractCities,
   extractSalary,
 };

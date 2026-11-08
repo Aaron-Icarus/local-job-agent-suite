@@ -122,6 +122,29 @@ function writeCollectTabs(tabs) {
   }
 }
 
+async function createBackgroundTab(base, targetUrl) {
+  const version = await getJson(`${base}/json/version`);
+  if (!version.webSocketDebuggerUrl) throw new Error("CDP browser websocket 不可用");
+  const ws = connect(version.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve;
+    ws.onerror = reject;
+  });
+  try {
+    const result = await ws.cmd("Target.createTarget", { url: targetUrl, background: true }, 10000);
+    if (!result?.targetId) throw new Error("Target.createTarget 未返回 targetId");
+    for (let index = 0; index < 20; index += 1) {
+      const tabs = await getJson(`${base}/json/list`);
+      const tab = tabs.find((item) => item.id === result.targetId);
+      if (tab && tab.webSocketDebuggerUrl) return tab;
+      await sleep(200);
+    }
+    throw new Error("后台标签创建后未找到 target");
+  } finally {
+    ws.close();
+  }
+}
+
 async function findOrCreateCollectTab(purpose, targetUrl, options = {}) {
   const base = cdpBaseUrl();
   const tracked = readCollectTabs();
@@ -131,7 +154,12 @@ async function findOrCreateCollectTab(purpose, targetUrl, options = {}) {
     const existing = tabs.find((tab) => tab.id === trackedId && tab.type === "page" && tab.webSocketDebuggerUrl);
     if (existing && (!options.isUsable || options.isUsable(existing))) return existing;
   }
-  const created = await getJson(`${base}/json/new?${encodeURIComponent(targetUrl)}`, { method: "PUT" });
+  let created;
+  try {
+    created = await createBackgroundTab(base, targetUrl);
+  } catch {
+    created = await getJson(`${base}/json/new?${encodeURIComponent(targetUrl)}`, { method: "PUT" });
+  }
   const updated = readCollectTabs();
   updated[purpose] = created.id;
   writeCollectTabs(updated);

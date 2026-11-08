@@ -1,6 +1,6 @@
 const path = require("path");
 const { spawn } = require("child_process");
-const { ensureChrome } = require("./chrome_manager");
+const { ensureChrome, closeChrome } = require("./chrome_manager");
 
 const SCRIPTS = {
   BOSS: path.join(__dirname, "..", "platforms", "boss", "check_boss_login_status.js"),
@@ -26,7 +26,10 @@ async function closeChromeIfDetectionOnly(chrome) {
     const response = await fetch(`http://127.0.0.1:${chrome.port}/json/list`, { signal: AbortSignal.timeout(1200) });
     const tabs = await response.json();
     const realPages = tabs.filter((tab) => tab.type === "page" && tab.url && tab.url !== "about:blank");
-    if (!realPages.length) chrome.child.kill();
+    if (!realPages.length) {
+      const closed = await closeChrome(chrome.port);
+      if (!closed) chrome.child.kill();
+    }
   } catch {
     // 清理失败不影响登录结果
   }
@@ -48,6 +51,9 @@ async function checkPlatform(platform, options = {}) {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (!chrome.reused) {
+      // Chrome 启动时已在 ensureChrome 中最小化；这里不再重复，避免覆盖用户手动恢复。
+    }
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {

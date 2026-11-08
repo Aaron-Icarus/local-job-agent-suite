@@ -100,10 +100,17 @@ function firstValue(row, ...keys) {
 function jobValues(row, platform, collectedAt, sourceAccountId) {
   const title = firstValue(row, "job_title", "title", "position");
   const salaryText = firstValue(row, "salary_text", "salary");
+  const platformJobIdValue = platformJobId(row);
+  let jobUrl = firstValue(row, "job_url", "url", "link", "liepin_job_url", "source_url");
+  if (!jobUrl && platformJobIdValue) {
+    jobUrl = /猎聘|liepin/i.test(platform)
+      ? `https://www.liepin.com/job/${platformJobIdValue}.shtml`
+      : `https://www.zhipin.com/job_detail/${platformJobIdValue}.html`;
+  }
   return {
     platform,
-    platform_job_id: platformJobId(row),
-    job_url: firstValue(row, "job_url", "url", "link"),
+    platform_job_id: platformJobIdValue,
+    job_url: jobUrl,
     company: firstValue(row, "company", "company_name"),
     title,
     salary_text: salaryText,
@@ -316,6 +323,25 @@ function updateLongLivedDays(db, today = shanghaiDateKey()) {
   return changed;
 }
 
+function backfillJobUrls(db) {
+  const rows = db.prepare("SELECT job_uuid, platform, platform_job_id, job_url, facts_json FROM jobs WHERE job_url IS NULL OR job_url = ''").all();
+  let updated = 0;
+  for (const row of rows) {
+    let facts = {};
+    try { facts = JSON.parse(row.facts_json || "{}"); } catch { facts = {}; }
+    let url = facts.liepin_job_url || facts.source_url || facts.job_url || "";
+    if (!url && row.platform_job_id) {
+      url = /猎聘|liepin/i.test(row.platform || "")
+        ? `https://www.liepin.com/job/${row.platform_job_id}.shtml`
+        : `https://www.zhipin.com/job_detail/${row.platform_job_id}.html`;
+    }
+    if (!url) continue;
+    db.prepare("UPDATE jobs SET job_url = ?, updated_at = ? WHERE job_uuid = ?").run(url, nowIso(), row.job_uuid);
+    updated += 1;
+  }
+  return updated;
+}
+
 module.exports = {
   CONTENT_FIELDS,
   stableValue,
@@ -329,6 +355,7 @@ module.exports = {
   countJobs,
   reseedNumbering,
   updateLongLivedDays,
+  backfillJobUrls,
   nowIso,
   shanghaiDateTime,
 };

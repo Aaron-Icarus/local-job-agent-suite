@@ -1,44 +1,68 @@
 const { nowIso } = require("./jobs_repo");
 const { getRole } = require("./roles_repo");
 
-function reportRows(db, roleUuid, limit = 20) {
+function reportRows(db, roleUuid, limit = 20, date = "", minScore = 60) {
   return db.prepare(
     `SELECT rj.*, j.company, j.title, j.salary_text, j.city, j.job_url, j.first_seen_date, j.last_seen_date,
-            j.job_status, j.duplicate_status
+            j.job_status, j.duplicate_status, j.jd_clean_text, j.job_updated_at, j.recruiter_online
      FROM role_jobs rj
      JOIN jobs j ON j.job_uuid = rj.job_uuid
      WHERE rj.role_uuid = ? AND rj.score IS NOT NULL
+       AND rj.score >= ?
+       AND date(rj.score_time, '+8 hours') = ?
        AND j.job_status <> 'closed' AND j.duplicate_status <> 'duplicate'
      ORDER BY rj.score DESC, rj.score_time DESC
      LIMIT ?`
-  ).all(roleUuid, limit);
+  ).all(roleUuid, Number(minScore), date, limit);
+}
+
+function scoredTodayCount(db, roleUuid, date) {
+  return Number(db.prepare(
+    `SELECT COUNT(*) AS c FROM role_jobs
+     WHERE role_uuid = ? AND score IS NOT NULL AND date(score_time, '+8 hours') = ?`
+  ).get(roleUuid, date).c || 0);
 }
 
 function buildReport(db, input = {}) {
   const role = getRole(db, input.roleUuid);
   if (!role) throw new Error("角色不存在");
-  const date = input.date || new Date().toISOString().slice(0, 10);
-  const rows = reportRows(db, role.role_uuid, Number(input.limit || 20));
+  const date = input.date || new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const minScore = Number(input.minScore == null ? 60 : input.minScore);
+  const scoredToday = scoredTodayCount(db, role.role_uuid, date);
+  const rows = reportRows(db, role.role_uuid, Number(input.limit || 20), date, minScore).filter((row) => {
+    const online = String(row.recruiter_online || "");
+    const onlineDays = online.match(/(\d+)\s*天/);
+    if (onlineDays && Number(onlineDays[1]) > 7) return false;
+    if (row.job_updated_at) {
+      const updated = new Date(row.job_updated_at).getTime();
+      if (Number.isFinite(updated) && Date.now() - updated > 180 * 86400000) return false;
+    }
+    return true;
+  });
   const lines = [
     `# ${date} ${role.role_number} ${role.nickname} 日报`,
     "",
-    `共 ${rows.length} 个已评分岗位`,
+    `今日评分 ${scoredToday} 个，符合推送标准（评分 ≥ ${minScore}）的岗位 ${rows.length} 个。`,
+    rows.length ? "" : "今天没有达到推送标准的岗位。",
     "",
   ];
   for (const row of rows) {
+    const jd = String(row.jd_clean_text || "").replace(/\s+/g, " ").slice(0, 160);
     lines.push(
       `## ${row.job_display_id} ${row.company || ""} - ${row.title || ""}`,
       `- 评分：${row.score == null ? "-" : row.score}`,
       `- 等级：${row.tier || "-"}`,
       `- 薪资：${row.salary_text || "-"}`,
       `- 地点：${row.city || "-"}`,
+      `- 岗位更新：${row.job_updated_at || "-"}${row.recruiter_online ? ` · 招聘方${row.recruiter_online}` : ""}`,
       `- 采集：${row.first_seen_date || "-"} ~ ${row.last_seen_date || "-"}`,
       `- 理由：${row.score_explanation || "-"}`,
+      jd ? `- JD：${jd}${jd.length >= 160 ? "…" : ""}` : "",
       `- 链接：${row.job_url || "-"}`,
       ""
     );
   }
-  const content = lines.join("\n");
+  const content = lines.filter((line) => line !== undefined).join("\n");
   const result = db.prepare(
     `INSERT INTO reports(report_date, role_uuid, channel, status, content, created_at)
      VALUES (?, ?, ?, 'draft', ?, ?)`
