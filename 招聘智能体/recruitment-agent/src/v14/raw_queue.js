@@ -3,7 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { shanghaiDateKey } = require("../core/time_utils");
 
-const RAW_FILE_PATTERN = /^(boss|liepin)_daily_\d{8}_jobs_.*\.json$/i;
+const RAW_FILE_PATTERN = /^(boss|liepin)_(?:daily_\d{8}_jobs_.*|stage1_jobs_\d{4}-\d{2}-\d{2}T.*)\.json$/i;
 
 function nowIso() {
   return new Date().toISOString();

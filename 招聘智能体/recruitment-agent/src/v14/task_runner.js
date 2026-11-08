@@ -1,8 +1,9 @@
-const { listTasks, startTask, finishTask, failTask } = require("./tasks_repo");
+const { listTasks, startTask, finishTask, failTask, createTask, PRIORITY, getCollectionEvent } = require("./tasks_repo");
 const { runCollectionEvent } = require("./collection_runner");
 const { processRawQueue } = require("./ingest_service");
 const { buildReport } = require("./report_service");
 const { runningRoles } = require("./task_service");
+const { scoreAllRoles } = require("./score_service");
 const { ensureChrome } = require("./chrome_manager");
 const { getIdleStatus } = require("./system_idle");
 
@@ -32,10 +33,19 @@ async function runTask(db, task) {
       failTask(db, task.id, "Chrome CDP 未就绪，无法采集", { retry: false });
       return;
     }
-    if (!chrome.reused) {
-      // Chrome 启动时已在 ensureChrome 中最小化；采集标签使用 background 创建，不抢前台。
-    }
     await runCollectionEvent(db, task.payload.eventId, { taskId: task.id });
+    const event = getCollectionEvent(db, task.payload.eventId);
+    if (event && ["success", "partial_success"].includes(event.status)) {
+      const existing = listTasks(db, { type: "ingest", limit: 20 })
+        .some((item) => ["queued", "retrying", "running"].includes(item.status));
+      if (!existing) {
+        createTask(db, {
+          type: "ingest",
+          priority: PRIORITY.INGEST,
+          payload: { dateKey: task.payload.dateKey, eventId: task.payload.eventId },
+        });
+      }
+    }
     return;
   }
 
@@ -43,6 +53,10 @@ async function runTask(db, task) {
     startTask(db, task.id, {});
     const summary = processRawQueue(db, { discover: true });
     finishTask(db, task.id, { progress: summary });
+    const pending = Number(db.prepare("SELECT COUNT(*) AS c FROM role_jobs WHERE needs_score = 1").get().c || 0);
+    if (pending > 0 && !listTasks(db, { type: "score", limit: 20 }).some((item) => ["queued", "retrying", "running"].includes(item.status))) {
+      createTask(db, { type: "score", priority: PRIORITY.SCORE, payload: { dateKey: task.payload.dateKey } });
+    }
     return;
   }
 
@@ -59,7 +73,9 @@ async function runTask(db, task) {
   }
 
   if (task.type === "score") {
-    failTask(db, task.id, "评分执行器尚未接入，请先使用角色评分接口", { retry: false });
+    startTask(db, task.id, {});
+    const summary = scoreAllRoles(db);
+    finishTask(db, task.id, { progress: summary });
     return;
   }
 

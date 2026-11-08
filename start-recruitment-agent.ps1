@@ -24,26 +24,36 @@ $env:V14_PORT = "4780"
 $nodeExe = (Get-Command node -ErrorAction Stop).Source
 $env:V14_NODE = $nodeExe
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+$userDataDir = Join-Path $env:LOCALAPPDATA "JobAgent\ElectronProfile"
+New-Item -ItemType Directory -Force -Path $userDataDir | Out-Null
 $electron = Join-Path $app "node_modules\electron\dist\electron.exe"
 
 if (Test-Path -LiteralPath $electron) {
   Write-Host "启动桌面客户端..."
   $electronProc = Start-Process -FilePath $electron -ArgumentList @(".", "--no-sandbox") -WorkingDirectory $app -PassThru
-  Start-Sleep -Seconds 8
   $healthy = $false
-  try {
-    $health = Invoke-WebRequest -Uri "http://127.0.0.1:4780/api/health" -UseBasicParsing -TimeoutSec 3
-    $healthy = $health.StatusCode -eq 200
-  } catch {
-    $healthy = $false
+  $alive = $true
+  $deadline = (Get-Date).AddSeconds(40)
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Seconds 1
+    try { $alive = -not (Get-Process -Id $electronProc.Id -ErrorAction Stop).HasExited } catch { $alive = $false }
+    if (-not $alive) { break }
+    try {
+      $health = Invoke-WebRequest -Uri "http://127.0.0.1:4780/api/health" -UseBasicParsing -TimeoutSec 2
+      if ($health.StatusCode -eq 200) { $healthy = $true; break }
+    } catch {
+      $healthy = $false
+    }
   }
-  $alive = $false
-  try { $alive = -not (Get-Process -Id $electronProc.Id -ErrorAction Stop).HasExited } catch { $alive = $false }
   if ($healthy -and $alive) {
     Write-Host "桌面客户端已启动。"
     exit 0
   }
-  Write-Host "桌面客户端未启动，改用浏览器页面..."
+  if (-not $alive) {
+    Write-Host "桌面客户端进程已退出（Electron 启动失败）。"
+  } else {
+    Write-Host "桌面客户端 40 秒内未就绪，改用浏览器页面..."
+  }
 }
 
 $port = "4781"
