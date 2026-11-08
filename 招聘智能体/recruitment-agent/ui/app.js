@@ -20,6 +20,7 @@ const state = {
   chatSuggestions: [],
   chatResumeContent: "",
   chatResumeFileName: "",
+  chatSending: false,
   feishuGroups: [],
   editingGroupId: "",
   recheckPolling: false,
@@ -35,6 +36,7 @@ const state = {
   creatingRole: false,
   rolePollTimer: null,
   quickRouteRoleUuid: "",
+  editEnrichSuggested: "",
 };
 
 async function api(path, options = {}) {
@@ -301,7 +303,7 @@ async function openJobDetail(jobUuid) {
       <div><span>岗位更新</span>${esc(job.job_updated_at || "-")}</div>
       <div><span>HC</span>${job.hc_count == null ? "-" : esc(job.hc_count)}</div>
       <div><span>招聘方</span>${esc(job.recruiter_name || "-")} ${job.recruiter_certified ? "已认证" : ""}</div>
-      <div><span>在线</span>${esc(job.recruiter_online || "-")}${job.recruiter_type ? " · " + esc(job.recruiter_type) : ""}</div>
+      <div><span>在线</span>${esc(job.recruiter_online || "-")}${job.recruiter_type ? " · " + esc(job.recruiter_type) : ""}${job.recruiter_title ? " · " + esc(job.recruiter_title) : ""}</div>
       <div class="wide"><span>招聘公司</span>${esc(job.recruiter_company || job.company || "-")}</div>
     </div>
     <label>职位网址<input id="jobDetailUrlInput" readonly value="${esc(job.job_url || "")}"></label>
@@ -573,24 +575,37 @@ async function loadChatSession(id) {
 }
 
 async function sendChat() {
-  const text = document.getElementById("chatInput").value.trim();
+  if (state.chatSending) return;
+  const input = document.getElementById("chatInput");
+  const button = document.getElementById("btnChatSend");
+  const text = input.value.trim();
   if (!text && !state.chatResumeContent) return;
-  const sessionId = await ensureChatSession();
-  const result = await api(`/api/chat/sessions/${sessionId}/messages`, {
-    method: "POST",
-    body: {
-      text,
-      resume_md: state.chatResumeContent || undefined,
-      resume_file_name: state.chatResumeFileName || undefined,
-      roleUuid: document.getElementById("chatRoleSelect")?.value || undefined,
-    },
-  });
-  state.chatResumeContent = "";
-  state.chatResumeFileName = "";
-  document.getElementById("chatResumeFile").value = "";
-  document.getElementById("chatInput").value = "";
-  renderChat(result.session);
-  await refreshChatSessions();
+  state.chatSending = true;
+  if (button) { button.disabled = true; button.textContent = "处理中…"; }
+  input.disabled = true;
+  try {
+    const sessionId = await ensureChatSession();
+    const result = await api(`/api/chat/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: {
+        text,
+        resume_md: state.chatResumeContent || undefined,
+        resume_file_name: state.chatResumeFileName || undefined,
+        roleUuid: document.getElementById("chatRoleSelect")?.value || undefined,
+      },
+    });
+    state.chatResumeContent = "";
+    state.chatResumeFileName = "";
+    document.getElementById("chatResumeFile").value = "";
+    input.value = "";
+    renderChat(result.session);
+    await refreshChatSessions();
+  } finally {
+    state.chatSending = false;
+    input.disabled = false;
+    if (button) { button.disabled = false; button.textContent = "发送"; }
+    input.focus();
+  }
 }
 
 async function refreshGroups() {
@@ -660,6 +675,9 @@ async function openEditRole(roleUuid) {
     document.getElementById("editManualKeywords").value = "";
     document.getElementById("editFallbackKeywords").value = "";
   }
+  document.getElementById("editAiEnrichResult").textContent = "";
+  document.getElementById("editAiEnrichActions").hidden = true;
+  state.editEnrichSuggested = "";
   document.getElementById("editRoleDialog").showModal();
 }
 
@@ -810,6 +828,9 @@ function bind() {
     if (!button) return;
     const suggested = state.chatSuggestions[Number(button.dataset.chatCreateRole)];
     if (!suggested) return;
+    if (button.disabled) return;
+    button.disabled = true;
+    toast("正在用此画像创建角色…", false, 2000);
     try {
       const result = await api("/api/roles", {
         method: "POST",
@@ -824,8 +845,11 @@ function bind() {
         },
       });
       await refreshRoles();
-      toast(`角色 ${result.role.role_number} 已创建，请确认渠道`);
+      activateTab("roles");
+      document.getElementById("roleList")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      toast(`角色 ${result.role.role_number} 已创建，画像处理中，可在角色页确认`, false, 3000);
     } catch (error) { alert(error.message); }
+    finally { button.disabled = false; }
   });
 
   document.getElementById("btnResetGroup").onclick = resetGroupForm;
@@ -863,6 +887,54 @@ function bind() {
     if (event.target === document.getElementById("keywordDialog")) document.getElementById("keywordDialog").close();
   });
   document.getElementById("btnCancelRoleEdit").onclick = () => document.getElementById("editRoleDialog").close();
+  document.getElementById("btnEnrichRole").onclick = async () => {
+    if (!state.editRoleUuid) return;
+    const resultBox = document.getElementById("editAiEnrichResult");
+    const actions = document.getElementById("editAiEnrichActions");
+    resultBox.textContent = "正在按画像 Skill 检查…";
+    try {
+      const data = await api(`/api/roles/${state.editRoleUuid}/enrich`, { method: "POST", body: {} });
+      state.editEnrichSuggested = data.suggestedProfile || "";
+      resultBox.innerHTML = `<strong>AI 检查结果</strong>\n${(data.missing?.length ? `缺失：${data.missing.join("、")}\n` : "")}${(data.questions || []).map((item) => `• ${esc(item)}`).join("\n") || "现有信息基本完整。"}`;
+      actions.hidden = !state.editEnrichSuggested;
+    } catch (error) { resultBox.textContent = `检查失败：${error.message}`; }
+  };
+  document.getElementById("btnEnrichInChat").onclick = () => {
+    if (!state.editRoleUuid) return;
+    const role = state.roles.find((item) => item.role_uuid === state.editRoleUuid);
+    if (!role) return;
+    document.getElementById("editRoleDialog").close();
+    activateTab("chat");
+    const select = document.getElementById("chatRoleSelect");
+    if (select) select.value = state.editRoleUuid;
+    document.getElementById("chatInput").value = `请按画像 Skill 帮我补充角色 ${role.role_number} ${role.nickname} 缺失的信息。当前字段：目标岗位=${role.target_roles || "待确认"}；城市=${role.target_city || "待确认"}；薪资=${role.salary_min || "?"}-${role.salary_max || "?"}K。请先问我还缺哪些信息，不要编造。`;
+    document.getElementById("chatInput").focus();
+  };
+  document.getElementById("btnApplyEnrich").onclick = () => {
+    if (!state.editEnrichSuggested) return;
+    document.getElementById("editRoleProfile").value = state.editEnrichSuggested;
+    toast("建议已写回画像，请检查后点“保存修改”");
+  };
+  document.getElementById("btnCreateFromEnrich").onclick = async () => {
+    if (!state.editEnrichSuggested) return;
+    try {
+      const result = await api("/api/roles", {
+        method: "POST",
+        body: {
+          nickname: `${document.getElementById("editRoleNickname").value.trim() || "角色"} 补充版`,
+          profile_md: state.editEnrichSuggested,
+          target_roles: document.getElementById("editRoleTargets").value.trim(),
+          target_city: document.getElementById("editRoleCity").value.trim(),
+          salary_min: Number(document.getElementById("editSalaryMin").value || 0) || null,
+          salary_max: Number(document.getElementById("editSalaryMax").value || 0) || null,
+        },
+      });
+      document.getElementById("editRoleDialog").close();
+      await refreshRoles();
+      activateTab("roles");
+      toast(`已创建补充版角色 ${result.role.role_number}`, false, 3000);
+    } catch (error) { alert(error.message); }
+  };
   document.getElementById("btnSaveRoleEdit").onclick = async () => {
     if (!state.editRoleUuid) return;
     try {

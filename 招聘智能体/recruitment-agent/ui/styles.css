@@ -103,6 +103,9 @@ main { max-width: 1240px; margin: 0 auto; padding: 20px; }
 .job-detail-footer { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; margin-top: 10px; }
 .job-detail-footer .toolbar { margin: 0; }
 .job-detail-close { margin-left: auto; }
+.ai-enrich-box { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0 12px; background: #fbfcfc; }
+.ai-enrich-result { white-space: pre-wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.ai-enrich-result strong { color: var(--text); }
 .job-detail-body .job-jd { white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; background: var(--bg); padding: 10px; border-radius: 6px; font-size: 12px; }
 .job-detail-body label input { width: 100%; }
 .job-url-link { display: block; margin: 4px 0 10px; word-break: break-all; color: var(--brand); }

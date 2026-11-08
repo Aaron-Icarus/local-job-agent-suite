@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   recruiter_online TEXT NOT NULL DEFAULT '',
   recruiter_certified INTEGER NOT NULL DEFAULT 0,
   recruiter_type TEXT NOT NULL DEFAULT '',
+  recruiter_title TEXT NOT NULL DEFAULT '',
   recruiter_company TEXT NOT NULL DEFAULT '',
   hc_count INTEGER,
   source_account_id TEXT,

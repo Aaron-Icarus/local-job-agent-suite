@@ -65,10 +65,26 @@ AI项目经理
 - `recruiter_name`
 - `recruiter_online`
 - `recruiter_certified`
-- `recruiter_type`（猎头/HR/招聘专员）
+- `recruiter_type`（猎头/HR/招聘专员/顾问）
 - `recruiter_company`
 
 超过 7 天不在线：低置信度，日报不推。
+
+**BOSS 渠道同样的字段**：
+
+```text
+黄女士 刚刚活跃 悉地 · 综合行政专员
+```
+
+提取为：
+
+- `recruiter_name = 黄女士`
+- `recruiter_online = 刚刚活跃`
+- `recruiter_company = 悉地`
+- `recruiter_title = 综合行政专员`
+- `recruiter_type = 招聘方`
+
+不要因为姓名不同、公司不同、职位不同就写成专用规则；只识别“姓名 + 活跃状态 + 公司 · 职位”的结构。
 
 ### 4. 系统功能（丢弃）
 
@@ -107,6 +123,55 @@ AI项目经理
 ```
 
 尤其是“猜你喜欢/相关公司/热门城市/周边城市”里会出现**别的岗位**，绝不能混入当前 JD。
+
+## 格式还原
+
+清洗不是把 JD 压成一段。保留/恢复：
+
+- `岗位定位`、`职责`、`任职要求`、`加分项`、`其他信息` 等标题前换行；
+- 编号列表 `1.`、`2.`、`1-`、`2-` 每项单独一行；
+- `•` / `·` 项目符号单独一行；
+- 段落之间最多一个空行；
+- 删除页面导航、按钮、广告、推荐，但不把正文重新改写成摘要。
+
+## 猎聘/BOSS 共用字段
+
+```text
+title
+salary_text
+city / district
+experience
+degree
+hc_count
+job_updated_at
+recruiter_name
+recruiter_online
+recruiter_certified
+recruiter_type
+recruiter_title
+recruiter_company
+jd_clean_text
+```
+
+## 示例：B023
+
+```text
+产品市场经理（工业软件 × AI Agent方向）(J10872)
+20-40k·17薪
+上海-闵行区
+3-5年
+本科
+招1人
+11月6日更新
+龚女士 1天前在线 已认证 顾问 · 柏楚电子
+职位介绍
+岗位定位：...
+职责
+1. 市场洞察与行业分析...
+2. 机会论证与辅助立项...
+```
+
+清洗后应保留 `岗位定位/职责/任职要求/加分项/其他信息` 的层级和编号，不应把导航、福利按钮、猜你喜欢一起保留。
 
 ## 输出字段
 

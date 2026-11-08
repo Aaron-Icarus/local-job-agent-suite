@@ -1,4 +1,4 @@
-const VERSION = "jd-clean-v1";
+const VERSION = "jd-clean-v3";
 
 const SYSTEM_LINE = /^(聊一聊|收藏|微信分享扫码|举报|分享|投诉建议|返回顶部|首页|职位|校园|海归|简历优化|关于猎聘|我要招人|我的投递|我的收藏|猎聘APP)\b/i;
 const TAIL_MARKERS = [
@@ -9,6 +9,9 @@ const TAIL_MARKERS = [
   "相似岗位推荐",
   "相关推荐",
   "更多职位推荐",
+  "公司简介",
+  "公司信息",
+  "企业信息",
 ];
 
 function normalizeText(value) {
@@ -52,7 +55,7 @@ function extractUpdatedAt(text) {
 }
 
 function extractRecruiter(text) {
-  const pattern = /([^\s\n]{1,12})\s+(刚刚在线|今日在线|在线|\d+\s*(?:分钟|小时|天)前在线|刚刚活跃|今日活跃|\d+\s*(?:分钟|小时|天)前活跃)\s*(已认证)?\s*(猎头顾问|招聘专员|招聘经理|HRBP|HR|人事|猎头)\s*[·•]\s*([^·\n]+?)(?=\s+(?:聊一聊|职位介绍|职位描述|【职位描述】|其他信息)|$)/i;
+  const pattern = /([^\s\n]{1,12})\s+(刚刚在线|今日在线|在线|\d+\s*(?:分钟|小时|天)前在线|刚刚活跃|今日活跃|\d+\s*(?:分钟|小时|天)前活跃)\s*(已认证)?\s*(猎头顾问|招聘专员|招聘经理|HRBP|HR|人事|猎头|顾问)\s*[·•]\s*([^·\n]+?)(?=\s+(?:聊一聊|职位介绍|职位描述|【职位描述】|其他信息|公司简介)|$)/i;
   const match = text.match(pattern);
   if (!match) return {};
   return {
@@ -62,6 +65,32 @@ function extractRecruiter(text) {
     recruiter_type: match[4].trim(),
     recruiter_company: match[5].trim(),
   };
+}
+
+function extractBossRecruiter(text) {
+  // BOSS 页尾常见：黄女士 刚刚活跃 悉地 · 综合行政专员
+  const pattern = /([^\s\n]{1,12})\s+(刚刚活跃|今日活跃|在线|\d+\s*(?:分钟|小时|天)前活跃)\s+([^\s·\n]{1,40})\s*[·•]\s*([^\n]+?)(?=\s+(?:聊一聊|职位介绍|职位描述|岗位职责|公司简介)\b|$)/i;
+  const match = text.match(pattern);
+  if (!match) return {};
+  return {
+    recruiter_name: match[1].trim(),
+    recruiter_online: match[2].trim(),
+    recruiter_certified: 0,
+    recruiter_type: "招聘方",
+    recruiter_company: match[3].trim(),
+    recruiter_title: match[4].trim(),
+  };
+}
+
+function restoreFormatting(text) {
+  let value = String(text || "");
+  value = value.replace(/\s+(?=(?:岗位定位|职责|工作职责|任职要求|职位要求|加分项|其他信息|公司简介|岗位职责|职位描述|职位介绍|工作内容)(?=[：:\s]|$))/g, "\n\n");
+  value = value.replace(/(岗位定位|职责|工作职责|任职要求|职位要求|加分项|其他信息)[：:]\s*/g, "$1：\n");
+  value = value.replace(/(岗位定位|职责|工作职责|任职要求|职位要求|加分项|其他信息)\s+(?=\S)/g, "$1\n");
+  value = value.replace(/\s+(?=\d{1,2}[.、]\s*)/g, "\n");
+  value = value.replace(/\s+(?=\d{1,2}-\s*)/g, "\n");
+  value = value.replace(/\s+(?=[•·]\s*)/g, "\n");
+  return normalizeText(value);
 }
 
 function parseBrief(text) {
@@ -84,7 +113,7 @@ function parseBrief(text) {
 function cleanJobDescription(raw, platform = "") {
   const text = normalizeText(raw);
   const isLiepin = /猎聘|liepin/i.test(platform) || /【职位描述】|猎聘温馨提示|猜你喜欢/.test(text);
-  const start = findFirst(text, ["【职位描述】", "职位描述", "岗位职责", "工作职责", "职位详情"]);
+  const start = findFirst(text, ["【职位描述】", "职位介绍", "岗位介绍", "职位描述", "岗位职责", "工作职责", "职位详情"]);
   const tail = findLast(text, TAIL_MARKERS);
   let body = text.slice(start >= 0 ? start : 0, tail > (start >= 0 ? start : 0) ? tail : text.length);
   const lines = body.split("\n").map((line) => line.replace(/\s+$/g, ""));
@@ -100,17 +129,21 @@ function cleanJobDescription(raw, platform = "") {
     if (/^(邵女士|潘女士|吴先生|李先生|王女士|张女士)\s+.*(?:在线|活跃)/.test(trimmed)) continue;
     filtered.push(line);
   }
-  let cleaned = normalizeText(filtered.join("\n"));
+  let cleaned = restoreFormatting(filtered.join("\n"));
   if (isLiepin) {
     cleaned = cleaned
       .replace(/^【职位描述】\s*\n?/, "")
-      .replace(/\n?(猎聘温馨提示|猜你喜欢|当前位置：)[\s\S]*$/g, "")
+      .replace(/^职位介绍\s*\n?/, "")
+      .replace(/\n?(猎聘温馨提示|猜你喜欢|当前位置：|公司简介|公司信息)[\s\S]*$/g, "")
       .trim();
   }
   // BOSS 常见页尾：招聘人/活跃状态，不属于 JD
-  cleaned = cleaned.replace(/\n[^\n]{1,20}(?:女士|先生|HR|招聘专员|招聘经理)[^\n]*(?:刚刚活跃|今日活跃|在线)[^\n]*$/g, "").trim();
+  cleaned = cleaned.replace(/\s+[^\n]{1,12}\s+(?:刚刚活跃|今日活跃|在线|\d+\s*(?:分钟|小时|天)前活跃)\s+[\s\S]{0,160}$/g, "").trim();
   const updatedAt = extractUpdatedAt(text);
-  const recruiter = extractRecruiter(text);
+  const bossRecruiter = extractBossRecruiter(text);
+  const recruiter = (/boss|直聘/i.test(platform)
+    ? (bossRecruiter && Object.keys(bossRecruiter).length ? bossRecruiter : extractRecruiter(text))
+    : extractRecruiter(text)) || bossRecruiter || {};
   const brief = parseBrief(text.slice(0, Math.max(0, start >= 0 ? start : 2500)));
   return {
     jd_clean_text: cleaned,
@@ -136,6 +169,7 @@ function cleanJobs(db, options = {}) {
        recruiter_online = CASE WHEN ? <> '' THEN ? ELSE recruiter_online END,
        recruiter_certified = CASE WHEN ? <> '' THEN ? ELSE recruiter_certified END,
        recruiter_type = CASE WHEN ? <> '' THEN ? ELSE recruiter_type END,
+       recruiter_title = CASE WHEN ? <> '' THEN ? ELSE recruiter_title END,
        recruiter_company = CASE WHEN ? <> '' THEN ? ELSE recruiter_company END,
        hc_count = CASE WHEN ? IS NOT NULL THEN ? ELSE hc_count END,
        experience = CASE WHEN ? <> '' THEN ? ELSE experience END,
@@ -158,6 +192,7 @@ function cleanJobs(db, options = {}) {
       result.recruiter_online || "", result.recruiter_online || "",
       result.recruiter_certified ? "1" : "", result.recruiter_certified || 0,
       result.recruiter_type || "", result.recruiter_type || "",
+      result.recruiter_title || "", result.recruiter_title || "",
       result.recruiter_company || "", result.recruiter_company || "",
       result.hc_count, result.hc_count,
       result.experience || "", result.experience || "",

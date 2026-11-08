@@ -207,6 +207,13 @@ function createAppServer(options = {}) {
         }
         return json(res, 200, { ok: true, role: updated, ...prepared });
       }
+      const roleEnrich = pathname.match(/^\/api\/roles\/([^/]+)\/enrich$/);
+      if (roleEnrich && req.method === "POST") {
+        const role = roles.getRole(db, roleEnrich[1]);
+        if (!role) return json(res, 404, { ok: false, error: "角色不存在" });
+        const result = await chat.enrichRoleProfile(db, role);
+        return json(res, 200, { ok: true, roleUuid: role.role_uuid, ...result });
+      }
       const roleEdit = pathname.match(/^\/api\/roles\/([^/]+)$/);
       if (roleEdit && ["PATCH", "PUT"].includes(req.method)) {
         const body = await readBody(req);

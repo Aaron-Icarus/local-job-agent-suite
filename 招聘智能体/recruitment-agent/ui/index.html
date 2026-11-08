@@ -390,6 +390,15 @@
       <label>关键词（用“、”分隔）<input id="editRoleKeywords"></label>
       <label>人工高优关键词<input id="editManualKeywords"></label>
       <label>默认兜底关键词<input id="editFallbackKeywords"></label>
+      <div class="ai-enrich-box">
+        <button id="btnEnrichRole" type="button" class="ghost">让 AI 检查还缺什么</button>
+        <button id="btnEnrichInChat" type="button" class="ghost">去对话补充</button>
+        <div id="editAiEnrichResult" class="ai-enrich-result"></div>
+        <div id="editAiEnrichActions" class="toolbar" hidden>
+          <button id="btnApplyEnrich" type="button" class="small">把建议写回画像</button>
+          <button id="btnCreateFromEnrich" type="button" class="small ghost">用建议创建新角色</button>
+        </div>
+      </div>
       <div class="toolbar">
         <button id="btnSaveRoleEdit">保存修改</button>
         <button id="btnCancelRoleEdit" class="ghost">取消</button>

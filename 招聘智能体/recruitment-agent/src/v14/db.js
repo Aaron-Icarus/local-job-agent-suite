@@ -28,6 +28,7 @@ function applySchema(db) {
   ensureColumn(db, "jobs", "recruiter_online", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "jobs", "recruiter_certified", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "jobs", "recruiter_type", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "recruiter_title", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "jobs", "recruiter_company", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "jobs", "hc_count", "INTEGER");
   db.exec(`CREATE TABLE IF NOT EXISTS profile_tasks (

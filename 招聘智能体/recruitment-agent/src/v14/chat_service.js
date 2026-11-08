@@ -531,6 +531,58 @@ function validateKeywordOutput(keywords, fallback) {
   return { keyword_ok: errors.length === 0, keyword_errors: errors };
 }
 
+async function enrichRoleProfile(db, role) {
+  const missing = [];
+  if (!role.profile_md) missing.push("角色画像");
+  if (!role.target_roles) missing.push("目标岗位");
+  if (!role.target_city) missing.push("目标城市");
+  if (role.salary_min == null || role.salary_max == null) missing.push("期望薪资");
+  if (!role.resume_id) missing.push("原始简历");
+  const prompt = [
+    "请作为角色信息补全助手，严格按下面的画像 Skill 检查这个角色还缺什么。",
+    PROFILE_SKILL,
+    "只问真正影响匹配和搜索的信息，不要一次问太多；不要编造用户经历。",
+    "只输出 JSON：{\"missing\":[\"缺什么\"],\"questions\":[\"要问用户的问题\"],\"suggested_profile_md\":\"在现有画像基础上补全后的完整 Markdown\"}。",
+    `角色编号：${role.role_number || ""}`,
+    `昵称：${role.nickname || ""}`,
+    `目标岗位：${role.target_roles || ""}`,
+    `目标城市：${role.target_city || ""}`,
+    `薪资：${role.salary_min || ""}-${role.salary_max || ""}K`,
+    `现有画像：\n${role.profile_md || ""}`,
+  ].join("\n");
+  const ai = await askAI(db, prompt);
+  if (!ai) {
+    return {
+      aiUsed: false,
+      missing,
+      questions: missing.map((item) => `请补充${item}`),
+      suggestedProfile: role.profile_md || "",
+      reply: missing.length ? `还需要补充：${missing.join("、")}` : "现有信息基本完整，可以确认渠道。",
+    };
+  }
+  let parsed = {};
+  try {
+    const raw = String(ai.text || "").replace(/^\s*```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    parsed = JSON.parse(raw);
+  } catch {
+    return { aiUsed: true, missing, questions: [ai.text], suggestedProfile: role.profile_md || "", reply: ai.text };
+  }
+  const missingList = Array.isArray(parsed.missing)
+    ? parsed.missing
+    : (parsed.missing ? [String(parsed.missing)] : missing);
+  const questions = Array.isArray(parsed.questions)
+    ? parsed.questions
+    : (parsed.questions ? [String(parsed.questions)] : []);
+  const suggested = sanitizeProfile(parsed.suggested_profile_md || role.profile_md || "");
+  return {
+    aiUsed: true,
+    missing: missingList,
+    questions,
+    suggestedProfile: ensureProfileSections(suggested, role.profile_md || suggested),
+    reply: questions.join("\n"),
+  };
+}
+
 module.exports = {
   createSession,
   listSessions,
@@ -541,6 +593,7 @@ module.exports = {
   buildProfile,
   sanitizeProfile,
   generateKeywords,
+  enrichRoleProfile,
   extractCities,
   extractSalary,
 };
