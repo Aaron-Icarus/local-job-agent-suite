@@ -37,8 +37,9 @@
     "v14:ingest": "node src/v14/cli/ingest_queue.js",
     "v14:migrate": "node src/v14/cli/migrate_v13.js",
     "test:v14": "node --test tests/v14_ingest_queue.test.js tests/v14_roles_scores.test.js tests/v14_scheduler_tasks.test.js tests/v14_runtime.test.js tests/v14_services.test.js tests/v14_api.test.js tests/v14_chat.test.js tests/v14_jobs_recheck.test.js tests/v14_keywords.test.js",
-    "build:win": "electron-builder --win nsis",
-    "build:mac": "electron-builder --mac dmg"
+    "build:win": "npm run prepare:runtime && electron-builder --win nsis",
+    "build:mac": "npm run prepare:runtime && electron-builder --mac dmg",
+    "prepare:runtime": "node scripts/prepare-runtime.js"
   },
   "devDependencies": {
     "electron": "^28.3.3",
@@ -47,24 +48,51 @@
   "build": {
     "appId": "com.aaron.localjobagent",
     "productName": "招聘智能体",
+    "copyright": "Local Job Agent",
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
     "files": [
       "electron/**/*",
-      "src/**/*",
-      "ui/**/*",
-      "config/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "build/runtime",
+        "to": "runtime"
+      }
+    ],
     "win": {
-      "target": "nsis"
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "招聘智能体-${version}-${arch}.${ext}"
     },
     "mac": {
+      "icon": "build/icon.png",
       "target": "dmg",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "artifactName": "招聘智能体-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "shortcutName": "招聘智能体"
     }
   },
   "engines": {

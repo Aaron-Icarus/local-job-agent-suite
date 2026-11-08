@@ -11,7 +11,7 @@ async function localChatRequest(baseUrl, pathname, body) {
 }
 
 async function runLocalChatAgent(input, agentConfig) {
-  const baseUrl = agentConfig.executor_config?.base_url || process.env.LOCAL_CHAT_BASE_URL || "http://127.0.0.1:4780";
+  const baseUrl = process.env.LOCAL_CHAT_BASE_URL || agentConfig.executor_config?.base_url || "http://127.0.0.1:4780";
   let roleUuid = agentConfig.executor_config?.role_uuid || "";
   if (!roleUuid) {
     try {

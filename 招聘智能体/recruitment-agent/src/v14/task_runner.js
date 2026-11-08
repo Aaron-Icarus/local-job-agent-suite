@@ -69,7 +69,7 @@ async function runTask(db, task) {
     const dir = defaultExportDir();
     fs.mkdirSync(dir, { recursive: true });
     if (kind === "log") {
-      const logDir = path.resolve(__dirname, "..", "..", "data", "logs");
+      const logDir = process.env.V14_LOG_DIR || path.resolve(__dirname, "..", "..", "data", "logs");
       const stamp = new Date(Date.now() + 8 * 3600000).toISOString().replace(/[:.]/g, "-");
       const output = path.join(dir, `招聘智能体_logs_${stamp}.log`);
       const files = fs.existsSync(logDir) ? fs.readdirSync(logDir).filter((name) => name.startsWith("app.log")) : [];
