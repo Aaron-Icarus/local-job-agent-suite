@@ -21,6 +21,15 @@ function applySchema(db) {
   ensureColumn(db, "roles", "salary_max", "INTEGER");
   ensureColumn(db, "roles", "profile_status", "TEXT NOT NULL DEFAULT 'ready'");
   ensureColumn(db, "resumes", "file_path", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "jd_clean_text", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "jd_clean_version", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "job_updated_at", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "recruiter_name", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "recruiter_online", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "recruiter_certified", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "jobs", "recruiter_type", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "recruiter_company", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "jobs", "hc_count", "INTEGER");
   db.exec(`CREATE TABLE IF NOT EXISTS profile_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     resume_id TEXT NOT NULL DEFAULT '',

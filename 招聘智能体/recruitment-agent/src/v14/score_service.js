@@ -15,7 +15,7 @@ function wordsOf(value) {
 }
 
 function jobText(job) {
-  return [job.title, job.company, job.city, job.district, job.job_description].join(" ").toLowerCase();
+  return [job.title, job.company, job.city, job.district, job.jd_clean_text || job.job_description].join(" ").toLowerCase();
 }
 
 function matchCount(text, words) {
@@ -47,6 +47,20 @@ function cityMatch(job, role) {
   return 35;
 }
 
+function daysSince(value) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return null;
+  return Math.floor((Date.now() - time) / 86400000);
+}
+
+function onlineDays(value) {
+  const text = String(value || "");
+  if (/刚刚|今日|在线/.test(text)) return 0;
+  const match = text.match(/(\d+)\s*天/);
+  return match ? Number(match[1]) : null;
+}
+
 function scoreJob(job, role) {
   const text = jobText(job);
   const targets = wordsOf(role.target_roles);
@@ -57,8 +71,15 @@ function scoreJob(job, role) {
   const skillScore = keywords.length ? clamp((skillHits / Math.min(4, keywords.length)) * 100) : 55;
   const salary = salaryMatch(job, role);
   const city = cityMatch(job, role);
-  const active = /当前在线|刚刚活跃|今日活跃|今天活跃|在线/.test(String(job.job_description || "")) ? 95 : 65;
-  const overall = clamp(roleScore * 0.42 + skillScore * 0.28 + salary * 0.12 + city * 0.12 + active * 0.06);
+  const active = /当前在线|刚刚活跃|今日活跃|今天活跃|在线/.test(String(job.recruiter_online || job.job_description || "")) ? 95 : 65;
+  let freshnessPenalty = 0;
+  const updateAge = daysSince(job.job_updated_at);
+  const recruiterAge = onlineDays(job.recruiter_online);
+  if (updateAge != null && updateAge > 180) freshnessPenalty += 15;
+  else if (updateAge != null && updateAge > 90) freshnessPenalty += 8;
+  if (recruiterAge != null && recruiterAge > 7) freshnessPenalty += 20;
+  else if (recruiterAge != null && recruiterAge > 3) freshnessPenalty += 10;
+  const overall = clamp(roleScore * 0.42 + skillScore * 0.28 + salary * 0.12 + city * 0.12 + active * 0.06 - freshnessPenalty);
   const tier = overall >= 80 ? "高" : overall >= 60 ? "中" : "低";
   const reasons = [];
   const risks = [];
@@ -68,7 +89,10 @@ function scoreJob(job, role) {
   else if (salary < 40) risks.push("薪资低于期望下限");
   if (city >= 85) reasons.push("工作地点符合目标城市");
   else risks.push("工作地点与目标城市不完全匹配");
-  if (!job.job_description || job.job_description.length < 80) risks.push("岗位详情偏少，需人工确认");
+  if (updateAge != null && updateAge > 90) risks.push(`岗位已 ${updateAge} 天未更新`);
+  if (recruiterAge != null && recruiterAge > 7) risks.push(`招聘方 ${recruiterAge} 天未在线，联系可能性低`);
+  else if (recruiterAge != null && recruiterAge > 3) risks.push(`招聘方 ${recruiterAge} 天未在线`);
+  if (!job.jd_clean_text && (!job.job_description || job.job_description.length < 80)) risks.push("岗位详情偏少，需人工确认");
   return {
     score: overall,
     tier,

@@ -12,6 +12,7 @@ const {
   resetStaleProcessing,
 } = require("./raw_queue");
 const { shanghaiDateKey } = require("../core/time_utils");
+const { cleanJobs } = require("./jd_cleaner");
 
 function minJdLength(value) {
   const number = Number(value || process.env.INGEST_MIN_JD_CHARS || 60);
@@ -160,6 +161,7 @@ function processRawQueue(db, options = {}) {
       summary.results.push({ rawFileId: claimed.id, status: "failed", error: error.message });
     }
   }
+  summary.jdClean = cleanJobs(db, { limit: 1000 });
   return summary;
 }
 

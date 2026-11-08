@@ -21,7 +21,7 @@
   <nav class="tabs" id="tabs">
     <button data-tab="dashboard" class="active">首页</button>
     <button data-tab="roles">角色</button>
-    <button data-tab="tasks">任务</button>
+    <button data-tab="tasks">任务 <span id="taskBadge" class="task-badge">0</span></button>
     <button data-tab="jobs">职位库</button>
     <button data-tab="settings">设置</button>
     <button data-tab="ai">AI 能力</button>
@@ -95,8 +95,8 @@
           <label>期望薪资（千元）<span class="salary-range"><input id="roleSalaryMin" type="number" min="1" step="1" placeholder="18"> 至 <input id="roleSalaryMax" type="number" min="1" step="1" placeholder="30"></span></label>
           <button id="btnGenerateKeywords" type="button" class="keyword-generate-btn">AI 生成每日关键词</button>
           <label>关键词（用“、”分隔）<input id="roleKeywords" placeholder="AI 生成的每日关键词"></label>
-          <label>人工高优关键词（优先采集）<input id="roleManualKeywords" placeholder="例如：FDE、AI交付、智能体实施"></label>
-          <label>默认兜底关键词<input id="roleFallbackKeywords" placeholder="AI 未生成时可手动填写"></label>
+          <label>人工高优关键词（优先采集）<input id="roleManualKeywords" type="text" autocomplete="off" placeholder="例如：FDE、AI交付、智能体实施"></label>
+          <label>默认兜底关键词<input id="roleFallbackKeywords" type="text" autocomplete="off" placeholder="AI 未生成时可手动填写"></label>
           <p class="hint">每日关键词单独保存到角色，不写入画像 MD。</p>
           <button id="btnCreateRole">创建角色</button>
           <p class="hint">创建时不选渠道；确认角色时再勾选 BOSS/猎聘。</p>
@@ -215,6 +215,7 @@
           <div class="toolbar">
             <button id="btnShowLogs" class="ghost">查看最近日志</button>
             <button id="btnOpenLogs" class="ghost">打开日志文件夹</button>
+            <button id="btnExportLogs" class="ghost">导出日志</button>
           </div>
         </div>
         <p id="localLogStats" class="hint">记录操作、告警和异常；日志总量有上限，超过后自动轮转。</p>
@@ -452,10 +453,25 @@
     <div class="panel dialog-panel" style="max-width:820px">
       <h2 id="jobDetailTitle">岗位详情</h2>
       <div id="jobDetailBody" class="job-detail-body"></div>
+      <div class="job-detail-footer">
+        <div class="toolbar">
+          <button id="btnCopyJobUrl" class="ghost">复制网址</button>
+          <button id="btnOpenJobUrl">用默认浏览器打开</button>
+          <button id="btnOpenJobInstance" class="ghost">用实例浏览器打开</button>
+        </div>
+        <button id="btnCloseJobDetail" class="ghost job-detail-close">关闭</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="quickRouteDialog">
+    <div class="panel dialog-panel" style="max-width:460px">
+      <h2>选择要填入的群</h2>
+      <p class="hint">会把该群填入这个角色的登录状态、操作异常、每日日报三个环节。</p>
+      <label>飞书群<select id="quickRouteGroup"></select></label>
       <div class="toolbar">
-        <button id="btnCopyJobUrl" class="ghost">复制网址</button>
-        <button id="btnOpenJobUrl">用默认浏览器打开</button>
-        <button id="btnCloseJobDetail" class="ghost">关闭</button>
+        <button id="btnConfirmQuickRoute">确认填入</button>
+        <button id="btnCancelQuickRoute" class="ghost">取消</button>
       </div>
     </div>
   </dialog>
@@ -478,22 +494,24 @@
 
   <dialog id="keywordDialog">
     <div class="panel dialog-panel" style="max-width:780px">
-      <h2>角色关键词</h2>
+      <div class="keyword-dialog-head">
+        <h2>角色关键词</h2>
+        <div class="toolbar">
+          <button id="btnGenerateRoleKeywords">生成下一轮</button>
+          <button id="btnCloseKeywords" class="ghost">关闭</button>
+        </div>
+      </div>
       <p class="hint">推荐词用于下一轮；人工词优先采集；兜底词在推荐词效果差时使用。画像 MD 不包含关键词。</p>
       <h3>AI 每日关键词</h3>
       <div id="keywordRecommended" class="keyword-grid"></div>
       <h3>人工高优关键词</h3>
       <div class="keyword-manual-bar">
-        <input id="manualKeywordInput" placeholder="输入关键词，例如 FDE、AI交付">
+        <input id="manualKeywordInput" type="text" autocomplete="off" placeholder="输入关键词，例如 FDE、AI交付">
         <button id="btnAddManualKeyword" class="small">加入人工词</button>
       </div>
       <div id="keywordManual" class="keyword-grid"></div>
       <h3>默认兜底关键词</h3>
       <div id="keywordFallback" class="keyword-grid"></div>
-      <div class="toolbar">
-        <button id="btnGenerateRoleKeywords">生成下一轮</button>
-        <button id="btnCloseKeywords" class="ghost">关闭</button>
-      </div>
     </div>
   </dialog>
 

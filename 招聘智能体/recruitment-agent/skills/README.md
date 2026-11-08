@@ -6,6 +6,9 @@
 
 - `resume_profile_skill.md`：如何从简历生成角色画像，包含字段、隐私、通用提炼方法和输出格式。
 - `daily_keyword_skill.md`：如何生成 AI 推荐词、人工高优词、默认兜底词，以及跨专业规则。
+- `job_scoring_skill.md`：岗位评分、硬性条件、招聘方在线/更新时间和日报适配判断。
+- `daily_report_skill.md`：分角色日报，只推送当天评分中达到标准的岗位。
+- `jd_cleaning_skill.md`：猎聘/BOSS 页面 JD 清洗，区分岗位内容与导航/广告/推荐。
 - `usage_skill.md`：软件整体操作顺序、配置 AI/飞书群/角色、输出物校验。
 - 原始简历统一存 `data/resumes/files/`，角色通过 `resumes.file_path` 回溯；AI 失败时看 `profile_tasks`。
 

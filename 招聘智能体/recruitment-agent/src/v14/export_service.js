@@ -19,7 +19,8 @@ function escapeHtml(value) {
 function exportRows(db, roleUuid) {
   return db.prepare(
     `SELECT rj.*, j.display_id, j.company, j.title, j.salary_text, j.city, j.district, j.address,
-            j.job_description, j.first_seen_date, j.last_seen_date, j.ingested_at, j.job_status, j.duplicate_status,
+            j.job_description, j.jd_clean_text, j.job_updated_at, j.recruiter_online,
+            j.first_seen_date, j.last_seen_date, j.ingested_at, j.job_status, j.duplicate_status,
             j.long_lived_days, j.job_url
      FROM role_jobs rj
      JOIN jobs j ON j.job_uuid = rj.job_uuid
@@ -71,8 +72,8 @@ function buildExcelXlsx(db, roleUuid) {
   const role = getRole(db, roleUuid);
   if (!role) throw new Error("角色不存在");
   const rows = exportRows(db, roleUuid);
-  const headers = ["岗位UUID", "岗位编号", "平台", "公司", "岗位", "地点", "薪资", "评分", "等级", "职位描述 JD", "评分理由", "风险", "备注", "链接", "采集日期"];
-  const columns = [38, 10, 8, 24, 32, 20, 12, 8, 8, 80, 30, 24, 24, 46, 16];
+  const headers = ["岗位UUID", "岗位编号", "平台", "公司", "岗位", "地点", "薪资", "评分", "等级", "职位描述 JD", "评分理由", "风险", "备注", "链接", "采集日期", "岗位更新", "招聘方在线"];
+  const columns = [38, 10, 8, 24, 32, 20, 12, 8, 8, 80, 30, 24, 24, 46, 16, 14, 14];
   const values = rows.map((row) => [
     row.job_uuid,
     row.display_id,
@@ -83,17 +84,19 @@ function buildExcelXlsx(db, roleUuid) {
     row.salary_text,
     row.score == null ? "" : String(row.score),
     row.tier || "",
-    row.job_description || "",
+    row.jd_clean_text || row.job_description || "",
     row.score_explanation || "",
     row.score_risks_json || "",
     row.note || "",
     row.job_url || "",
     [row.first_seen_date, row.last_seen_date].filter(Boolean).join(" ~ "),
+    row.job_updated_at || "",
+    row.recruiter_online || "",
   ]);
   return {
     buffer: buildWorkbook([{ name: `${role.role_number}-岗位`, columns, wrapColumn: 9, rows: [headers, ...values] }]),
     count: rows.length,
-    filename: `${role.role_number}_${role.nickname}_jobs_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    filename: `${role.role_number}_${role.nickname}_jobs_${new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)}.xlsx`,
   };
 }
 

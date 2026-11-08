@@ -32,6 +32,9 @@ const state = {
   notificationPageSize: 10,
   historyNotifications: [],
   jobDetailUrl: "",
+  creatingRole: false,
+  rolePollTimer: null,
+  quickRouteRoleUuid: "",
 };
 
 async function api(path, options = {}) {
@@ -80,13 +83,13 @@ function appendLog(id, message) {
   el.scrollTop = el.scrollHeight;
 }
 
-function toast(message, bad = false) {
+function toast(message, bad = false, ms = 3000) {
   const el = document.getElementById("healthBadge");
   if (!el) return;
   el.textContent = message;
   el.classList.toggle("bad", bad);
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(refreshHealth, 3000);
+  toast.timer = setTimeout(refreshHealth, ms);
 }
 
 async function refreshHealth() {
@@ -146,15 +149,17 @@ async function refreshRoles() {
   } else {
     list.innerHTML = state.roles.map((role) => {
       const channels = (role.role_channels || []).join(" / ") || "未选渠道";
+      const processing = role.profile_status === "processing";
       return `
-      <div class="row">
+      <div class="row ${processing ? "processing" : ""}">
         <div>
           <strong>${esc(role.role_number)} · ${esc(role.nickname)}</strong>
-          ${tag(role.status, role.status === "running" ? "ok" : role.status === "pending_confirm" ? "warn" : "")}
+          ${processing ? tag("处理中", "warn") : tag(role.status, role.status === "running" ? "ok" : role.status === "pending_confirm" ? "warn" : "")}
           ${role.profile_status === "pending" ? tag("画像待整理", "warn") : ""}
-          <div class="meta">${esc(role.target_roles || "未设置目标岗位")} · 渠道：${esc(channels)} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}</div>
+          <div class="meta">${processing ? "正在保存原始简历并调用 AI 画像 Skill，完成后按钮会自动出现" : `${esc(role.target_roles || "未设置目标岗位")} · 渠道：${esc(channels)} · 待评分 ${role.pending_scores ?? "-"} · ${role.has_started ? "已锁定" : "可修改"}`}</div>
         </div>
         <div class="actions">
+          ${processing ? "" : `
           ${role.profile_status === "pending" ? `<button class="small" data-action="reprofile" data-id="${role.role_uuid}">重新整理画像</button>` : ""}
           ${role.resume_id ? `<button class="small ghost" data-resume="${role.resume_id}">原始简历</button>` : ""}
           <button class="small keyword-link" data-keywords="${role.role_uuid}">关键词</button>
@@ -163,7 +168,7 @@ async function refreshRoles() {
           ${["pending_start", "paused"].includes(role.status) ? `<button class="small" data-action="start" data-id="${role.role_uuid}">启动</button>` : ""}
           ${role.status === "running" ? `<button class="small ghost" data-action="pause" data-id="${role.role_uuid}">暂停</button>` : ""}
           <button class="small ghost" data-action="copy" data-id="${role.role_uuid}">复制</button>
-          <button class="small danger" data-action="delete" data-id="${role.role_uuid}">删除</button>
+          <button class="small danger" data-action="delete" data-id="${role.role_uuid}">删除</button>`}
         </div>
       </div>`;
     }).join("");
@@ -177,6 +182,10 @@ async function refreshRoles() {
     }
   }
   state.activeRole = document.getElementById("jobRoleSelect")?.value || state.roles[0]?.role_uuid || "";
+  clearTimeout(state.rolePollTimer);
+  if (state.roles.some((role) => role.profile_status === "processing")) {
+    state.rolePollTimer = setTimeout(() => refreshRoles().catch(() => {}), 1500);
+  }
 }
 
 async function refreshTasks() {
@@ -188,6 +197,13 @@ async function refreshTasks() {
   const summary = document.getElementById("taskSummary");
   const running = state.tasks.filter((task) => task.status === "running").length;
   const queued = state.tasks.filter((task) => ["queued", "retrying"].includes(task.status)).length;
+  const badge = document.getElementById("taskBadge");
+  if (badge) {
+    const activeCount = state.tasks.filter((task) => ["queued", "running", "retrying", "paused", "stalled"].includes(task.status)).length;
+    badge.textContent = String(activeCount);
+    badge.classList.toggle("active", activeCount > 0);
+  }
+  const typeLabel = (type) => ({ collect: "采集", ingest: "入库", score: "评分", report: "日报", export: "导出" }[type] || type);
   summary.innerHTML = `
     <div class="card"><div class="num">${running}</div><div class="label">运行中</div></div>
     <div class="card"><div class="num">${queued}</div><div class="label">排队/重试</div></div>
@@ -201,7 +217,7 @@ async function refreshTasks() {
   list.innerHTML = pendingTasks.length ? pendingTasks.map((task) => `
     <div class="row">
       <div>
-        <strong>#${task.id} ${esc(task.type)}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : task.status === "failed" ? "bad" : "warn")}
+        <strong>#${task.id} ${esc(typeLabel(task.type))}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : task.status === "failed" ? "bad" : "warn")}
         <div class="meta">优先级 ${task.priority} · 尝试 ${task.attempts} · ${esc(fmt(task.updated_at))} ${task.last_error ? "· " + esc(task.last_error) : ""}</div>
       </div>
       <div class="actions">
@@ -214,8 +230,8 @@ async function refreshTasks() {
   historyList.innerHTML = historyTasks.length ? historyTasks.map((task) => `
     <div class="row">
       <div>
-        <strong>#${task.id} ${esc(task.type)}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : "bad")}
-        <div class="meta">${esc(fmt(task.updated_at))}${task.last_error ? " · " + esc(task.last_error) : ""}</div>
+        <strong>#${task.id} ${esc(typeLabel(task.type))}</strong> ${tag(task.status, task.status === "succeeded" ? "ok" : "bad")}
+        <div class="meta">${esc(fmt(task.updated_at))}${task.last_error ? " · " + esc(task.last_error) : ""}${task.progress?.filePath ? " · 文件：" + esc(task.progress.filePath) : ""}</div>
       </div>
     </div>`).join("") : '<div class="empty">暂无历史任务</div>';
   const events = document.getElementById("eventList");
@@ -282,12 +298,18 @@ async function openJobDetail(jobUuid) {
       <div><span>评分</span>${job.score == null ? "-" : esc(job.score)} ${esc(job.tier || "")}</div>
       <div><span>状态</span>${esc(job.job_status || "-")}</div>
       <div><span>采集</span>${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")}</div>
+      <div><span>岗位更新</span>${esc(job.job_updated_at || "-")}</div>
+      <div><span>HC</span>${job.hc_count == null ? "-" : esc(job.hc_count)}</div>
+      <div><span>招聘方</span>${esc(job.recruiter_name || "-")} ${job.recruiter_certified ? "已认证" : ""}</div>
+      <div><span>在线</span>${esc(job.recruiter_online || "-")}${job.recruiter_type ? " · " + esc(job.recruiter_type) : ""}</div>
+      <div class="wide"><span>招聘公司</span>${esc(job.recruiter_company || job.company || "-")}</div>
     </div>
     <label>职位网址<input id="jobDetailUrlInput" readonly value="${esc(job.job_url || "")}"></label>
-    ${job.job_url ? `<a id="jobDetailUrlLink" class="job-url-link" href="${esc(job.job_url)}" target="_blank" rel="noreferrer">${esc(job.job_url)}</a>` : '<p class="hint">该岗位没有可打开的网址</p>'}
+    ${job.job_url ? `<a id="jobDetailUrlLink" class="job-url-link" href="${esc(job.job_url)}" target="_blank" rel="noreferrer">在默认浏览器打开该网址</a>` : '<p class="hint">该岗位没有可打开的网址</p>'}
     <h3>评分理由</h3><p>${reasons.length ? reasons.map(esc).join("；") : esc(job.score_explanation || "-")}</p>
     <h3>风险 / 备注</h3><p>${risks.length ? risks.map(esc).join("；") : "-"}${job.note ? "；备注：" + esc(job.note) : ""}</p>
-    <h3>职位描述</h3><pre class="job-jd">${esc(job.job_description || "暂无 JD")}</pre>
+    <h3>职位描述</h3><pre class="job-jd">${esc(job.jd_clean_text || job.job_description || "暂无 JD")}</pre>
+    ${job.jd_clean_text && job.job_description ? `<details class="raw-jd"><summary>查看原始 JD（清洗前）</summary><pre class="job-jd">${esc(job.job_description)}</pre></details>` : ""}
   `;
   document.getElementById("jobDetailDialog").showModal();
 }
@@ -991,16 +1013,25 @@ function bind() {
   document.getElementById("routeStageBody").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-fill-role]");
     if (!button) return;
-    const groupId = document.getElementById("routingDefaultGroup")?.value || state.feishuGroups[0]?.id || "";
-    if (!groupId) {
-      toast("请先添加飞书群，或在默认通知群选择群", true);
+    if (!state.feishuGroups.length) {
+      toast("请先添加飞书群", true);
       return;
     }
-    document.querySelectorAll(`#routeStageBody select[data-route-role="${button.dataset.fillRole}"]`).forEach((select) => {
+    state.quickRouteRoleUuid = button.dataset.fillRole;
+    document.getElementById("quickRouteGroup").innerHTML = state.feishuGroups.map((group) => `<option value="${esc(group.id)}">${esc(group.name || group.chat_id || group.id)}</option>`).join("");
+    document.getElementById("quickRouteDialog").showModal();
+  });
+  document.getElementById("btnCancelQuickRoute").onclick = () => document.getElementById("quickRouteDialog").close();
+  document.getElementById("btnConfirmQuickRoute").onclick = () => {
+    const roleUuid = state.quickRouteRoleUuid;
+    const groupId = document.getElementById("quickRouteGroup").value;
+    if (!roleUuid || !groupId) return;
+    document.querySelectorAll(`#routeStageBody select[data-route-role="${roleUuid}"]`).forEach((select) => {
       select.value = groupId;
     });
+    document.getElementById("quickRouteDialog").close();
     toast("已填入该角色的三个环节，请点“保存角色路由”");
-  });
+  };
 
   document.getElementById("btnRefresh").onclick = refreshAll;
   document.getElementById("btnTick").onclick = doTick;
@@ -1064,6 +1095,14 @@ function bind() {
     }
   });
 
+  for (const id of ["roleManualKeywords", "roleFallbackKeywords", "manualKeywordInput", "editManualKeywords", "editFallbackKeywords"]) {
+    const input = document.getElementById(id);
+    if (input) {
+      input.disabled = false;
+      input.readOnly = false;
+      input.style.pointerEvents = "auto";
+    }
+  }
   document.getElementById("btnGenerateKeywords").onclick = async () => {
     try {
       const min = Number(document.getElementById("roleSalaryMin").value || 0);
@@ -1095,6 +1134,8 @@ function bind() {
     }
   });
   document.getElementById("btnCreateRole").onclick = async () => {
+    if (state.creatingRole) return;
+    const button = document.getElementById("btnCreateRole");
     try {
       const minText = document.getElementById("roleSalaryMin").value;
       const maxText = document.getElementById("roleSalaryMax").value;
@@ -1104,43 +1145,54 @@ function bind() {
       if (max != null && (!Number.isInteger(max) || max <= 0)) throw new Error("期望薪资上限必须是正整数且不能为 0");
       if (min != null && max != null && max < min) throw new Error("期望薪资上限不能小于下限");
       const profileInput = document.getElementById("roleProfile").value.trim();
-      const result = await api("/api/roles", {
-        method: "POST",
-        body: {
-          nickname: document.getElementById("roleNickname").value.trim(),
-          profile_md: profileInput,
-          resume_md: state.resumeContent || profileInput,
-          resume_file_name: state.resumeFileName,
-          resume_file_base64: state.resumeFileBase64,
-          target_roles: document.getElementById("roleTargets").value.trim(),
-          target_city: document.getElementById("roleCity").value.trim(),
-          target_cities: document.getElementById("roleCity").value.trim(),
-          salary_min: min || null,
-          salary_max: max || null,
-          target_salary: min && max ? `${min}-${max}K` : "",
-          role_keywords: document.getElementById("roleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
-          manual_keywords: document.getElementById("roleManualKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
-          fallback_keywords: document.getElementById("roleFallbackKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
-        },
-      });
-      if (result.profile_status === "pending") {
-        alert(`角色已创建，但 AI 画像整理失败：${result.profile_error || "AI 能力未配置"}\n原始简历和待处理记录已保存，配置好 AI 后可重新整理。`);
+      const nickname = document.getElementById("roleNickname").value.trim();
+      if (!nickname) throw new Error("请填写角色昵称");
+      if (state.roles.some((role) => role.nickname === nickname && role.profile_status === "processing")) {
+        throw new Error("这个昵称的角色正在处理中，请等它完成");
       }
-      if (result.similar?.length) {
-        alert(`与已有角色相似：${result.similar.map((item) => `${item.role_number} ${item.nickname}（${Math.round(item.score * 100)}%）`).join("，")}`);
-      }
+      const payload = {
+        nickname,
+        profile_md: profileInput,
+        resume_md: state.resumeContent || profileInput,
+        resume_file_name: state.resumeFileName,
+        resume_file_base64: state.resumeFileBase64,
+        target_roles: document.getElementById("roleTargets").value.trim(),
+        target_city: document.getElementById("roleCity").value.trim(),
+        target_cities: document.getElementById("roleCity").value.trim(),
+        salary_min: min || null,
+        salary_max: max || null,
+        target_salary: min && max ? `${min}-${max}K` : "",
+        role_keywords: document.getElementById("roleKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+        manual_keywords: document.getElementById("roleManualKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+        fallback_keywords: document.getElementById("roleFallbackKeywords").value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
+      };
+      state.creatingRole = true;
+      button.disabled = true;
+      button.textContent = "创建中…";
       state.resumeContent = "";
       state.resumeFileName = "";
       state.resumeFileBase64 = "";
       for (const id of ["roleNickname", "roleProfile", "roleTargets", "roleCity", "roleSalaryMin", "roleSalaryMax", "roleKeywords", "roleManualKeywords", "roleFallbackKeywords"]) {
         document.getElementById(id).value = "";
       }
+      document.getElementById("roleCityPreview").textContent = "";
       document.getElementById("resumeFile").value = "";
-      document.getElementById("resumeStatus").textContent = "未选择简历；也可以直接粘贴到下方";
+      document.getElementById("resumeStatus").textContent = "未选择简历；也可以直接粘贴简历或标准画像";
+      const list = document.getElementById("roleList");
+      list.insertAdjacentHTML("afterbegin", `<div class="row processing" id="optimisticRole"><div><strong>处理中 · ${esc(nickname)}</strong> ${tag("处理中", "warn")}<div class="meta">正在保存原始简历并调用 AI 画像 Skill，完成后按钮会自动出现</div></div></div>`);
+      const result = await api("/api/roles", { method: "POST", body: payload });
+      document.getElementById("optimisticRole")?.remove();
       await refreshRoles();
       await refreshRouting();
-      toast("角色已创建");
-    } catch (error) { alert(error.message); }
+      toast(result.duplicate ? "已有同名角色正在处理" : "角色已创建，画像处理中");
+    } catch (error) {
+      document.getElementById("optimisticRole")?.remove();
+      alert(error.message);
+    } finally {
+      state.creatingRole = false;
+      button.disabled = false;
+      button.textContent = "创建角色";
+    }
   };
 
   document.getElementById("btnConfirmRole").onclick = async () => {
@@ -1265,6 +1317,9 @@ function bind() {
     try { await openJobDetail(button.dataset.jobDetail); } catch (error) { alert(error.message); }
   });
   document.getElementById("btnCloseJobDetail").onclick = () => document.getElementById("jobDetailDialog").close();
+  document.getElementById("jobDetailDialog").addEventListener("click", (event) => {
+    if (event.target === document.getElementById("jobDetailDialog")) document.getElementById("jobDetailDialog").close();
+  });
   document.getElementById("jobDetailBody").addEventListener("click", async (event) => {
     const link = event.target.closest("#jobDetailUrlLink");
     if (!link) return;
@@ -1289,6 +1344,13 @@ function bind() {
       toast("已交给默认浏览器打开");
     } catch (error) { alert(error.message); }
   };
+  document.getElementById("btnOpenJobInstance").onclick = async () => {
+    if (!state.jobDetailUrl) return toast("该岗位没有网址", true);
+    try {
+      await api("/api/chrome/open-url", { method: "POST", body: { url: state.jobDetailUrl } });
+      toast("已交给程序实例浏览器打开");
+    } catch (error) { alert(error.message); }
+  };
 
   document.getElementById("jobPager").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-page]");
@@ -1307,21 +1369,9 @@ function bind() {
     const roleUuid = document.getElementById("jobRoleSelect").value;
     if (!roleUuid) return;
     try {
-      const response = await fetch(`/api/export/${roleUuid}`);
-      if (!response.ok) throw new Error(`导出失败 HTTP ${response.status}`);
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition") || "";
-      const match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
-      const filename = match ? decodeURIComponent(match[1]) : `jobs-${roleUuid.slice(0, 8)}.xlsx`;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-      toast(`Excel 已导出：${filename}`);
+      await api("/api/tasks/export", { method: "POST", body: { kind: "excel", roleUuid } });
+      toast("任务已创建，请在任务列表查看完成情况", false, 2000);
+      await refreshTasks();
     } catch (error) { alert(error.message); }
   };
 
@@ -1336,6 +1386,13 @@ function bind() {
     try {
       const result = await api("/api/logs/open", { method: "POST", body: {} });
       toast(`日志目录：${result.path}`);
+    } catch (error) { alert(error.message); }
+  };
+  document.getElementById("btnExportLogs").onclick = async () => {
+    try {
+      await api("/api/tasks/export", { method: "POST", body: { kind: "log" } });
+      toast("日志导出任务已创建，请在任务列表查看", false, 2000);
+      await refreshTasks();
     } catch (error) { alert(error.message); }
   };
 

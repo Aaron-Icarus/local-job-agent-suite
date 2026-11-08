@@ -2,6 +2,9 @@ const { listTasks, startTask, finishTask, failTask, createTask, PRIORITY, getCol
 const { runCollectionEvent } = require("./collection_runner");
 const { processRawQueue } = require("./ingest_service");
 const { buildReport } = require("./report_service");
+const { exportRoleToExcel, defaultExportDir } = require("./export_service");
+const fs = require("fs");
+const path = require("path");
 const { runningRoles } = require("./task_service");
 const { scoreAllRoles } = require("./score_service");
 const { ensureChrome } = require("./chrome_manager");
@@ -57,6 +60,29 @@ async function runTask(db, task) {
     if (pending > 0 && !listTasks(db, { type: "score", limit: 20 }).some((item) => ["queued", "retrying", "running"].includes(item.status))) {
       createTask(db, { type: "score", priority: PRIORITY.SCORE, payload: { dateKey: task.payload.dateKey } });
     }
+    return;
+  }
+
+  if (task.type === "export") {
+    startTask(db, task.id, {});
+    const kind = String(task.payload.kind || "excel");
+    const dir = defaultExportDir();
+    fs.mkdirSync(dir, { recursive: true });
+    if (kind === "log") {
+      const logDir = path.resolve(__dirname, "..", "..", "data", "logs");
+      const stamp = new Date(Date.now() + 8 * 3600000).toISOString().replace(/[:.]/g, "-");
+      const output = path.join(dir, `招聘智能体_logs_${stamp}.log`);
+      const files = fs.existsSync(logDir) ? fs.readdirSync(logDir).filter((name) => name.startsWith("app.log")) : [];
+      const chunks = [];
+      for (const name of files) {
+        chunks.push(`===== ${name} =====\n`, fs.readFileSync(path.join(logDir, name), "utf8"));
+      }
+      fs.writeFileSync(output, chunks.join("\n"), "utf8");
+      finishTask(db, task.id, { progress: { kind, filePath: output, count: files.length } });
+      return;
+    }
+    const result = exportRoleToExcel(db, task.payload.roleUuid, { outputDir: dir });
+    finishTask(db, task.id, { progress: { kind, filePath: result.filePath, count: result.count } });
     return;
   }
 

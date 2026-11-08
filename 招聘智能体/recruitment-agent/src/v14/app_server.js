@@ -10,9 +10,9 @@ const scores = require("./scores_repo");
 const { listJobs, countJobs } = require("./jobs_repo");
 const { loginStatus, recordCheck } = require("./login_monitor");
 const { checkPlatform } = require("./login_checker");
-const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome } = require("./chrome_manager");
+const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome, restoreChrome } = require("./chrome_manager");
 const { extractDocument } = require("./document_text");
-const { prepareProfile } = require("./profile_generator");
+const { prepareProfile, buildLocalProfile } = require("./profile_generator");
 const { normalizeCities, normalizeSalary } = require("./location_service");
 const skillsDir = path.resolve(__dirname, "..", "..", "skills");
 const resumes = require("./resumes_repo");
@@ -27,7 +27,7 @@ const logger = require("./logger");
 const jobRecheck = require("./job_recheck");
 const keywordService = require("./keyword_service");
 const { getIdleStatus } = require("./system_idle");
-const { listTasks, pauseTask, resumeTask, cancelTask, getTask } = require("./tasks_repo");
+const { listTasks, pauseTask, resumeTask, cancelTask, getTask, createTask, PRIORITY } = require("./tasks_repo");
 
 function json(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -163,38 +163,26 @@ function createAppServer(options = {}) {
       }
       if (pathname === "/api/roles" && req.method === "POST") {
         const body = await readBody(req);
-        const prepared = await prepareProfile(db, body);
+        const nickname = String(body.nickname || "").trim();
+        const processing = nickname
+          ? db.prepare(
+            `SELECT * FROM roles WHERE nickname = ? AND deleted_at IS NULL
+             AND profile_status = 'processing' AND created_at > ?
+             ORDER BY created_at DESC LIMIT 1`
+          ).get(nickname, new Date(Date.now() - 2 * 60 * 1000).toISOString())
+          : null;
+        if (processing) {
+          return json(res, 200, { ok: true, role: processing, processing: true, duplicate: true });
+        }
         const result = roles.createRole(db, {
           ...body,
-          profile_md: prepared.profile_md,
-          resume_id: prepared.resume_id || body.resume_id || "",
-          profile_status: prepared.profile_status,
+          profile_md: "",
+          resume_id: "",
+          profile_status: "processing",
         });
-        if (body.role_keywords?.length || body.manual_keywords?.length || body.fallback_keywords?.length) {
-          const fallback = body.fallback_keywords?.length
-            ? body.fallback_keywords
-            : (keywordService.extractFallbackFromProfile(prepared.profile_md).length
-              ? keywordService.extractFallbackFromProfile(prepared.profile_md)
-              : keywordService.fallbackKeywords({ ...body, profile_md: prepared.profile_md }).fallback);
-          keywordService.save(db, result.role.role_uuid, {
-            recommended: body.role_keywords || [],
-            fallback,
-          });
-          for (const keyword of body.manual_keywords || []) {
-            keywordService.addManual(db, result.role.role_uuid, keyword);
-          }
-        } else {
-          await chat.generateKeywords(db, {
-            role_uuid: result.role.role_uuid,
-            profile_md: prepared.profile_md,
-            target_roles: body.target_roles || "",
-            target_city: body.target_city || "",
-            target_salary: body.target_salary || "",
-            career_expectation: body.career_expectation || "",
-          });
-        }
         const defaultGroup = feishuGroups.applyDefaultGroup(db, result.role.role_uuid);
-        return json(res, 200, { ok: true, ...result, profile_status: prepared.profile_status, profile_error: prepared.profile_error, profile_provider: prepared.provider, defaultGroup });
+        startRolePreparation(db, result.role, body);
+        return json(res, 200, { ok: true, ...result, processing: true, defaultGroup });
       }
       const roleReprofile = pathname.match(/^\/api\/roles\/([^/]+)\/reprofile$/);
       if (roleReprofile && req.method === "POST") {
@@ -305,6 +293,17 @@ function createAppServer(options = {}) {
         return json(res, httpStatus, { ok: result.ok, error, platform, result, saved });
       }
 
+      if (pathname === "/api/chrome/open-url" && req.method === "POST") {
+        const body = await readBody(req);
+        const target = String(body.url || "").trim();
+        if (!/^https?:\/\//i.test(target)) return json(res, 400, { ok: false, error: "只允许打开 http/https 链接" });
+        const chrome = await ensureChrome({ startUrl: target, startMinimized: false });
+        if (chrome?.reused && chrome.port) {
+          await fetch(`http://127.0.0.1:${chrome.port}/json/new?${encodeURIComponent(target)}`, { method: "PUT" });
+          await restoreChrome(chrome.port);
+        }
+        return json(res, 200, { ok: Boolean(chrome && chrome.port), port: chrome?.port || 0, reused: Boolean(chrome?.reused) });
+      }
       if (pathname === "/api/chrome/open" && req.method === "POST") {
         const body = await readBody(req);
         const platform = String(body.platform || "");
@@ -360,6 +359,18 @@ function createAppServer(options = {}) {
 
       if (pathname === "/api/tasks/board" && req.method === "GET") {
         return json(res, 200, { ok: true, ...getTaskBoard(db) });
+      }
+      if (pathname === "/api/tasks/export" && req.method === "POST") {
+        const body = await readBody(req);
+        const kind = String(body.kind || "excel").toLowerCase();
+        if (!["excel", "log"].includes(kind)) return json(res, 400, { ok: false, error: "不支持的导出类型" });
+        if (kind === "excel" && !body.roleUuid) return json(res, 400, { ok: false, error: "缺少角色" });
+        const task = createTask(db, {
+          type: "export",
+          priority: PRIORITY.EXPORT,
+          payload: { kind, roleUuid: String(body.roleUuid || ""), requestedAt: new Date().toISOString() },
+        });
+        return json(res, 200, { ok: true, task });
       }
       if (pathname === "/api/tasks/tick" && req.method === "POST") {
         const body = await readBody(req);
@@ -618,6 +629,45 @@ function createAppServer(options = {}) {
   });
 
   return server;
+}
+
+function startRolePreparation(db, role, body) {
+  setImmediate(async () => {
+    try {
+      const prepared = await prepareProfile(db, body);
+      roles.updateRole(db, role.role_uuid, {
+        profile_md: prepared.profile_md,
+        resume_id: prepared.resume_id || role.resume_id || "",
+        profile_status: prepared.profile_status,
+      });
+      if (body.role_keywords?.length || body.manual_keywords?.length || body.fallback_keywords?.length) {
+        const fallback = body.fallback_keywords?.length
+          ? body.fallback_keywords
+          : (keywordService.extractFallbackFromProfile(prepared.profile_md).length
+            ? keywordService.extractFallbackFromProfile(prepared.profile_md)
+            : keywordService.fallbackKeywords({ ...body, profile_md: prepared.profile_md }).fallback);
+        keywordService.save(db, role.role_uuid, { recommended: body.role_keywords || [], fallback });
+        for (const keyword of body.manual_keywords || []) keywordService.addManual(db, role.role_uuid, keyword);
+      } else {
+        await chat.generateKeywords(db, {
+          role_uuid: role.role_uuid,
+          profile_md: prepared.profile_md,
+          target_roles: body.target_roles || "",
+          target_city: body.target_city || "",
+          target_salary: body.target_salary || "",
+          career_expectation: body.career_expectation || "",
+        });
+      }
+    } catch (error) {
+      const fallback = buildLocalProfile(body, body.resume_md || body.profile_md || "");
+      roles.updateRole(db, role.role_uuid, { profile_md: fallback, profile_status: "pending" });
+      db.prepare(
+        `INSERT INTO profile_tasks(resume_id, file_path, status, error, created_at, updated_at)
+         VALUES (?, ?, 'pending', ?, ?, ?)`
+      ).run(role.resume_id || "", "", String(error.message || error).slice(0, 1000), new Date().toISOString(), new Date().toISOString());
+      logger.error("role_prepare", `${role.role_uuid} 画像处理失败：${error.message || error}`);
+    }
+  });
 }
 
 function startServer(db, options = {}) {

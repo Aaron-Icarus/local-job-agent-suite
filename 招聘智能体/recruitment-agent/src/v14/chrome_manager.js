@@ -185,6 +185,25 @@ function cdpCall(wsUrl, method, params = {}, timeoutMs = 3000) {
   });
 }
 
+async function restoreChrome(port) {
+  try {
+    const versionResponse = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
+    const version = await versionResponse.json();
+    const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1200) })).json();
+    const target = tabs.find((tab) => tab.type === "page" && tab.webSocketDebuggerUrl);
+    if (!target || !version.webSocketDebuggerUrl) return false;
+    const windowInfo = await cdpCall(version.webSocketDebuggerUrl, "Browser.getWindowForTarget", { targetId: target.id });
+    if (!windowInfo.windowId) return false;
+    await cdpCall(version.webSocketDebuggerUrl, "Browser.setWindowBounds", {
+      windowId: windowInfo.windowId,
+      bounds: { windowState: "normal" },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function minimizeChrome(port) {
   try {
     const versionResponse = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
@@ -266,6 +285,7 @@ module.exports = {
   resolveCdpPort,
   ensureChrome,
   minimizeChrome,
+  restoreChrome,
   closeChrome,
   startChrome,
   stopChrome,
