@@ -30,6 +30,7 @@ const state = {
   notificationPages: 1,
   notificationPageSize: 10,
   historyNotifications: [],
+  jobDetailUrl: "",
 };
 
 async function api(path, options = {}) {
@@ -255,10 +256,40 @@ async function refreshJobs() {
         <div class="meta">${esc(job.salary_text || "-")} · ${esc(job.city || "-")}${job.district ? " " + esc(job.district) : ""} · 采集 ${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")} · 评分 ${job.score ?? "-"} ${esc(job.tier || "")}${job.last_recheck_at ? " · 总刷 " + esc(job.last_recheck_at) : ""}</div>
       </div>
       <div class="actions">
-        ${job.job_url ? `<a class="small" href="${esc(job.job_url)}" target="_blank" rel="noreferrer">打开岗位</a>` : ""}
+        <button class="small ghost" data-job-detail="${esc(job.job_uuid)}">查看详情</button>
       </div>
     </div>`).join("") : '<div class="empty">没有符合条件的岗位。</div>';
   renderJobPager();
+}
+
+async function openJobDetail(jobUuid) {
+  const roleUuid = document.getElementById("jobRoleSelect").value;
+  const data = await api(`/api/jobs/${encodeURIComponent(jobUuid)}?role=${encodeURIComponent(roleUuid)}`);
+  const job = data.job || {};
+  state.jobDetailUrl = job.job_url || "";
+  document.getElementById("jobDetailTitle").textContent = `${job.display_id || ""} ${job.company || ""} · ${job.title || ""}`;
+  const reasons = safeJson(job.score_reasons_json, []);
+  const risks = safeJson(job.score_risks_json, []);
+  document.getElementById("jobDetailBody").innerHTML = `
+    <div class="job-detail-grid">
+      <div><span>平台</span>${esc(job.platform || "-")}</div>
+      <div><span>地点</span>${esc([job.city, job.district, job.address].filter(Boolean).join(" ") || "-")}</div>
+      <div><span>薪资</span>${esc(job.salary_text || "-")}</div>
+      <div><span>评分</span>${job.score == null ? "-" : esc(job.score)} ${esc(job.tier || "")}</div>
+      <div><span>状态</span>${esc(job.job_status || "-")}</div>
+      <div><span>采集</span>${esc(job.first_seen_date || "-")} ~ ${esc(job.last_seen_date || "-")}</div>
+    </div>
+    <label>职位网址<input id="jobDetailUrlInput" readonly value="${esc(job.job_url || "")}"></label>
+    ${job.job_url ? `<a id="jobDetailUrlLink" class="job-url-link" href="${esc(job.job_url)}" target="_blank" rel="noreferrer">${esc(job.job_url)}</a>` : '<p class="hint">该岗位没有可打开的网址</p>'}
+    <h3>评分理由</h3><p>${reasons.length ? reasons.map(esc).join("；") : esc(job.score_explanation || "-")}</p>
+    <h3>风险 / 备注</h3><p>${risks.length ? risks.map(esc).join("；") : "-"}${job.note ? "；备注：" + esc(job.note) : ""}</p>
+    <h3>职位描述</h3><pre class="job-jd">${esc(job.job_description || "暂无 JD")}</pre>
+  `;
+  document.getElementById("jobDetailDialog").showModal();
+}
+
+function safeJson(value, fallback) {
+  try { return JSON.parse(value || "null") ?? fallback; } catch { return fallback; }
 }
 
 function renderJobPager() {
@@ -1150,6 +1181,37 @@ function bind() {
     state.jobPage = 1;
     refreshJobs();
   };
+  document.getElementById("jobList").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-job-detail]");
+    if (!button) return;
+    try { await openJobDetail(button.dataset.jobDetail); } catch (error) { alert(error.message); }
+  });
+  document.getElementById("btnCloseJobDetail").onclick = () => document.getElementById("jobDetailDialog").close();
+  document.getElementById("jobDetailBody").addEventListener("click", async (event) => {
+    const link = event.target.closest("#jobDetailUrlLink");
+    if (!link) return;
+    event.preventDefault();
+    try {
+      await api("/api/open-url", { method: "POST", body: { url: link.href } });
+    } catch (error) { alert(error.message); }
+  });
+  document.getElementById("btnCopyJobUrl").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(state.jobDetailUrl || "");
+      toast("职位网址已复制");
+    } catch {
+      const input = document.getElementById("jobDetailUrlInput");
+      if (input) { input.select(); document.execCommand("copy"); toast("职位网址已复制"); }
+    }
+  };
+  document.getElementById("btnOpenJobUrl").onclick = async () => {
+    if (!state.jobDetailUrl) return toast("该岗位没有网址", true);
+    try {
+      await api("/api/open-url", { method: "POST", body: { url: state.jobDetailUrl } });
+      toast("已交给默认浏览器打开");
+    } catch (error) { alert(error.message); }
+  };
+
   document.getElementById("jobPager").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-page]");
     if (button) {
@@ -1163,9 +1225,26 @@ function bind() {
       refreshJobs();
     }
   });
-  document.getElementById("btnExport").onclick = () => {
+  document.getElementById("btnExport").onclick = async () => {
     const roleUuid = document.getElementById("jobRoleSelect").value;
-    if (roleUuid) window.location.href = `/api/export/${roleUuid}`;
+    if (!roleUuid) return;
+    try {
+      const response = await fetch(`/api/export/${roleUuid}`);
+      if (!response.ok) throw new Error(`导出失败 HTTP ${response.status}`);
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const filename = match ? decodeURIComponent(match[1]) : `jobs-${roleUuid.slice(0, 8)}.xlsx`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toast(`Excel 已导出：${filename}`);
+    } catch (error) { alert(error.message); }
   };
 
   document.getElementById("btnShowLogs").onclick = async () => {

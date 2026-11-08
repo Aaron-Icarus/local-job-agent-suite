@@ -11,7 +11,7 @@ const scores = require("../src/v14/scores_repo");
 const ai = require("../src/v14/ai_providers");
 const { encryptSecret, decryptSecret } = require("../src/v14/secret_store");
 const reports = require("../src/v14/report_service");
-const { exportRoleToExcel, buildExcelHtml } = require("../src/v14/export_service");
+const { exportRoleToExcel, buildExcelHtml, buildExcelXlsx } = require("../src/v14/export_service");
 const { parseResumeMarkdown } = require("../src/v14/resume_parser");
 const resumes = require("../src/v14/resumes_repo");
 
@@ -127,7 +127,12 @@ test("Excel 导出包含岗位、评分和可点击链接", (t) => {
   const result = exportRoleToExcel(db, role.role_uuid, { outputDir: path.join(root, "downloads") });
   assert.ok(fs.existsSync(result.filePath));
   assert.equal(result.count, 1);
-  assert.match(fs.readFileSync(result.filePath, "utf8"), /测试公司/);
+  assert.ok(result.filePath.endsWith(".xlsx"));
+  const workbook = fs.readFileSync(result.filePath);
+  assert.equal(workbook.slice(0, 2).toString(), "PK");
+  assert.match(workbook.toString("latin1"), /xl\/worksheets\/sheet1\.xml/);
+  const xlsx = buildExcelXlsx(db, role.role_uuid);
+  assert.ok(xlsx.buffer.length > 1000);
 });
 
 test("职位库搜索、AND 筛选与分页", (t) => {

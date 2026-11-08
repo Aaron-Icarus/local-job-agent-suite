@@ -17,7 +17,7 @@ const skillsDir = path.resolve(__dirname, "..", "..", "skills");
 const resumes = require("./resumes_repo");
 const ai = require("./ai_providers");
 const reports = require("./report_service");
-const { buildExcelHtml } = require("./export_service");
+const { buildExcelXlsx } = require("./export_service");
 const { listNotifications, createNotification, queryNotifications } = require("./notifier");
 const messagePlatform = require("./message_platform_service");
 const chat = require("./chat_service");
@@ -346,6 +346,29 @@ function createAppServer(options = {}) {
       if (pathname === "/api/jobs/recheck/batches" && req.method === "GET") {
         return json(res, 200, { ok: true, batches: jobRecheck.listBatches(db) });
       }
+      const jobDetail = pathname.match(/^\/api\/jobs\/([^/]+)$/);
+      if (jobDetail && req.method === "GET") {
+        const roleUuid = url.searchParams.get("role") || "";
+        const row = db.prepare(
+          `SELECT j.*, rj.score, rj.tier, rj.score_time, rj.score_explanation, rj.score_reasons_json,
+                  rj.score_risks_json, rj.note, rj.greeting_status, rj.score_version
+           FROM jobs j
+           LEFT JOIN role_jobs rj ON rj.job_uuid = j.job_uuid AND rj.role_uuid = ?
+           WHERE j.job_uuid = ?`
+        ).get(roleUuid, jobDetail[1]);
+        if (!row) return json(res, 404, { ok: false, error: "岗位不存在" });
+        return json(res, 200, { ok: true, job: row });
+      }
+      if (pathname === "/api/open-url" && req.method === "POST") {
+        const body = await readBody(req);
+        const target = String(body.url || "").trim();
+        if (!/^https?:\/\//i.test(target)) return json(res, 400, { ok: false, error: "只允许打开 http/https 链接" });
+        const command = process.platform === "win32" ? "cmd.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+        const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
+        const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+        child.unref();
+        return json(res, 200, { ok: true, url: target });
+      }
       if (pathname === "/api/jobs" && req.method === "GET") {
         const roleUuid = url.searchParams.get("role") || "";
         if (roleUuid) {
@@ -415,12 +438,14 @@ function createAppServer(options = {}) {
 
       if (pathname.startsWith("/api/export/") && req.method === "GET") {
         const roleUuid = pathname.split("/").pop();
-        const html = buildExcelHtml(db, roleUuid);
+        const result = buildExcelXlsx(db, roleUuid);
+        const fileName = result.filename.replace(/[^\w.\-\u4e00-\u9fa5]/g, "_");
         res.writeHead(200, {
-          "Content-Type": "application/vnd.ms-excel; charset=utf-8",
-          "Content-Disposition": `attachment; filename="jobs-${roleUuid.slice(0, 8)}.xls"`,
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+          "Content-Length": result.buffer.length,
         });
-        return res.end(`\ufeff${html}`);
+        return res.end(result.buffer);
       }
 
       if (pathname === "/api/notifications") {
