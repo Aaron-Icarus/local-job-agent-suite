@@ -53,7 +53,7 @@ static class Installer {
 
   static void InstallFiles(string target, bool noRun) {
     Directory.CreateDirectory(target);
-    string temp = Path.Combine(target, ".installer-temp");
+    string temp = Path.Combine(target, "JobAgentInstallTemp");
     Directory.CreateDirectory(temp);
     try {
       Log("extract payload");
