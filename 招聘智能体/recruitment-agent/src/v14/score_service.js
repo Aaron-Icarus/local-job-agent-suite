@@ -187,11 +187,12 @@ function parseAIJson(text) {
 
 async function askScoreAI(db, role, rows) {
   const prompt = [
-    "你是求职岗位评分复核器。必须严格按下面的岗位评分 Skill 工作。",
+    "你是求职岗位评分器。必须严格按下面的岗位评分 Skill 工作。",
     AI_SCORE_SKILL,
-    "硬条件、薪资、城市、岗位事实已经由本地规则计算；你只能在本地分基础上做有限复核，不得改变硬条件，不得编造。",
-    "每个岗位的 delta 必须是 -8 到 8 的整数；只允许微调；reasons/risks 必须来自岗位文本或画像事实。",
-    "只输出 JSON：{\"scores\":[{\"job_uuid\":\"...\",\"delta\":0,\"reasons\":[\"...\"],\"risks\":[\"...\"],\"summary\":\"...\"}]}",
+    "AI 评分优先：请直接给出每个岗位 0-100 的最终匹配分，不要只做小幅微调。",
+    "本地基线分、理由和风险只作为参考，不是上限；但不得编造简历或岗位事实，不得改变薪资/城市/关闭/重复等硬事实。",
+    "每个岗位输出 score（0-100 整数）、reasons（最多 4 条）、risks（最多 4 条）、summary（一句话）。",
+    "只输出 JSON：{\"scores\":[{\"job_uuid\":\"...\",\"score\":0,\"reasons\":[\"...\"],\"risks\":[\"...\"],\"summary\":\"...\"}]}",
     `角色目标岗位：${role.target_roles || ""}`,
     `目标城市：${role.target_city || ""}`,
     `期望薪资：${role.target_salary || ""}`,
@@ -210,11 +211,11 @@ async function askScoreAI(db, role, rows) {
       body: JSON.stringify({
         model: provider.model,
         messages: [
-          { role: "system", content: "你是招聘岗位评分复核器，只输出 JSON，不编造。" },
+          { role: "system", content: "你是招聘岗位评分器，只输出 JSON，不编造。" },
           { role: "user", content: prompt },
         ],
         temperature: 0.1,
-        max_tokens: 1600,
+        max_tokens: 3000,
       }),
       signal: AbortSignal.timeout(30000),
     });
@@ -229,9 +230,8 @@ async function askScoreAI(db, role, rows) {
 }
 
 async function reviewWithAI(db, role, jobsWithBase, options = {}) {
-  const maxRows = Math.max(0, Math.min(200, Number(options.aiMaxRows || process.env.AI_SCORE_MAX_ROWS || 100)));
-  const batchSize = Math.max(1, Math.min(12, Number(options.aiBatchSize || process.env.AI_SCORE_BATCH_SIZE || 8)));
-  const maxDelta = Math.max(1, Math.min(20, Number(options.aiMaxDelta || process.env.AI_SCORE_MAX_DELTA || 8)));
+  const maxRows = Math.max(0, Math.min(200, Number(options.aiMaxRows || process.env.AI_SCORE_MAX_ROWS || 200)));
+  const batchSize = Math.max(1, Math.min(12, Number(options.aiBatchSize || process.env.AI_SCORE_BATCH_SIZE || 6)));
   const selected = jobsWithBase.slice(0, maxRows);
   const reviewed = new Map();
   const errors = [];
@@ -247,7 +247,29 @@ async function reviewWithAI(db, role, jobsWithBase, options = {}) {
       for (const item of parseAIJson(ai.text)) {
         const key = String(item.job_uuid || item.job_id || item.display_id || item.index || "");
         if (!key) continue;
+        if (!Number.isFinite(Number(item.score ?? item.overall_score ?? item.overall))) {
+          errors.push(`AI 未返回有效 score：${key}`);
+          continue;
+        }
         reviewed.set(key, item);
+      }
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  // 批量返回漏项时逐个补一次，避免无谓回退本地分。
+  const missing = selected.filter((item) => !reviewed.has(String(item.job.job_uuid)) && !reviewed.has(String(item.job.display_id))).slice(0, 20);
+  for (const item of missing) {
+    try {
+      const ai = await askScoreAI(db, role, [compactJobForAI(item.job, item.base)]);
+      if (!ai.ok) { errors.push(ai.error); continue; }
+      provider = ai.provider || provider;
+      model = ai.model || model;
+      for (const result of parseAIJson(ai.text)) {
+        const key = String(result.job_uuid || result.job_id || result.display_id || result.index || "");
+        if (!key) continue;
+        if (Number.isFinite(Number(result.score ?? result.overall_score ?? result.overall))) reviewed.set(key, result);
+        else errors.push(`AI 未返回有效 score：${key}`);
       }
     } catch (error) {
       errors.push(error.message);
@@ -256,16 +278,19 @@ async function reviewWithAI(db, role, jobsWithBase, options = {}) {
   return { reviewed, provider, model, errors, attempted: selected.length };
 }
 
-function applyAIReview(base, review, provider, maxDelta) {
-  const delta = Math.max(-maxDelta, Math.min(maxDelta, Number(review?.delta || 0) || 0));
-  const score = clamp(base.score + delta);
+function applyAIScore(base, review, provider) {
+  const value = Number(review?.score ?? review?.overall_score ?? review?.overall);
+  if (!Number.isFinite(value)) return null;
+  const score = clamp(value);
+  const reasons = Array.isArray(review?.reasons) ? review.reasons.map(String).filter(Boolean).slice(0, 4) : [];
+  const risks = Array.isArray(review?.risks) ? review.risks.map(String).filter(Boolean).slice(0, 4) : [];
   return {
     score,
     tier: score >= 80 ? "高" : score >= 60 ? "中" : "低",
-    explanation: [base.explanation, review?.summary ? `AI复核：${String(review.summary).slice(0, 200)}` : ""].filter(Boolean).join("；"),
-    reasons: [...new Set([...(base.reasons || []), ...(Array.isArray(review?.reasons) ? review.reasons.map(String) : [])])].slice(0, 8),
-    risks: [...new Set([...(base.risks || []), ...(Array.isArray(review?.risks) ? review.risks.map(String) : [])])].slice(0, 8),
-    scoreVersion: "v1.5.2-ai-review",
+    explanation: String(review?.summary || "").slice(0, 300) || `AI 评分 ${score}`,
+    reasons: reasons.length ? reasons : base.reasons,
+    risks: risks.length ? risks : base.risks,
+    scoreVersion: "v1.5.3-ai-first",
     aiUsed: true,
     aiProvider: provider || "",
   };
@@ -284,8 +309,9 @@ async function scoreRoleJobs(db, roleUuid, options = {}) {
   let aiUsed = 0;
   for (const item of jobsWithBase) {
     const review = ai.reviewed.get(String(item.job.job_uuid)) || ai.reviewed.get(String(item.job.display_id));
-    const score = review ? applyAIReview(item.base, review, ai.provider, Number(options.aiMaxDelta || 8)) : item.base;
-    if (score.aiUsed) aiUsed += 1;
+    const aiScore = review ? applyAIScore(item.base, review, ai.provider) : null;
+    const score = aiScore || item.base;
+    if (aiScore) aiUsed += 1;
     saveScore(db, roleUuid, item.job.job_uuid, score);
     scored += 1;
   }
