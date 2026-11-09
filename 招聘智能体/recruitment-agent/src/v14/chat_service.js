@@ -446,7 +446,8 @@ async function runTurn(db, sessionId, input = {}) {
     return { session: getSession(db, sessionId), reply: { text: textReply } };
   }
 
-  const wantsJobs = /岗位|推荐|搜索|合适|机会/.test(text) && !/生成画像|画像/.test(text);
+  const wantsJobs = /岗位|推荐|搜索|合适|机会/.test(text)
+    && !/生成画像|画像|目标岗位|求职意向|期望岗位|简历/.test(text);
   if (wantsJobs) {
     const reply = jobSearchReply(db, state);
     appendMessage(db, sessionId, "assistant", reply.text, reply.metadata);
@@ -461,7 +462,8 @@ async function runTurn(db, sessionId, input = {}) {
     return { session: getSession(db, sessionId), reply };
   }
 
-  const wantsProfile = /画像|简历|生成|角色/.test(text);
+  // 上传简历本身就表示“要做画像”：简历 + 目标条件齐全时直接生成，不再要求用户额外发“生成画像”。
+  const wantsProfile = Boolean(input.resume_md) || /画像|简历|生成|角色/.test(text);
   if (!wantsProfile && text) {
     const ai = await askAI(db, text);
     if (ai) {
