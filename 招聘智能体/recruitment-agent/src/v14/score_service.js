@@ -14,14 +14,26 @@ function wordsOf(value) {
     .filter((item) => item.length >= 2))];
 }
 
-const ROLE_TOKEN_RE = /AI|Agent|智能体|大模型|项目经理|产品经理|项目|产品|交付|实施|运营|售前|解决方案|工程师|顾问|专家|主管|经理|总监|FDE|TPM/gi;
+function tokensFromPhrase(value) {
+  const phrase = String(value || "").trim().toLowerCase();
+  if (!phrase) return [];
+  const tokens = new Set([phrase]);
+  for (const part of phrase.match(/[a-z0-9]+|[\u4e00-\u9fa5]+/g) || []) {
+    if (part.length >= 2) tokens.add(part);
+    if (!/^[\u4e00-\u9fa5]+$/.test(part)) continue;
+    for (let size = 2; size <= Math.min(4, part.length); size += 1) {
+      for (let index = 0; index + size <= part.length; index += 1) {
+        tokens.add(part.slice(index, index + size));
+      }
+    }
+  }
+  return [...tokens];
+}
 
 function roleTokens(targets) {
   const tokens = new Set();
   for (const target of targets) {
-    for (const match of String(target).match(ROLE_TOKEN_RE) || []) {
-      tokens.add(match.toLowerCase());
-    }
+    for (const token of tokensFromPhrase(target)) tokens.add(token);
   }
   return [...tokens];
 }
@@ -29,10 +41,7 @@ function roleTokens(targets) {
 function keywordSignals(keywords) {
   const signals = new Set();
   for (const keyword of keywords) {
-    const value = String(keyword || "").trim();
-    if (!value) continue;
-    signals.add(value.toLowerCase());
-    for (const match of value.match(ROLE_TOKEN_RE) || []) signals.add(match.toLowerCase());
+    for (const token of tokensFromPhrase(keyword)) signals.add(token);
   }
   return [...signals];
 }

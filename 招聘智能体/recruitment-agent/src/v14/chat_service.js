@@ -5,7 +5,7 @@ const { nowIso } = require("./jobs_repo");
 const { importResume } = require("./resumes_repo");
 const { parseResumeMarkdown, resumeToProfileMarkdown } = require("./resume_parser");
 const { searchRoleJobs } = require("./scores_repo");
-const { getRole } = require("./roles_repo");
+const { getRole, normalizeTargetRoles } = require("./roles_repo");
 const { runWithFallback } = require("./ai_providers");
 const { classifyIntent } = require("./intent_service");
 const keywordService = require("./keyword_service");
@@ -439,14 +439,14 @@ async function runTurn(db, sessionId, input = {}) {
     state.resume_md = input.resume_md;
     state.resume_id = resume.id;
     state.parsed = parsed;
-    if (!state.target_roles && parsed.target_roles?.length) state.target_roles = parsed.target_roles.join("、");
+    if (!state.target_roles && parsed.target_roles?.length) state.target_roles = normalizeTargetRoles(parsed.target_roles.join("、"));
     if (!state.experience && parsed.experience_summary) state.experience = parsed.experience_summary;
   } else if (state.resume_md && !state.parsed?.experience_summary) {
     // 兼容旧版本已导入的纯文本 DOCX 简历：旧解析器把整份简历放在“未分类”，这里重新解析字段。
     try {
       const parsed = parseResumeMarkdown(state.resume_md);
       state.parsed = parsed;
-      if (!state.target_roles && parsed.target_roles?.length) state.target_roles = parsed.target_roles.join("、");
+      if (!state.target_roles && parsed.target_roles?.length) state.target_roles = normalizeTargetRoles(parsed.target_roles.join("、"));
       if (!state.experience && parsed.experience_summary) state.experience = parsed.experience_summary;
     } catch {
       // 保留旧状态，下一轮仍可人工补充
@@ -461,7 +461,7 @@ async function runTurn(db, sessionId, input = {}) {
     const history = db.prepare("SELECT content FROM chat_messages WHERE session_id = ? AND role = 'user' ORDER BY id DESC LIMIT 20").all(sessionId);
     for (const row of history) {
       const inferred = inferTargetRole(row.content);
-      if (inferred) { state.target_roles = inferred; break; }
+      if (inferred) { state.target_roles = normalizeTargetRoles(inferred); break; }
     }
   }
   const targetCity = input.target_city || extractField(text, ["目标城市", "城市", "地点"]) || extractCities(text)[0] || "";
@@ -471,7 +471,7 @@ async function runTurn(db, sessionId, input = {}) {
     || state.parsed?.experience_summary
     || (state.resume_md ? String(state.resume_md).slice(0, 2000) : "");
   const careerExpectation = input.career_expectation || extractField(text, ["职业发展期望", "期望方向", "发展方向"]);
-  if (targetRoles) state.target_roles = targetRoles;
+  if (targetRoles) state.target_roles = normalizeTargetRoles(targetRoles);
   if (targetCity) state.target_city = targetCity;
   if (targetSalary) state.target_salary = targetSalary;
   if (experience) state.experience = experience;
