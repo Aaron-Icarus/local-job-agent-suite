@@ -9,9 +9,32 @@ function clamp(value, min = 0, max = 100) {
 
 function wordsOf(value) {
   return [...new Set(String(value || "")
-    .split(/[、,，/\s;；|]+/)
+    .split(/[、,，/\s；;|]+|或者|以及|或|和|及|与/)
     .map((item) => item.trim())
     .filter((item) => item.length >= 2))];
+}
+
+const ROLE_TOKEN_RE = /AI|Agent|智能体|大模型|项目经理|产品经理|项目|产品|交付|实施|运营|售前|解决方案|工程师|顾问|专家|主管|经理|总监|FDE|TPM/gi;
+
+function roleTokens(targets) {
+  const tokens = new Set();
+  for (const target of targets) {
+    for (const match of String(target).match(ROLE_TOKEN_RE) || []) {
+      tokens.add(match.toLowerCase());
+    }
+  }
+  return [...tokens];
+}
+
+function keywordSignals(keywords) {
+  const signals = new Set();
+  for (const keyword of keywords) {
+    const value = String(keyword || "").trim();
+    if (!value) continue;
+    signals.add(value.toLowerCase());
+    for (const match of value.match(ROLE_TOKEN_RE) || []) signals.add(match.toLowerCase());
+  }
+  return [...signals];
 }
 
 function jobText(job) {
@@ -65,10 +88,18 @@ function scoreJob(job, role) {
   const text = jobText(job);
   const targets = wordsOf(role.target_roles);
   const keywords = Array.isArray(role.role_keywords) ? role.role_keywords.map((item) => String(item)) : [];
-  const roleHits = matchCount(text, targets);
-  const skillHits = matchCount(text, keywords);
-  const roleScore = targets.length ? clamp((roleHits / Math.min(3, targets.length)) * 100) : 50;
-  const skillScore = keywords.length ? clamp((skillHits / Math.min(4, keywords.length)) * 100) : 55;
+  const tokens = roleTokens(targets);
+  const signals = keywordSignals(keywords);
+  const roleExactHits = matchCount(text, targets);
+  const roleTokenHits = matchCount(text, tokens);
+  const skillExactHits = matchCount(text, keywords);
+  const skillTokenHits = matchCount(text, signals);
+  const roleExactScore = targets.length ? clamp((roleExactHits / Math.min(2, targets.length)) * 100) : 50;
+  const roleTokenScore = tokens.length ? clamp((roleTokenHits / Math.min(4, tokens.length)) * 100) : 50;
+  const roleScore = clamp(roleExactScore * 0.4 + roleTokenScore * 0.6);
+  const skillExactScore = keywords.length ? clamp((skillExactHits / Math.min(3, keywords.length)) * 100) : 55;
+  const skillTokenScore = signals.length ? clamp((skillTokenHits / Math.min(6, signals.length)) * 100) : 55;
+  const skillScore = clamp(skillExactScore * 0.5 + skillTokenScore * 0.5);
   const salary = salaryMatch(job, role);
   const city = cityMatch(job, role);
   const active = /当前在线|刚刚活跃|今日活跃|今天活跃|在线/.test(String(job.recruiter_online || job.job_description || "")) ? 95 : 65;
@@ -83,8 +114,9 @@ function scoreJob(job, role) {
   const tier = overall >= 80 ? "高" : overall >= 60 ? "中" : "低";
   const reasons = [];
   const risks = [];
-  if (roleHits) reasons.push(`岗位标题/职责命中 ${roleHits} 个目标岗位词`);
-  if (skillHits) reasons.push(`命中 ${skillHits} 个角色技能关键词`);
+  if (roleExactHits) reasons.push(`岗位标题/职责命中 ${roleExactHits} 个目标岗位词`);
+  else if (roleTokenHits) reasons.push(`岗位标题/职责命中 ${roleTokenHits} 个岗位方向词`);
+  if (skillExactHits || skillTokenHits) reasons.push(`命中 ${Math.max(skillExactHits, skillTokenHits)} 个角色技能关键词`);
   if (salary >= 85) reasons.push("薪资与期望区间重叠");
   else if (salary < 40) risks.push("薪资低于期望下限");
   if (city >= 85) reasons.push("工作地点符合目标城市");
