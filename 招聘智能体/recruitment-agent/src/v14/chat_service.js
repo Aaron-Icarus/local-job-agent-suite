@@ -395,6 +395,14 @@ async function runTurn(db, sessionId, input = {}) {
   const targetRoles = input.target_roles
     || extractField(text, ["目标岗位", "求职意向", "期望岗位"])
     || inferTargetRole(text);
+  if (!state.target_roles && !targetRoles) {
+    // 兼容旧会话：早期版本没有从“AI项目经理，在上海……”这类自由文本中提取目标岗位。
+    const history = db.prepare("SELECT content FROM chat_messages WHERE session_id = ? AND role = 'user' ORDER BY id DESC LIMIT 20").all(sessionId);
+    for (const row of history) {
+      const inferred = inferTargetRole(row.content);
+      if (inferred) { state.target_roles = inferred; break; }
+    }
+  }
   const targetCity = input.target_city || extractField(text, ["目标城市", "城市", "地点"]) || extractCities(text)[0] || "";
   const targetSalary = input.target_salary || extractSalary(text);
   const experience = input.experience
