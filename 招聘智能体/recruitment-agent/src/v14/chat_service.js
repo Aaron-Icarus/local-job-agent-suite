@@ -135,6 +135,26 @@ function inferTargetRole(text) {
   return match ? match[1].trim() : "";
 }
 
+function profileMissingFields(state) {
+  const missing = [];
+  if (!state.resume_md) missing.push("简历文件");
+  if (!state.target_roles) missing.push("目标岗位");
+  if (!state.target_city) missing.push("目标城市");
+  if (!state.target_salary) missing.push("期望薪资");
+  if (!state.experience) missing.push("相关经历");
+  return missing;
+}
+
+function resumeReadHint(state) {
+  if (!state.resume_md) return "";
+  const parsed = state.parsed || {};
+  const found = [];
+  if (parsed.name) found.push("姓名");
+  if (parsed.education) found.push("学历");
+  if (parsed.experience_summary) found.push("工作经历");
+  return found.length ? `简历已读取（${found.join("、")}已识别）。` : "简历已读取。";
+}
+
 function dailyKeywords(state) {
   const targets = String(state.target_roles || "").split(/[、,，/]/).map((item) => item.trim()).filter(Boolean);
   const skills = (state.parsed?.skills || []).map((item) => String(item).trim()).filter(Boolean);
@@ -462,8 +482,11 @@ async function runTurn(db, sessionId, input = {}) {
     return { session: getSession(db, sessionId), reply };
   }
 
-  // 上传简历本身就表示“要做画像”：简历 + 目标条件齐全时直接生成，不再要求用户额外发“生成画像”。
-  const wantsProfile = Boolean(input.resume_md) || /画像|简历|生成|角色/.test(text);
+  // 上传简历、提到目标条件，或已经能从对话识别出目标岗位，都进入画像流程。
+  const wantsProfile = Boolean(input.resume_md)
+    || /画像|简历|生成|角色/.test(text)
+    || /目标岗位|求职意向|期望岗位|目标城市|期望薪资/.test(text)
+    || Boolean(targetRoles && text.length <= 120);
   if (!wantsProfile && text) {
     const ai = await askAI(db, text);
     if (ai) {
@@ -474,16 +497,29 @@ async function runTurn(db, sessionId, input = {}) {
     }
   }
 
-  const missing = [];
-  if (!state.resume_md) missing.push("简历（上传 .md 或粘贴）");
-  if (!state.target_roles) missing.push("目标岗位");
-  if (!state.target_city) missing.push("目标城市");
-  if (!state.target_salary) missing.push("目标薪资区间");
-  if (!state.experience) missing.push("相关经历");
-
-  if (missing.length) {
-    const reply = `我先按角色画像 Skill 检查了一下，还缺：\n${missing.map((item) => `- ${item}`).join("\n")}\n\n可以一次发给我，例如：“目标岗位：实施顾问；城市：上海；薪资：18-25K；5 年企业软件实施经验”。`;
-    appendMessage(db, sessionId, "assistant", reply, { action: "ask_missing", missing, steps: ["parse_resume", "ask_missing"] });
+  const missing = profileMissingFields(state);
+  const forceWithMissing = Boolean(state.resume_md) && /先按|现有信息|直接生成|不补充|就这样生成/.test(text);
+  if (missing.length && !forceWithMissing) {
+    const questions = missing.map((item) => `- ${item}`);
+    const preamble = state.resume_md
+      ? `${resumeReadHint(state)}我按角色画像 Skill 检查了一下，还不能直接生成完整画像。`
+      : "我还没有收到简历，先无法做完整的角色画像。";
+    const reply = [
+      preamble,
+      "还缺：",
+      ...questions,
+      "",
+      "请直接补充缺失项，例如：",
+      "“目标岗位：实施顾问；城市：上海；期望薪资：18-25K；5 年企业软件实施经验”。",
+      state.resume_md ? "如果希望先按现有信息生成，也可以说“先按现有信息生成”，我会把未确认项标为待确认。" : "",
+    ].filter(Boolean).join("\n");
+    appendMessage(db, sessionId, "assistant", reply, {
+      action: "ask_missing",
+      missing,
+      resume_read: Boolean(state.resume_md),
+      can_generate_with_missing: Boolean(state.resume_md),
+      steps: ["parse_resume", "check_missing", "ask_missing"],
+    });
     updateState(db, sessionId, state);
     return { session: getSession(db, sessionId), reply };
   }
