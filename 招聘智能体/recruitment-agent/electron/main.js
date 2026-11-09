@@ -18,10 +18,15 @@ try {
 }
 
 function startupLog(message) {
+  const line = `[${new Date().toISOString()}] ${message}\n`;
   try {
-    fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${message}\n`);
+    fs.appendFileSync(logFile, line);
   } catch {
-    // ignore
+    try {
+      fs.appendFileSync(path.join(path.dirname(process.execPath), "startup.log"), line);
+    } catch {
+      // 日志失败不影响启动
+    }
   }
 }
 
@@ -143,15 +148,72 @@ function waitForServer(url, timeoutMs = 20000) {
   });
 }
 
+function copyDirectory(source, target, options = {}) {
+  if (!fs.existsSync(source)) return;
+  fs.mkdirSync(target, { recursive: true });
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    if (options.exclude?.includes(entry.name)) continue;
+    const from = path.join(source, entry.name);
+    const to = path.join(target, entry.name);
+    if (entry.isDirectory()) copyDirectory(from, to, options);
+    else fs.copyFileSync(from, to);
+  }
+}
+
+function preparePackagedData() {
+  if (!app.isPackaged) return null;
+  const userData = app.getPath("userData");
+  const installRoot = path.dirname(process.execPath);
+  // Windows 安装目录是用户选定且可写的；macOS 的 .app 包内不可写，使用用户数据目录。
+  const dataRoot = process.platform === "win32"
+    ? path.join(installRoot, "data")
+    : path.join(userData, "data");
+  fs.mkdirSync(path.join(dataRoot, "v1.4"), { recursive: true });
+  fs.mkdirSync(path.join(dataRoot, "logs"), { recursive: true });
+  fs.mkdirSync(path.join(dataRoot, "exports"), { recursive: true });
+  fs.mkdirSync(path.join(dataRoot, "tmp"), { recursive: true });
+  const messageTarget = process.platform === "win32"
+    ? path.join(installRoot, "message-platform")
+    : path.join(userData, "message-platform");
+  const messageSource = path.join(process.resourcesPath, "runtime", "message-platform");
+  try {
+    if (fs.existsSync(messageSource) && !fs.existsSync(messageTarget)) {
+      // 启动时复制轻量配置/源码；node_modules 也一并复制，保证群机器人 SDK 可用。
+      copyDirectory(messageSource, messageTarget, { exclude: ["data", "logs", ".env"] });
+    }
+  } catch (error) {
+    startupLog(`prepare message platform failed: ${error.message}`);
+  }
+  startupLog(`packaged data: ${dataRoot}`);
+  return { userData, dataRoot, messageTarget };
+}
+
 function startBackend(port) {
-  const nodeExe = process.env.V14_NODE || "node";
-  const script = path.join(__dirname, "..", "src", "v14", "cli", "serve.js");
+  const packaged = app.isPackaged;
+  const runtimeRoot = packaged ? path.join(process.resourcesPath, "runtime") : path.join(__dirname, "..");
+  const nodeExe = process.env.V14_NODE
+    || (packaged ? path.join(runtimeRoot, process.platform === "win32" ? "node.exe" : "node") : "node");
+  const script = path.join(runtimeRoot, "src", "v14", "cli", "serve.js");
+  const packagedData = preparePackagedData();
+  const env = {
+    ...process.env,
+    V14_PORT: String(port),
+    LOCAL_CHAT_BASE_URL: serverUrl,
+  };
+  if (packaged && packagedData) {
+    env.V14_DB_PATH = path.join(packagedData.dataRoot, "v1.4", "jobs.db");
+    env.V14_LOG_DIR = path.join(packagedData.dataRoot, "logs");
+    env.V14_SECRET_KEY_PATH = path.join(packagedData.dataRoot, "v1.4", "secret.key");
+    env.V14_CHROME_PROFILE = path.join(packagedData.dataRoot, "ChromeProfile");
+    env.V14_EXPORT_DIR = path.join(packagedData.dataRoot, "exports");
+    env.V14_MESSAGE_PLATFORM_DIR = packagedData.messageTarget;
+    env.V14_TEMP_DIR = path.join(packagedData.dataRoot, "tmp");
+    env.TEMP = env.V14_TEMP_DIR;
+    env.TMP = env.V14_TEMP_DIR;
+  }
   const child = spawn(nodeExe, [script, `--port=${port}`], {
-    cwd: path.join(__dirname, ".."),
-    env: {
-      ...process.env,
-      V14_PORT: String(port),
-    },
+    cwd: runtimeRoot,
+    env,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });

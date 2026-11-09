@@ -13,6 +13,7 @@ const { checkPlatform } = require("./login_checker");
 const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome, restoreChrome } = require("./chrome_manager");
 const { extractDocument } = require("./document_text");
 const { prepareProfile, buildLocalProfile } = require("./profile_generator");
+const { scoreRoleJobs } = require("./score_service");
 const { normalizeCities, normalizeSalary } = require("./location_service");
 const skillsDir = path.resolve(__dirname, "..", "..", "skills");
 const resumes = require("./resumes_repo");
@@ -350,7 +351,7 @@ function createAppServer(options = {}) {
         });
       }
 
-      const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update)$/);
+      const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update|score)$/);
       if (roleAction) {
         const [, roleUuid, action] = roleAction;
         const body = await readBody(req);
@@ -361,6 +362,11 @@ function createAppServer(options = {}) {
         if (action === "pause") return json(res, 200, { ok: true, role: roles.pauseRole(db, roleUuid) });
         if (action === "copy") return json(res, 200, { ok: true, role: roles.copyRole(db, roleUuid, body) });
         if (action === "delete") return json(res, 200, { ok: true, role: roles.softDeleteRole(db, roleUuid) });
+        if (action === "score") {
+          const changed = scores.markRoleNeedsScore(db, roleUuid, { all: true });
+          const result = await scoreRoleJobs(db, roleUuid, { ai: true, aiMaxRows: 200 });
+          return json(res, 200, { ok: true, changed, result });
+        }
         if (action === "update") return json(res, 200, { ok: true, ...roles.updateRole(db, roleUuid, body) });
       }
 
@@ -554,7 +560,20 @@ function createAppServer(options = {}) {
         return json(res, 200, { ok: true, status: messagePlatform.status() });
       }
       if (pathname === "/api/message-platform/config" && req.method === "POST") {
-        return json(res, 200, { ok: true, status: messagePlatform.writeEnv(await readBody(req)) && messagePlatform.status() });
+        const body = await readBody(req);
+        messagePlatform.writeEnv(body);
+        const status = messagePlatform.status();
+        let group = null;
+        if (body.chatId) {
+          const existingGroups = feishuGroups.listGroups(db);
+          const matched = existingGroups.find((item) => item.chat_id === String(body.chatId).trim());
+          group = matched || feishuGroups.saveGroup(db, {
+            name: String(body.groupName || "默认飞书群"),
+            chatId: body.chatId,
+            isDefault: existingGroups.length === 0,
+          });
+        }
+        return json(res, 200, { ok: true, status, group });
       }
       if (pathname === "/api/message-platform/start" && req.method === "POST") {
         return json(res, 200, { ok: true, status: messagePlatform.startService() });

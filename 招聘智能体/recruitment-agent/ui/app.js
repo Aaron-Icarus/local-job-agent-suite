@@ -169,6 +169,7 @@ async function refreshRoles() {
           ${role.status === "pending_confirm" ? `<button class="small ghost" data-edit-role="${role.role_uuid}">修改</button>` : ""}
           ${["pending_start", "paused"].includes(role.status) ? `<button class="small" data-action="start" data-id="${role.role_uuid}">启动</button>` : ""}
           ${role.status === "running" ? `<button class="small ghost" data-action="pause" data-id="${role.role_uuid}">暂停</button>` : ""}
+          <button class="small ghost" data-action="score" data-id="${role.role_uuid}">重新评分</button>
           <button class="small ghost" data-action="copy" data-id="${role.role_uuid}">复制</button>
           <button class="small danger" data-action="delete" data-id="${role.role_uuid}">删除</button>`}
         </div>
@@ -1314,7 +1315,11 @@ function bind() {
       return;
     }
     try {
-      await api(`/api/roles/${id}/${action}`, { method: "POST", body: {} });
+      const response = await api(`/api/roles/${id}/${action}`, { method: "POST", body: {} });
+      if (action === "score") {
+        const result = response.result || {};
+        toast(`评分完成：${result.scored || 0} 个，AI 复核 ${result.aiUsed || 0} 个${result.aiError ? `；AI 异常：${result.aiError.slice(0, 80)}` : ""}`, false, 4000);
+      }
       await refreshRoles();
       await refreshJobs();
     } catch (error) { alert(error.message); }
@@ -1562,9 +1567,10 @@ function bind() {
         },
       });
       await refreshMessages();
+      await refreshGroups();
       for (const id of ["mpAppSecret", "mpVerifyToken", "mpEncryptKey"]) document.getElementById(id).value = "";
       showLog("dashboardLog", "飞书应用配置已保存（.env）");
-      toast("飞书应用配置已保存");
+      toast("飞书应用配置已保存；如填了群 ID，已自动加入群列表");
     } catch (error) { alert(error.message); }
   };
   document.getElementById("btnStartMp").onclick = async () => {

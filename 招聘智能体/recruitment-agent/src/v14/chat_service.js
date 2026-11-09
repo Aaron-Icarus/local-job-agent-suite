@@ -5,8 +5,9 @@ const { nowIso } = require("./jobs_repo");
 const { importResume } = require("./resumes_repo");
 const { parseResumeMarkdown, resumeToProfileMarkdown } = require("./resume_parser");
 const { searchRoleJobs } = require("./scores_repo");
-const { getRole } = require("./roles_repo");
+const { getRole, normalizeTargetRoles } = require("./roles_repo");
 const { runWithFallback } = require("./ai_providers");
+const { classifyIntent } = require("./intent_service");
 const keywordService = require("./keyword_service");
 
 const KNOWN_CITIES = ["上海", "北京", "深圳", "广州", "杭州", "苏州", "成都", "武汉", "南京", "西安", "重庆"];
@@ -128,6 +129,70 @@ function extractExperience(text) {
   return match ? `${match[1]} 年` : "";
 }
 
+function inferTargetRole(text) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  if (!value || value.length > 120) return "";
+  const match = value.match(/([A-Za-z0-9+\/\u4e00-\u9fa5]{2,24}(?:项目经理|产品经理|工程师|顾问|专员|主管|总监|设计师|分析师|架构师|运营|开发|交付))/);
+  return match ? match[1].trim() : "";
+}
+
+function profileMissingFields(state) {
+  const missing = [];
+  if (!state.resume_md) missing.push("简历文件");
+  if (!state.target_roles) missing.push("目标岗位");
+  if (!state.target_city) missing.push("目标城市");
+  if (!state.target_salary) missing.push("期望薪资");
+  if (!state.experience) missing.push("相关经历");
+  return missing;
+}
+
+function resumeReadHint(state) {
+  if (!state.resume_md) return "";
+  const parsed = state.parsed || {};
+  const found = [];
+  if (parsed.name) found.push("姓名");
+  if (parsed.education) found.push("学历");
+  if (parsed.experience_summary) found.push("工作经历");
+  return found.length ? `简历已读取（${found.join("、")}已识别）。` : "简历已读取。";
+}
+
+const NEGATIVE_TERMS = ["自动驾驶标注", "AI标注", "自动驾驶", "标注", "TMT咨询", "TMT", "外包", "驻场", "销售", "加班", "出差"];
+
+function preferenceText(text) {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  return /职业规划|职业方向|主要看|重点看|聚焦|优先|不考虑|不想|不要|排除|规避|不是考虑|方向/.test(value)
+    ? value.slice(0, 800)
+    : "";
+}
+
+function avoidTerms(text) {
+  const value = String(text || "");
+  if (!/不考虑|不想|不要|排除|规避|不是考虑|暂不考虑/.test(value)) return "";
+  return uniqueKeywords(NEGATIVE_TERMS.filter((term) => value.includes(term)), 8).join("、");
+}
+
+function filterAvoidKeywords(list, state) {
+  const terms = String(state.avoid || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean);
+  if (!terms.length) return list;
+  return list.filter((item) => !terms.some((term) => String(item).includes(term)));
+}
+
+function filterProfileAvoid(profile, state) {
+  const terms = String(state.avoid || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean);
+  if (!terms.length) return profile;
+  let section = "";
+  return String(profile || "").split(/\r?\n/).map((line) => {
+    const heading = line.match(/^##\s*(.+)$/);
+    if (heading) { section = heading[1].trim(); return line; }
+    if (!["能力标签", "技能关键词", "求职偏好/避雷", "兜底关键词"].includes(section)) return line;
+    let next = line;
+    for (const term of terms) next = next.split(term).join("");
+    next = next.replace(/[、,，]\s*[、,，]/g, "、").replace(/^\s*[-*]\s*$/, "").trimEnd();
+    return next;
+  }).join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
 function dailyKeywords(state) {
   const targets = String(state.target_roles || "").split(/[、,，/]/).map((item) => item.trim()).filter(Boolean);
   const skills = (state.parsed?.skills || []).map((item) => String(item).trim()).filter(Boolean);
@@ -222,6 +287,8 @@ async function generateKeywords(db, state) {
     `目标城市：${state.target_city || ""}`,
     `薪资：${state.target_salary || ""}`,
     `职业期望（高权重）：${state.career_expectation || ""}`,
+    `求职偏好/避雷：${state.preferences || ""}`,
+    `明确不考虑的方向（不得生成相关关键词）：${state.avoid || "无"}`,
     `画像：${sanitizeProfile(state.profile_md || buildProfile(state))}`,
     `历史关键词及效果：${JSON.stringify(history)}`,
     `本地兜底候选：${JSON.stringify(base)}`,
@@ -229,10 +296,10 @@ async function generateKeywords(db, state) {
   ].join("\n"));
   const parsed = ai?.text ? parseKeywordPayload(ai.text) : { recommended: [], fallback: [] };
   const recent = new Set(history.slice(0, 3).map((item) => String(item.keyword).toLowerCase()));
-  const proposed = parsed.recommended.length ? parsed.recommended : base.recommended;
+  const proposed = filterAvoidKeywords(parsed.recommended.length ? parsed.recommended : base.recommended, state);
   const rotated = proposed.filter((item) => !recent.has(String(item).toLowerCase()));
   const recommended = uniqueKeywords(rotated.length >= 5 ? rotated : proposed, 12);
-  const fallback = uniqueKeywords([
+  const fallback = uniqueKeywords(filterAvoidKeywords([
     ...parsed.fallback,
     ...base.fallback,
     "项目主管",
@@ -240,7 +307,7 @@ async function generateKeywords(db, state) {
     "交付经理",
     "项目协调",
     "运营主管",
-  ].filter((item) => !recommended.includes(item)), 5);
+  ].filter((item) => !recommended.includes(item)), state), 5);
   if (state.role_uuid) {
     keywordService.save(db, state.role_uuid, { recommended, fallback });
   }
@@ -261,22 +328,23 @@ function buildProfile(state) {
     5
   );
   const preferences = state.preferences || "希望岗位方向与目标一致；具体偏好待确认。";
+  const avoid = state.avoid ? `\n- 明确不考虑：${state.avoid}` : "";
   const profile = [
     `# ${parsed.name || "候选人"} 角色画像`,
     "",
     `## 基础信息\n- 姓名：${parsed.name || "-"}\n- 学历：${parsed.education || "-"}\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}`,
-    `## 求职诉求\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}\n- 方向/偏好：${state.career_expectation || preferences}`,
+    `## 求职诉求\n- 目标岗位：${state.target_roles || "-"}\n- 目标城市：${state.target_city || "-"}\n- 期望薪资：${state.target_salary || "-"}\n- 方向/偏好：${state.career_expectation || preferences}${avoid}`,
     `## 职业发展期望\n${state.career_expectation || `希望在${state.target_city || "目标城市"}从事${state.target_roles || "目标岗位"}，薪资${state.target_salary || "面议"}；具体方向待确认。`}`,
     `## 工作经历\n${state.experience || parsed.experience_summary || "-"}`,
     `## 能力标签\n${skills}`,
     `## 技能关键词\n${skills}`,
-    `## 求职偏好/避雷\n${preferences}`,
+    `## 求职偏好/避雷\n${preferences}${avoid}`,
     `## 兜底关键词\n${fallbackKeywords.join("、")}`,
     `## 风险/需确认\n${state.risk || "请人工核对简历事实与期望薪资"}`,
     "",
     "> 由本地简历解析 + 角色画像 Skill 生成；请人工确认事实后再启用角色；下一轮搜索关键词在角色关键词中单独维护。",
   ].join("\n");
-  return sanitizeProfile(profile);
+  return filterProfileAvoid(sanitizeProfile(profile), state);
 }
 
 function ensureProfileSections(profile, localProfile) {
@@ -371,36 +439,76 @@ async function runTurn(db, sessionId, input = {}) {
     state.resume_md = input.resume_md;
     state.resume_id = resume.id;
     state.parsed = parsed;
-    if (!state.target_roles && parsed.target_roles?.length) state.target_roles = parsed.target_roles.join("、");
+    if (!state.target_roles && parsed.target_roles?.length) state.target_roles = normalizeTargetRoles(parsed.target_roles.join("、"));
     if (!state.experience && parsed.experience_summary) state.experience = parsed.experience_summary;
+  } else if (state.resume_md && !state.parsed?.experience_summary) {
+    // 兼容旧版本已导入的纯文本 DOCX 简历：旧解析器把整份简历放在“未分类”，这里重新解析字段。
+    try {
+      const parsed = parseResumeMarkdown(state.resume_md);
+      state.parsed = parsed;
+      if (!state.target_roles && parsed.target_roles?.length) state.target_roles = normalizeTargetRoles(parsed.target_roles.join("、"));
+      if (!state.experience && parsed.experience_summary) state.experience = parsed.experience_summary;
+    } catch {
+      // 保留旧状态，下一轮仍可人工补充
+    }
   }
 
-  const targetRoles = input.target_roles || extractField(text, ["目标岗位", "求职意向", "期望岗位"]);
+  const targetRoles = input.target_roles
+    || extractField(text, ["目标岗位", "求职意向", "期望岗位"])
+    || inferTargetRole(text);
+  if (!state.target_roles && !targetRoles) {
+    // 兼容旧会话：早期版本没有从“AI项目经理，在上海……”这类自由文本中提取目标岗位。
+    const history = db.prepare("SELECT content FROM chat_messages WHERE session_id = ? AND role = 'user' ORDER BY id DESC LIMIT 20").all(sessionId);
+    for (const row of history) {
+      const inferred = inferTargetRole(row.content);
+      if (inferred) { state.target_roles = normalizeTargetRoles(inferred); break; }
+    }
+  }
   const targetCity = input.target_city || extractField(text, ["目标城市", "城市", "地点"]) || extractCities(text)[0] || "";
   const targetSalary = input.target_salary || extractSalary(text);
-  const experience = input.experience || extractExperience(text) || state.parsed?.experience_summary || "";
+  const experience = input.experience
+    || extractExperience(text)
+    || state.parsed?.experience_summary
+    || (state.resume_md ? String(state.resume_md).slice(0, 2000) : "");
   const careerExpectation = input.career_expectation || extractField(text, ["职业发展期望", "期望方向", "发展方向"]);
-  if (targetRoles) state.target_roles = targetRoles;
+  if (targetRoles) state.target_roles = normalizeTargetRoles(targetRoles);
   if (targetCity) state.target_city = targetCity;
   if (targetSalary) state.target_salary = targetSalary;
   if (experience) state.experience = experience;
   if (careerExpectation) state.career_expectation = careerExpectation;
   if (input.preferences) state.preferences = input.preferences;
+  const preference = preferenceText(text);
+  const avoid = avoidTerms(text);
+  if (preference) state.preferences = preference;
+  if (preference && /职业规划|职业方向|主要看|重点看|聚焦|不考虑|不要|排除|规避/.test(text)) state.career_expectation = preference;
+  if (avoid) state.avoid = avoid;
+  if (!state.preferences || !state.avoid) {
+    // 兼容旧会话：用户偏好可能已经在之前某条消息里说过，更新画像时从历史恢复。
+    const history = db.prepare("SELECT content FROM chat_messages WHERE session_id = ? AND role = 'user' ORDER BY id DESC LIMIT 30").all(sessionId);
+    for (const row of history) {
+      const priorPreference = preferenceText(row.content);
+      const priorAvoid = avoidTerms(row.content);
+      if (!state.preferences && priorPreference) state.preferences = priorPreference;
+      if (!state.career_expectation && priorPreference && /职业规划|职业方向|主要看|重点看|聚焦|不考虑|不要|排除|规避/.test(row.content)) state.career_expectation = priorPreference;
+      if (!state.avoid && priorAvoid) state.avoid = priorAvoid;
+      if (state.preferences && state.avoid) break;
+    }
+  }
 
-  const wantsGreeting = /打招呼|招呼话术|写招呼/.test(text);
-  if (wantsGreeting) {
+  const intent = classifyIntent({ text, input, state, targetRoles });
+
+  if (intent.name === "greeting") {
     const reply = await greetingReply(db, state, text);
-    appendMessage(db, sessionId, "assistant", reply.text, reply.metadata);
+    appendMessage(db, sessionId, "assistant", reply.text, { ...reply.metadata, intent: intent.name });
     updateState(db, sessionId, state);
     return { session: getSession(db, sessionId), reply };
   }
 
-  const wantsJobDetail = /JD|jd|详情|评分|日报/.test(text) && /[A-Z]\d{3,4}/.test(text);
-  if (wantsJobDetail) {
+  if (intent.name === "job_detail") {
     const job = findJobByText(db, state.role_uuid, text);
     if (!job) {
       const reply = "没有找到这个岗位编号；请确认编号，或先让我按角色查岗位。";
-      appendMessage(db, sessionId, "assistant", reply, { action: "job_not_found" });
+      appendMessage(db, sessionId, "assistant", reply, { action: "job_not_found", intent: intent.name });
       return { session: getSession(db, sessionId), reply };
     }
     const textReply = [
@@ -411,15 +519,14 @@ async function runTurn(db, sessionId, input = {}) {
       `链接：${job.job_url || "-"}`,
       `JD：${String(job.job_description || "").slice(0, 1200) || "-"}`,
     ].join("\n");
-    appendMessage(db, sessionId, "assistant", textReply, { action: "job_detail", job_id: job.display_id });
+    appendMessage(db, sessionId, "assistant", textReply, { action: "job_detail", job_id: job.display_id, intent: intent.name });
     updateState(db, sessionId, state);
     return { session: getSession(db, sessionId), reply: { text: textReply } };
   }
 
-  const wantsJobs = /岗位|推荐|搜索|合适|机会/.test(text) && !/生成画像|画像/.test(text);
-  if (wantsJobs) {
+  if (intent.name === "job_search") {
     const reply = jobSearchReply(db, state);
-    appendMessage(db, sessionId, "assistant", reply.text, reply.metadata);
+    appendMessage(db, sessionId, "assistant", reply.text, { ...reply.metadata, intent: intent.name });
     updateState(db, sessionId, state);
     return { session: getSession(db, sessionId), reply };
   }
@@ -431,27 +538,55 @@ async function runTurn(db, sessionId, input = {}) {
     return { session: getSession(db, sessionId), reply };
   }
 
-  const wantsProfile = /画像|简历|生成|角色/.test(text);
-  if (!wantsProfile && text) {
+  const wantsProfile = intent.name === "profile_create" || intent.name === "profile_update";
+  if (!wantsProfile && intent.name !== "clarify" && text) {
     const ai = await askAI(db, text);
     if (ai) {
-      const metadata = { action: "ai_reply", ai_used: true, provider: ai.provider, steps: ["observe", "think", "respond"] };
+      const metadata = { action: "ai_reply", ai_used: true, provider: ai.provider, intent: intent.name, steps: ["observe", "think", "respond"] };
       appendMessage(db, sessionId, "assistant", ai.text, metadata);
       updateState(db, sessionId, state);
       return { session: getSession(db, sessionId), reply: { text: ai.text, ...metadata } };
     }
   }
 
-  const missing = [];
-  if (!state.resume_md) missing.push("简历（上传 .md 或粘贴）");
-  if (!state.target_roles) missing.push("目标岗位");
-  if (!state.target_city) missing.push("目标城市");
-  if (!state.target_salary) missing.push("目标薪资区间");
-  if (!state.experience) missing.push("相关经历");
+  if (intent.name === "clarify") {
+    const reply = "我需要确认一下：你是想生成/调整角色画像、查找匹配岗位，还是生成打招呼话术？可以直接告诉我其中一项。";
+    appendMessage(db, sessionId, "assistant", reply, { action: "clarify", intent: intent.name });
+    updateState(db, sessionId, state);
+    return { session: getSession(db, sessionId), reply };
+  }
 
-  if (missing.length) {
-    const reply = `我先按角色画像 Skill 检查了一下，还缺：\n${missing.map((item) => `- ${item}`).join("\n")}\n\n可以一次发给我，例如：“目标岗位：实施顾问；城市：上海；薪资：18-25K；5 年企业软件实施经验”。`;
-    appendMessage(db, sessionId, "assistant", reply, { action: "ask_missing", missing, steps: ["parse_resume", "ask_missing"] });
+  if (intent.name === "chat") {
+    const reply = "我可以帮你生成/调整角色画像、按角色查岗位，或生成打招呼话术。请直接告诉我你要做哪一项。";
+    appendMessage(db, sessionId, "assistant", reply, { action: "chat_fallback", intent: intent.name });
+    updateState(db, sessionId, state);
+    return { session: getSession(db, sessionId), reply };
+  }
+
+  const missing = profileMissingFields(state);
+  const forceWithMissing = Boolean(state.resume_md) && /先按|现有信息|直接生成|不补充|就这样生成/.test(text);
+  if (missing.length && !forceWithMissing) {
+    const questions = missing.map((item) => `- ${item}`);
+    const preamble = state.resume_md
+      ? `${resumeReadHint(state)}我按角色画像 Skill 检查了一下，还不能直接生成完整画像。`
+      : "我还没有收到简历，先无法做完整的角色画像。";
+    const reply = [
+      preamble,
+      "还缺：",
+      ...questions,
+      "",
+      "请直接补充缺失项，例如：",
+      "“目标岗位：实施顾问；城市：上海；期望薪资：18-25K；5 年企业软件实施经验”。",
+      state.resume_md ? "如果希望先按现有信息生成，也可以说“先按现有信息生成”，我会把未确认项标为待确认。" : "",
+    ].filter(Boolean).join("\n");
+    appendMessage(db, sessionId, "assistant", reply, {
+      action: "ask_missing",
+      missing,
+      resume_read: Boolean(state.resume_md),
+      can_generate_with_missing: Boolean(state.resume_md),
+      intent: intent.name,
+      steps: ["parse_resume", "check_missing", "ask_missing"],
+    });
     updateState(db, sessionId, state);
     return { session: getSession(db, sessionId), reply };
   }
@@ -467,20 +602,25 @@ async function runTurn(db, sessionId, input = {}) {
     `目标城市：${state.target_city}`,
     `薪资：${state.target_salary}`,
     `职业发展期望：${state.career_expectation || "待确认"}`,
+    `求职偏好/避雷：${state.preferences || "待确认"}`,
+    `明确不考虑的方向：${state.avoid || "无"}`,
+    `本次用户要求：${text || "按现有信息生成"}`,
+    `当前画像（更新时保留有效事实，移除明确不考虑的方向）：${state.profile_md || "无"}`,
     `经历：${state.experience}`,
     `简历（已脱敏）：${sanitizeProfile(state.resume_md || "")}`,
   ].join("\n"));
-  const profile = aiProfile?.text && aiProfile.text.length > 40
+  const profile = filterProfileAvoid(aiProfile?.text && aiProfile.text.length > 40
     ? ensureProfileSections(aiProfile.text, profileLocal)
-    : profileLocal;
+    : profileLocal, state);
   const keywordResult = await generateKeywords(db, { ...state, profile_md: profile });
-  const finalProfile = replaceFallbackSection(profile, keywordResult.fallbackKeywords);
+  const finalProfile = filterProfileAvoid(replaceFallbackSection(profile, keywordResult.fallbackKeywords), state);
   state.profile_md = finalProfile;
   state.daily_keywords = keywordResult.keywords;
   appendMessage(db, sessionId, "assistant", `画像信息已齐，生成如下：\n\n${finalProfile}\n\n每日搜索关键词（单独保存，不写入画像）：${keywordResult.keywords.join("、")}`, {
     action: "profile_ready",
     profile_md: finalProfile,
     keywords: keywordResult.keywords,
+    intent: intent.name,
     fallback_keywords: keywordResult.fallbackKeywords,
     keyword_ai_used: keywordResult.aiUsed,
     keyword_history_used: keywordResult.historyUsed,
@@ -596,4 +736,5 @@ module.exports = {
   enrichRoleProfile,
   extractCities,
   extractSalary,
+  inferTargetRole,
 };

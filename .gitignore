@@ -26,6 +26,19 @@
 !快捷启动/随项目必须的安装包/pnpm-store/
 !快捷启动/随项目必须的安装包/pnpm-store/INSTALL.md
 
+# Generated installer artifacts and runtime staging
+**/build/runtime/
+**/release/
+**/build/iexpress/
+**/build/app-stage/
+**/build/win-package/
+**/build/electron-builder-cache/
+**/build/electron-cache/
+**/build/nsis-temp/
+**/build/nsis-compile*.log
+**/build/win-*.log
+**/build/installer.nsi
+
 # Runtime logs and state
 **/logs/
 **/*.log

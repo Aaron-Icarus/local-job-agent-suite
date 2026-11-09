@@ -254,6 +254,7 @@
         <label>App ID<input id="mpAppId" placeholder="cli_xxx"></label>
         <label>App Secret<input id="mpAppSecret" type="password" placeholder="只保存在本机 .env"></label>
         <label>群 ID（Chat ID）<input id="mpChatId" placeholder="oc_xxx"></label>
+        <p class="hint">保存应用配置时，如果这里填了群 Chat ID，会自动加入群列表并设为默认群；不需要在“添加群”里重复添加同一个群。添加群本身不要求先启动长连接；测试消息只要求 App ID/Secret 正确。</p>
         <label>Verification Token<input id="mpVerifyToken" type="password"></label>
         <label>Encrypt Key（可选）<input id="mpEncryptKey" type="password"></label>
         <div class="toolbar">
@@ -430,15 +431,16 @@
         <li>开启机器人能力，把机器人拉进目标群。</li>
         <li>群 Chat ID 以 <code>oc_</code> 开头；可在群设置/开放平台接口中查看，群里发消息后事件里也会带。</li>
         <li>在“事件与回调”选择长连接，订阅 <code>im.message.receive_v1</code>。</li>
-        <li>回到客户端“飞书群管理”，点“添加群”，填群名称、Chat ID、Webhook（可选），保存。</li>
-        <li>在群卡片上点“测试”，确认群通道正常；异常群会排在最前面。</li>
-        <li>点“同步群到消息平台”，让独立消息平台读取群配置；必要时重启消息平台。</li>
-        <li>回到客户端点“启动消息平台”，在群里 @机器人 测试。</li>
+        <li>回到客户端“飞书机器人应用”，填 App ID/Secret；如果有默认群，把群 Chat ID 填在同一处并保存。保存时会把该群自动加入群列表，不需要再手动添加同一个群。</li>
+        <li>也可以在“飞书群管理”点“添加群”，填群名称、Chat ID、Webhook（可选），保存。添加群本身不要求先启动长连接。</li>
+        <li>在群卡片上点“测试”，确认群通道正常；测试消息走飞书 Open API，只要求 App ID/Secret 正确。</li>
+        <li>点“同步群到消息平台”，把已保存的群写给独立消息平台进程；它不会自动发现飞书里的新群。必要时重启消息平台。</li>
+        <li>回到客户端点“启动消息平台”，在群里 @机器人 测试；长连接负责接收群消息和 @ 事件。</li>
         <li>在“默认通知群”和“角色通知群”里选择群并保存；前者是新角色默认，后者按角色/环节发送。</li>
       </ol>
       <hr>
       <h3>群同步与应用配置的区别</h3>
-      <p class="hint">“飞书群管理”负责群本身（增删改查、测试）；“同步群到消息平台”只是把已保存的群写给独立消息平台进程，不新增群；“飞书机器人应用”只负责 App ID/Secret、长连接、Webhook，不负责角色分配。</p>
+      <p class="hint">“飞书群管理”负责群本身（增删改查、测试）；“同步群到消息平台”只是把已保存的群写给独立消息平台进程，不新增群；“飞书机器人应用”负责 App ID/Secret、长连接、Webhook 和默认群。当前只支持一个飞书应用/机器人，最多接入 10 个群；多个群共用同一个机器人 App。测试按钮目前发送文本消息，不是卡片；卡片模板接入需要单独配置。</p>
       <h3>飞书后台操作顺序</h3>
       <ol class="help-list">
         <li>创建自建应用 → 复制 App ID / App Secret。</li>

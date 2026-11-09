@@ -52,11 +52,16 @@ function getGroup(db, id) {
 
 function saveGroup(db, input = {}) {
   ensureHealthColumns(db);
-  const id = String(input.id || crypto.randomUUID());
-  const existing = db.prepare("SELECT * FROM feishu_groups WHERE id = ?").get(id);
-  if (!existing && listGroups(db).length >= MAX_GROUPS) throw new Error(`最多只能接入 ${MAX_GROUPS} 个飞书群`);
+  let id = String(input.id || crypto.randomUUID());
+  let existing = db.prepare("SELECT * FROM feishu_groups WHERE id = ?").get(id);
   const chatId = String(input.chatId || input.chat_id || existing?.chat_id || "").trim();
   if (!chatId) throw new Error("群 Chat ID 不能为空");
+  const sameChat = db.prepare("SELECT * FROM feishu_groups WHERE chat_id = ? LIMIT 1").get(chatId);
+  if (sameChat && sameChat.id !== id) {
+    id = sameChat.id;
+    existing = sameChat;
+  }
+  if (!existing && listGroups(db).length >= MAX_GROUPS) throw new Error(`最多只能接入 ${MAX_GROUPS} 个飞书群`);
   const now = nowIso();
   if (input.isDefault) db.prepare("UPDATE feishu_groups SET is_default = 0").run();
   db.prepare(

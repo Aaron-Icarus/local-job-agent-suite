@@ -46,10 +46,18 @@ function roleText(role) {
   ].join("\n");
 }
 
+function normalizeTargetRoles(value) {
+  return [...new Set(String(value || "")
+    .split(/[、,，/;；|]+|或者|或|以及|和|及|与/)
+    .map((item) => item.trim())
+    .filter(Boolean))].join("、");
+}
+
 function rowToRole(row) {
   if (!row) return null;
   return {
     ...row,
+    target_roles: normalizeTargetRoles(row.target_roles),
     has_started: Boolean(row.has_started),
     role_keywords: safeJson(row.role_keywords_json, []),
     role_channels: safeJson(row.role_channels_json, []),
@@ -133,7 +141,7 @@ function createRole(db, input = {}) {
       String(input.profile_md || ""),
       String(input.resume_id || ""),
       String(input.resume_source || ""),
-      String(input.target_roles || ""),
+      normalizeTargetRoles(input.target_roles || ""),
       location.display || String(input.target_city || ""),
       salary.display || String(input.target_salary || ""),
       JSON.stringify(location.cities || []),
@@ -177,7 +185,7 @@ function updateRole(db, roleUuid, patch = {}) {
       profile_md: normalized.profile_md,
       resume_id: normalized.resume_id,
       resume_source: normalized.resume_source,
-      target_roles: normalized.target_roles,
+      target_roles: normalized.target_roles === undefined ? undefined : normalizeTargetRoles(normalized.target_roles),
       target_city: normalized.target_city,
       target_salary: normalized.target_salary,
       target_cities_json: normalized.target_cities_json,
@@ -316,6 +324,7 @@ function findSimilarRoles(db, input = {}, options = {}) {
 
 module.exports = {
   MAX_ACTIVE_ROLES,
+  normalizeTargetRoles,
   similarityScore,
   listRoles,
   getRole,
