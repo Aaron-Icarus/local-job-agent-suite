@@ -290,7 +290,7 @@ function applyAIScore(base, review, provider) {
     explanation: String(review?.summary || "").slice(0, 300) || `AI 评分 ${score}`,
     reasons: reasons.length ? reasons : base.reasons,
     risks: risks.length ? risks : base.risks,
-    scoreVersion: "v1.5.2-ai-first",
+    scoreVersion: "v1.5.3-ai-first",
     aiUsed: true,
     aiProvider: provider || "",
   };

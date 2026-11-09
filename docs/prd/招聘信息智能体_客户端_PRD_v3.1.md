@@ -1,8 +1,8 @@
 # 招聘信息智能体客户端 PRD v3.1
 
 - 版本：v3.1
-- 日期：2026-11-07
-- 状态：v1.5.2 已实现；v1.5 增补需求见第 11 节
+- 日期：2026-11-10
+- 状态：v1.5.3 已实现；v1.5 增补需求见第 11 节
 - 需求来源：`docs/requirements/v1.4_客户端化与多角色_需求说明.md`
 - 替代：`docs/prd/招聘信息智能体_PRD_v2.1.md`（v2.1 为 CLI 版本，客户端能力以本 PRD 为准）
 
@@ -307,7 +307,7 @@ job_updated_at = max(facts_updated_at, status_updated_at)，不含单纯 last_se
 
 - 评分优先调用已启用的 AI Provider：输入岗位事实、角色画像、目标岗位、角色关键词和 `skills/job_scoring_skill.md`；
 - AI 直接输出 0–100 的最终匹配分、理由、风险和一句话结论，不再限制 ±8 分；
-- AI 成功时保存 `score_version=v1.5.2-ai-first`，并以 AI 分数为准；
+- AI 成功时保存 `score_version=v1.5.3-ai-first`，并以 AI 分数为准；
 - 只有 AI 不可用/密钥缺失/HTTP 失败/超时/返回空或非法 JSON/缺少有效 score 时，才使用本地确定性规则兜底，保存 `v1.5-local-fit`；
 - AI 不得改写岗位事实、薪资、城市、关闭/重复等硬条件，不得编造简历或岗位经历；
 - 角色卡片提供“重新评分”，可选择全量重新调用 AI。

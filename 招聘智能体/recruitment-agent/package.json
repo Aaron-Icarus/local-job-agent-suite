@@ -1,6 +1,6 @@
 {
   "name": "boss-job-agent",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "private": true,
   "main": "electron/main.js",
   "description": "BOSS job collection, fit evaluation, draft-first daily push workflow, desktop client.",
