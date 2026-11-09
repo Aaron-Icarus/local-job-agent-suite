@@ -100,7 +100,7 @@ async function runTask(db, task) {
 
   if (task.type === "score") {
     startTask(db, task.id, {});
-    const summary = scoreAllRoles(db);
+    const summary = await scoreAllRoles(db);
     finishTask(db, task.id, { progress: summary });
     return;
   }

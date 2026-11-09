@@ -13,6 +13,7 @@ const { checkPlatform } = require("./login_checker");
 const { ensureChrome, resolveCdpPort, isCdpReady, minimizeChrome, restoreChrome } = require("./chrome_manager");
 const { extractDocument } = require("./document_text");
 const { prepareProfile, buildLocalProfile } = require("./profile_generator");
+const { scoreRoleJobs } = require("./score_service");
 const { normalizeCities, normalizeSalary } = require("./location_service");
 const skillsDir = path.resolve(__dirname, "..", "..", "skills");
 const resumes = require("./resumes_repo");
@@ -350,7 +351,7 @@ function createAppServer(options = {}) {
         });
       }
 
-      const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update)$/);
+      const roleAction = pathname.match(/^\/api\/roles\/([^/]+)\/(confirm|start|pause|copy|delete|update|score)$/);
       if (roleAction) {
         const [, roleUuid, action] = roleAction;
         const body = await readBody(req);
@@ -361,6 +362,11 @@ function createAppServer(options = {}) {
         if (action === "pause") return json(res, 200, { ok: true, role: roles.pauseRole(db, roleUuid) });
         if (action === "copy") return json(res, 200, { ok: true, role: roles.copyRole(db, roleUuid, body) });
         if (action === "delete") return json(res, 200, { ok: true, role: roles.softDeleteRole(db, roleUuid) });
+        if (action === "score") {
+          const changed = scores.markRoleNeedsScore(db, roleUuid, { all: true });
+          const result = await scoreRoleJobs(db, roleUuid, { ai: true, aiMaxRows: 200 });
+          return json(res, 200, { ok: true, changed, result });
+        }
         if (action === "update") return json(res, 200, { ok: true, ...roles.updateRole(db, roleUuid, body) });
       }
 
