@@ -7,6 +7,7 @@ const { parseResumeMarkdown, resumeToProfileMarkdown } = require("./resume_parse
 const { searchRoleJobs } = require("./scores_repo");
 const { getRole } = require("./roles_repo");
 const { runWithFallback } = require("./ai_providers");
+const { classifyIntent } = require("./intent_service");
 const keywordService = require("./keyword_service");
 
 const KNOWN_CITIES = ["上海", "北京", "深圳", "广州", "杭州", "苏州", "成都", "武汉", "南京", "西安", "重庆"];
@@ -494,20 +495,20 @@ async function runTurn(db, sessionId, input = {}) {
     }
   }
 
-  const wantsGreeting = /打招呼|招呼话术|写招呼/.test(text);
-  if (wantsGreeting) {
+  const intent = classifyIntent({ text, input, state, targetRoles });
+
+  if (intent.name === "greeting") {
     const reply = await greetingReply(db, state, text);
-    appendMessage(db, sessionId, "assistant", reply.text, reply.metadata);
+    appendMessage(db, sessionId, "assistant", reply.text, { ...reply.metadata, intent: intent.name });
     updateState(db, sessionId, state);
     return { session: getSession(db, sessionId), reply };
   }
 
-  const wantsJobDetail = /JD|jd|详情|评分|日报/.test(text) && /[A-Z]\d{3,4}/.test(text);
-  if (wantsJobDetail) {
+  if (intent.name === "job_detail") {
     const job = findJobByText(db, state.role_uuid, text);
     if (!job) {
       const reply = "没有找到这个岗位编号；请确认编号，或先让我按角色查岗位。";
-      appendMessage(db, sessionId, "assistant", reply, { action: "job_not_found" });
+      appendMessage(db, sessionId, "assistant", reply, { action: "job_not_found", intent: intent.name });
       return { session: getSession(db, sessionId), reply };
     }
     const textReply = [
@@ -518,16 +519,14 @@ async function runTurn(db, sessionId, input = {}) {
       `链接：${job.job_url || "-"}`,
       `JD：${String(job.job_description || "").slice(0, 1200) || "-"}`,
     ].join("\n");
-    appendMessage(db, sessionId, "assistant", textReply, { action: "job_detail", job_id: job.display_id });
+    appendMessage(db, sessionId, "assistant", textReply, { action: "job_detail", job_id: job.display_id, intent: intent.name });
     updateState(db, sessionId, state);
     return { session: getSession(db, sessionId), reply: { text: textReply } };
   }
 
-  const wantsJobs = /岗位|推荐|搜索|合适|机会/.test(text)
-    && !/生成画像|画像|目标岗位|求职意向|期望岗位|简历/.test(text);
-  if (wantsJobs) {
+  if (intent.name === "job_search") {
     const reply = jobSearchReply(db, state);
-    appendMessage(db, sessionId, "assistant", reply.text, reply.metadata);
+    appendMessage(db, sessionId, "assistant", reply.text, { ...reply.metadata, intent: intent.name });
     updateState(db, sessionId, state);
     return { session: getSession(db, sessionId), reply };
   }
@@ -539,20 +538,29 @@ async function runTurn(db, sessionId, input = {}) {
     return { session: getSession(db, sessionId), reply };
   }
 
-  // 上传简历、提到目标条件，或已经能从对话识别出目标岗位，都进入画像流程。
-  const wantsProfile = Boolean(input.resume_md)
-    || /画像|简历|生成|角色/.test(text)
-    || /目标岗位|求职意向|期望岗位|目标城市|期望薪资/.test(text)
-    || Boolean(preference && state.resume_md)
-    || Boolean(targetRoles && text.length <= 120);
-  if (!wantsProfile && text) {
+  const wantsProfile = intent.name === "profile_create" || intent.name === "profile_update";
+  if (!wantsProfile && intent.name !== "clarify" && text) {
     const ai = await askAI(db, text);
     if (ai) {
-      const metadata = { action: "ai_reply", ai_used: true, provider: ai.provider, steps: ["observe", "think", "respond"] };
+      const metadata = { action: "ai_reply", ai_used: true, provider: ai.provider, intent: intent.name, steps: ["observe", "think", "respond"] };
       appendMessage(db, sessionId, "assistant", ai.text, metadata);
       updateState(db, sessionId, state);
       return { session: getSession(db, sessionId), reply: { text: ai.text, ...metadata } };
     }
+  }
+
+  if (intent.name === "clarify") {
+    const reply = "我需要确认一下：你是想生成/调整角色画像、查找匹配岗位，还是生成打招呼话术？可以直接告诉我其中一项。";
+    appendMessage(db, sessionId, "assistant", reply, { action: "clarify", intent: intent.name });
+    updateState(db, sessionId, state);
+    return { session: getSession(db, sessionId), reply };
+  }
+
+  if (intent.name === "chat") {
+    const reply = "我可以帮你生成/调整角色画像、按角色查岗位，或生成打招呼话术。请直接告诉我你要做哪一项。";
+    appendMessage(db, sessionId, "assistant", reply, { action: "chat_fallback", intent: intent.name });
+    updateState(db, sessionId, state);
+    return { session: getSession(db, sessionId), reply };
   }
 
   const missing = profileMissingFields(state);
@@ -576,6 +584,7 @@ async function runTurn(db, sessionId, input = {}) {
       missing,
       resume_read: Boolean(state.resume_md),
       can_generate_with_missing: Boolean(state.resume_md),
+      intent: intent.name,
       steps: ["parse_resume", "check_missing", "ask_missing"],
     });
     updateState(db, sessionId, state);
@@ -611,6 +620,7 @@ async function runTurn(db, sessionId, input = {}) {
     action: "profile_ready",
     profile_md: finalProfile,
     keywords: keywordResult.keywords,
+    intent: intent.name,
     fallback_keywords: keywordResult.fallbackKeywords,
     keyword_ai_used: keywordResult.aiUsed,
     keyword_history_used: keywordResult.historyUsed,
