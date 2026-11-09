@@ -128,6 +128,13 @@ function extractExperience(text) {
   return match ? `${match[1]} 年` : "";
 }
 
+function inferTargetRole(text) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  if (!value || value.length > 120) return "";
+  const match = value.match(/([A-Za-z0-9+\/\u4e00-\u9fa5]{2,24}(?:项目经理|产品经理|工程师|顾问|专员|主管|总监|设计师|分析师|架构师|运营|开发|交付))/);
+  return match ? match[1].trim() : "";
+}
+
 function dailyKeywords(state) {
   const targets = String(state.target_roles || "").split(/[、,，/]/).map((item) => item.trim()).filter(Boolean);
   const skills = (state.parsed?.skills || []).map((item) => String(item).trim()).filter(Boolean);
@@ -373,12 +380,27 @@ async function runTurn(db, sessionId, input = {}) {
     state.parsed = parsed;
     if (!state.target_roles && parsed.target_roles?.length) state.target_roles = parsed.target_roles.join("、");
     if (!state.experience && parsed.experience_summary) state.experience = parsed.experience_summary;
+  } else if (state.resume_md && !state.parsed?.experience_summary) {
+    // 兼容旧版本已导入的纯文本 DOCX 简历：旧解析器把整份简历放在“未分类”，这里重新解析字段。
+    try {
+      const parsed = parseResumeMarkdown(state.resume_md);
+      state.parsed = parsed;
+      if (!state.target_roles && parsed.target_roles?.length) state.target_roles = parsed.target_roles.join("、");
+      if (!state.experience && parsed.experience_summary) state.experience = parsed.experience_summary;
+    } catch {
+      // 保留旧状态，下一轮仍可人工补充
+    }
   }
 
-  const targetRoles = input.target_roles || extractField(text, ["目标岗位", "求职意向", "期望岗位"]);
+  const targetRoles = input.target_roles
+    || extractField(text, ["目标岗位", "求职意向", "期望岗位"])
+    || inferTargetRole(text);
   const targetCity = input.target_city || extractField(text, ["目标城市", "城市", "地点"]) || extractCities(text)[0] || "";
   const targetSalary = input.target_salary || extractSalary(text);
-  const experience = input.experience || extractExperience(text) || state.parsed?.experience_summary || "";
+  const experience = input.experience
+    || extractExperience(text)
+    || state.parsed?.experience_summary
+    || (state.resume_md ? String(state.resume_md).slice(0, 2000) : "");
   const careerExpectation = input.career_expectation || extractField(text, ["职业发展期望", "期望方向", "发展方向"]);
   if (targetRoles) state.target_roles = targetRoles;
   if (targetCity) state.target_city = targetCity;
@@ -596,4 +618,5 @@ module.exports = {
   enrichRoleProfile,
   extractCities,
   extractSalary,
+  inferTargetRole,
 };

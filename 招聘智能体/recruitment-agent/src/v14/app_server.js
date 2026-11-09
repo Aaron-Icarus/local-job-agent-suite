@@ -554,7 +554,20 @@ function createAppServer(options = {}) {
         return json(res, 200, { ok: true, status: messagePlatform.status() });
       }
       if (pathname === "/api/message-platform/config" && req.method === "POST") {
-        return json(res, 200, { ok: true, status: messagePlatform.writeEnv(await readBody(req)) && messagePlatform.status() });
+        const body = await readBody(req);
+        messagePlatform.writeEnv(body);
+        const status = messagePlatform.status();
+        let group = null;
+        if (body.chatId) {
+          const existingGroups = feishuGroups.listGroups(db);
+          const matched = existingGroups.find((item) => item.chat_id === String(body.chatId).trim());
+          group = matched || feishuGroups.saveGroup(db, {
+            name: String(body.groupName || "默认飞书群"),
+            chatId: body.chatId,
+            isDefault: existingGroups.length === 0,
+          });
+        }
+        return json(res, 200, { ok: true, status, group });
       }
       if (pathname === "/api/message-platform/start" && req.method === "POST") {
         return json(res, 200, { ok: true, status: messagePlatform.startService() });

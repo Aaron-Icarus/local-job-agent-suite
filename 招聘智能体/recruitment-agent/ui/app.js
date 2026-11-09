@@ -1562,9 +1562,10 @@ function bind() {
         },
       });
       await refreshMessages();
+      await refreshGroups();
       for (const id of ["mpAppSecret", "mpVerifyToken", "mpEncryptKey"]) document.getElementById(id).value = "";
       showLog("dashboardLog", "飞书应用配置已保存（.env）");
-      toast("飞书应用配置已保存");
+      toast("飞书应用配置已保存；如填了群 ID，已自动加入群列表");
     } catch (error) { alert(error.message); }
   };
   document.getElementById("btnStartMp").onclick = async () => {
